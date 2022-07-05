@@ -25,8 +25,11 @@ from error_sensitivity import enforceTargetTriggerConsistency
 from xgboost import XGBRegressor
 
 ###########
+from datetime import datetime  as dt
+print(f'__START: {__file__} subj={subject}, hpass={hpass}, regression_type={regression_type} at {dt.now()}')
 
 mne.cuda.init_cuda()
+n_jobs_SPoC = n_jobs
 n_jobs_MNE='cuda'
 n_splits_B2B = 30
 each_fit_is_parallel = False

@@ -275,6 +275,8 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
                           radius_target + radius_cursor)
     non_hit_cur = np.array(non_hit_cur)
 
+
+    N = 192 # ntrials in the block
     if env == 'all':
         #ep = epochs['20', '21', '22', '23', '30',
         #            '25', '26', '27', '28', '35']
@@ -337,7 +339,7 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
                                   next_errors_cur]
             # remove trials preceding hit (because no next error)
             non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, len(non_hit_cur), 1)[1:])
-            non_hit_cur[[191, 383]] = False  # Removing last trial of each block
+            non_hit_cur[[N-1, N*2-1]] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'
@@ -357,7 +359,7 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
                                   errors_cur]
             # remove trials following hit (because no previous error)
             non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 0, 1)[:-1])
-            non_hit_cur[[0, 192]] = False  # Removing first trial of each block
+            non_hit_cur[[0, N]] = False  # Removing first trial of each block
     elif env == 'random':
         if time_locked == 'feedback':
             if control_type == 'feedback':
@@ -378,7 +380,7 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
                                   next_errors_cur]
             # remove trials preceding hit (because no next error)
             non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, len(non_hit_cur), 1)[1:])
-            non_hit_cur[[191, 383]] = False  # Removing last trial of each block
+            non_hit_cur[[N-1, N*2-1]] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'

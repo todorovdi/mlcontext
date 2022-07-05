@@ -24,6 +24,11 @@ from base2 import (int_to_unicode, point_in_circle, getXGBparams,
 from error_sensitivity import getAnalysisData
 from config2 import path_data, subjects
 from xgboost import XGBRegressor
+
+
+from datetime import datetime  as dt
+print(f'__START: {__file__} subj={subject}, hpass={hpass}, regression_type={regression_type} at {dt.now()}')
+
 task = 'VisuoMotor'
 
 #target_angs = (np.array([157.5, 112.5, 67.5, 22.5]) + 90) * \
@@ -32,7 +37,7 @@ target_coords = calc_target_coordinates_centered(target_angs)
 
 #subject = sys.argv[1]
 #hpass = '0.1'  # '0.1', '0.05', no_hpass
-is_short = True
+is_short = True  # keep it like that! (30.06.22)
 
 ICA = 'with_ICA'  # or empty string
 if hpass == 'no_hpass':
@@ -134,6 +139,7 @@ else:
 
 #  Run decoding
 for (time_locked, epochs) in epochs_type:
+    # these numbers are trigger values and 20..23 are dif targets
     env2epochs={'all':epochs['20', '21', '22', '23', '30', 
         '25', '26', '27', '28', '35'],
             'stable':epochs['20', '21', '22', '23', '30'],

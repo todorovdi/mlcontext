@@ -32,43 +32,51 @@ print(subjects)
 #%debug
 #runscr_name = sys.argv[1]
 
-#subject = subjects[0]
-use_preloaded_raw = False
-#hpass = no
-script_name = pjoin(scripts_dir_recent,
-                    'spoc_home_with_prev_error2.py')
-
-for subject in subjects:
-    for hpass in ['no_filter', '0.1', '0.05']:
-        for regression_type in  ['Ridge', 'xgboost']:
-            ipy.run_line_magic('run', f'-i {script_name}')
-
-            import gc; gc.collect()
-
-##############################################
-
-use_preloaded_raw = False
-script_name = pjoin(scripts_dir_recent,
-                    'td_long2.py')
-
-for subject in subjects:
-    for hpass in ['no_filter', '0.1', '0.05']:
-        for regression_type in  ['Ridge']:
-            ipy.run_line_magic('run', f'-i {script_name}')
-
-            import gc; gc.collect()
-
-##############################################
+#scripts_to_run = ['td_long', 'corr_spoc_and_es']
+#scripts_to_run = ['corr_spoc_and_es']
+scripts_to_run = ['spoc_home']
 
 #subject = subjects[0]
 use_preloaded_raw = False
 #hpass = no
-script_name = pjoin(scripts_dir_recent,
-                    'correlate_spoc_decoding_and_error_sensitivity2.py')
+if 'spoc_home' in scripts_to_run:
+    script_name = pjoin(scripts_dir_recent,
+                        'spoc_home_with_prev_error2.py')
 
-for subject in subjects:
-    for hpass in ['no_filter', '0.1', '0.05']:
-        for regression_type in  ['Ridge', 'xgboost']:
-            ipy.run_line_magic('run', f'-i {script_name}')
+    for subject in subjects[::-1]:
+        for hpass in ['no_filter', '0.1', '0.05']:
+            for regression_type in  ['Ridge', 'xgboost']:
+                ipy.run_line_magic('run', f'-i {script_name}')
 
-            import gc; gc.collect()
+                import gc; gc.collect()
+
+##############################################
+
+if 'td_long' in scripts_to_run:
+    use_preloaded_raw = False
+    script_name = pjoin(scripts_dir_recent,
+                        'td_long2.py')
+
+    for subject in subjects:
+        for hpass in ['no_filter', '0.1', '0.05']:
+            for regression_type in  ['xgboost', 'Ridge']:
+                ipy.run_line_magic('run', f'-i {script_name}')
+
+                import gc; gc.collect()
+
+##############################################
+
+if 'corr_spoc_and_es' in scripts_to_run:
+    b2b_each_fit_is_parallel  = 0
+    #subject = subjects[0]
+    use_preloaded_raw = False
+    #hpass = no
+    script_name = pjoin(scripts_dir_recent,
+                        'correlate_spoc_decoding_and_error_sensitivity2.py')
+
+    for subject in subjects:
+        for hpass in ['no_filter', '0.1', '0.05']:
+            for regression_type in  ['Ridge', 'xgboost']:
+                ipy.run_line_magic('run', f'-i {script_name}')
+
+                import gc; gc.collect()

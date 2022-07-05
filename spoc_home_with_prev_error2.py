@@ -24,6 +24,10 @@ from base2 import (int_to_unicode, point_in_circle,getXGBparams,
 from config2 import path_data
 from xgboost import XGBRegressor
 
+from datetime import datetime  as dt
+print(f'__START: {__file__} subj={subject}, hpass={hpass}, regression_type={regression_type} at {dt.now()}')
+
+
 mne.cuda.init_cuda()
 n_jobs_MNE='cuda'
 n_jobs_XGB=n_jobs
@@ -48,8 +52,8 @@ ICAstr = 'with_ICA'  # or empty string
 b2b_each_fit_is_parallel = False
 
 time_locked = 'target'
-tmin = -0.5
-tmax = 0
+# home position
+tmin = -0.5; tmax = 0
 
 #regression_type = 'Ridge'
 #regression_type = 'xgboost'
@@ -165,8 +169,6 @@ for freq_name, freq in zip(freq_names, freqs):
         G = make_pipeline(spoc, xgb)
     else:
         raise ValueError('wrong regression value')
-
-
 
     H = LinearRegression(fit_intercept=False)
     #G = direct pipeline (spoc + regerssor)
