@@ -8,6 +8,7 @@ ipy = get_ipython()
 from os.path import join as pjoin
 #data_dir_input = pjoin(data_dir_general,data_subdir_mem_err_main)
 from config2 import n_jobs
+import sys
 
 
 #data_dir_general = '/home/demitau/data_Quentin'
@@ -28,6 +29,7 @@ subjects = [f for f in os.listdir(data_dir_input) if f.startswith('sub') ]
 subjects = list(sorted(subjects))
 print(subjects)
 
+from config2 import freq_name2freq
 # faster test
 #%debug
 #runscr_name = sys.argv[1]
@@ -46,14 +48,16 @@ if 'spoc_home' in scripts_to_run:
     for subject in subjects[::-1]:
         for hpass in ['no_filter', '0.1', '0.05']:
             for regression_type in  ['Ridge', 'xgboost']:
-                ipy.run_line_magic('run', f'-i {script_name}')
+                for freq_name,freq_limits in freq_name2freq.items():
+                    for env_to_run in ['stable', 'random']:
+                        ipy.run_line_magic('run', f'-i {script_name}')
 
-                import gc; gc.collect()
+                        import gc; gc.collect()
+                        sys.exit(1)
 
 ##############################################
 
 if 'td_long' in scripts_to_run:
-    use_preloaded_raw = False
     script_name = pjoin(scripts_dir_recent,
                         'td_long2.py')
 
@@ -69,14 +73,17 @@ if 'td_long' in scripts_to_run:
 if 'corr_spoc_and_es' in scripts_to_run:
     b2b_each_fit_is_parallel  = 0
     #subject = subjects[0]
-    use_preloaded_raw = False
     #hpass = no
     script_name = pjoin(scripts_dir_recent,
                         'correlate_spoc_decoding_and_error_sensitivity2.py')
 
+
+        #for subject in subjects:
     for subject in subjects:
+    #for subject in ['sub10_BJJWDKEK']:
         for hpass in ['no_filter', '0.1', '0.05']:
             for regression_type in  ['Ridge', 'xgboost']:
                 ipy.run_line_magic('run', f'-i {script_name}')
 
                 import gc; gc.collect()
+

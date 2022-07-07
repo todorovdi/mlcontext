@@ -683,11 +683,13 @@ class SPoC(CSP):
         # Estimate single trial covariance
         covs = np.empty((n_epochs, n_channels, n_channels))
         if self.n_jobs == 1:
+            print(f'Start NON-parallel SPoC')
             for ii, epoch in enumerate(X):
                 covs[ii] = _regularized_covariance(
                     epoch, reg=self.reg, method_params=self.cov_method_params,
                     rank=self.rank)
         else:
+            print(f'Start parallel SPoC with n_jobs={self.n_jobs}')
             from joblib import Parallel, delayed
             covs = Parallel(n_jobs=self.n_jobs)(
                 delayed(_regularized_covariance)( epoch, reg=self.reg, method_params=self.cov_method_params,
@@ -723,6 +725,7 @@ class SPoC(CSP):
 
         return self
 
+    # original ver, no parallel
     def fit0(self, X, y):
         """Estimate the SPoC decomposition on epochs.
 

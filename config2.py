@@ -22,3 +22,8 @@ subjects = list(sorted(subjects))
 
 n_jobs = multiprocessing.cpu_count() - 2
 XGB_tree_method_def = 'gpu_hist'
+
+
+freq_names = ['broad', 'theta', 'alpha', 'beta', 'gamma']
+freqs = [(4, 60), (4, 7), (8, 12), (13, 30), (31, 60)]
+freq_name2freq = dict( list(zip(freq_names,freqs) ) )
