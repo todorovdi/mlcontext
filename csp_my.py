@@ -636,7 +636,7 @@ class SPoC(CSP):
 
     def __init__(self, n_components=4, reg=None, log=None,
                  transform_into='average_power', cov_method_params=None,
-                 rank=None,n_jobs=1):
+                 rank=None,n_jobs=1,fit_log_level='warning'):
         """Init of SPoC."""
         super(SPoC, self).__init__(n_components=n_components, reg=reg, log=log,
                                    cov_est="epoch", norm_trace=False,
@@ -648,6 +648,7 @@ class SPoC(CSP):
         delattr(self, 'cov_est')
         delattr(self, 'norm_trace')
         self.n_jobs = n_jobs
+        self.fit_log_level=fit_log_level
 
     def fit(self, X, y):
         """Estimate the SPoC decomposition on epochs.
@@ -680,21 +681,26 @@ class SPoC(CSP):
         n_epochs, n_channels = X.shape[:2]
 
 
-        # Estimate single trial covariance
-        covs = np.empty((n_epochs, n_channels, n_channels))
-        if self.n_jobs == 1:
-            print(f'Start NON-parallel SPoC')
-            for ii, epoch in enumerate(X):
-                covs[ii] = _regularized_covariance(
-                    epoch, reg=self.reg, method_params=self.cov_method_params,
-                    rank=self.rank)
-        else:
-            print(f'Start parallel SPoC with n_jobs={self.n_jobs}')
-            from joblib import Parallel, delayed
-            covs = Parallel(n_jobs=self.n_jobs)(
-                delayed(_regularized_covariance)( epoch, reg=self.reg, method_params=self.cov_method_params,
-                    rank=self.rank  ) for epoch in X)
-            covs = np.array(covs)
+        # to avoid mesages like "Computing rank from data with rank='full' all
+        # the time
+        import mne
+        with mne.use_log_level(self.fit_log_level):
+            # Estimate single trial covariance
+            covs = np.empty((n_epochs, n_channels, n_channels))
+            if self.n_jobs == 1:
+                print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
+                for ii, epoch in enumerate(X):
+                    #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+                    covs[ii] = _regularized_covariance(
+                        epoch, reg=self.reg, method_params=self.cov_method_params,
+                        rank=self.rank)
+            else:
+                print(f'Start parallel SPoC with n_jobs={self.n_jobs} for {X.shape[0]} epochs')
+                from joblib import Parallel, delayed
+                covs = Parallel(n_jobs=self.n_jobs)(
+                    delayed(_regularized_covariance)( epoch, reg=self.reg, method_params=self.cov_method_params,
+                        rank=self.rank  ) for epoch in X)
+                covs = np.array(covs)
 
         C = covs.mean(0)
         Cz = np.mean(covs * target[:, np.newaxis, np.newaxis], axis=0)

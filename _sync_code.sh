@@ -5,39 +5,39 @@ if [[ $# -ne 1 ]]; then
 fi
  
 DRY_RUN_FLAG=""
-if [[ $1 == "dry" ]]; then
+RUNTYPE=$1
+if [[ $RUNTYPE == "dry" ]]; then
   echo " ----------  DRY RUN  ------------"
   DRY_RUN_FLAG="n"
-elif [[ $1 == "normal" ]]; then
+elif [[ $RUNTYPE == "normal" ]]; then
   echo " ----------  NORMAL RUN  ------------"
 else
   echo " ----------  WRONG CMD OPTION  ------------"
   exit 1
 fi
 
+run="python _rsync_careful.py"
 LOCAL_DIR="/home/demitau/memerr_code"
-FLAGS="-rtvhz$DRY_RUN_FLAG --progress"
+#FLAGS="-rtvh$DRY_RUN_FLAG --progress"
 # for dry run
 #FLAGS="-rtvzn --progress"; echo "DRY RUN!!"
-
-CLUSTER_PROJECT_PATH="/pbs/home/d/dtodorov/memerr"
-CLUSTER_CODE_PATH="$CLUSTER_PROJECT_PATH/code"
 
 DIRECT_SSH=0
 if [ $DIRECT_SSH -ne 0 ]; then
   echo "Using rsync -e ssh"
-  SSH_FLAG="-e ssh"
-  CLUSTER="cluster_in2p3:$CLUSTER_CODE_PATH"
-  CLUSTER_BASE="cluster_in2p3:$CLUSTER_PROJECT_PATH"
+  SSH_FLAG="-e ssh -z"
+  CLUSTER_PROJECT_DIR="$SSH_HOSTNAME:$CLUSTER_PROJECT_PATH"
+  CLUSTER_CODE="$SSH_HOSTNAME:$CLUSTER_CODE_PATH"
   SLEEP="sleep 1s"
+  echo "not implemented; need to change _rsync_careful"; exit 1
 else
-  mountpath="$HOME/remote_in2p3"
   numfiles=`ls $mountpath | wc -l`
   MQR=`mountpoint -q "$mountpath"`
   while [ $numfiles -eq 0 ] || ! mountpoint -q "$mountpath"; do
     echo "not mounted! trying to remount; numfiles=$numfiles MQR=$MQR"
     sudo umount -l $mountpath # would not work if I run on cron
-    sshfs judac:/sps/crnl/todorov $mountpath
+    #sshfs $SSH_HOSTNAME:/sps/crnl/todorov 
+    sshfs $SSH_HOSTNAME:$CLUSTER_USER_PATH $mountpath
     #exit 1
     sleep 3s
     numfiles=`ls $mountpath | wc -l`
@@ -46,23 +46,62 @@ else
 
   echo "Using mounted sshfs"
   SSH_FLAG=""
-  CLUSTER="$HOME/remote_in2p3/memerr/code"
-  CLUSTER_BASE="$HOME/remote_in2p3/memerr"
+  CLUSTER_PROJECT_DIR="$mountpath/memerr"
+  CLUSTER_CODE="$CLUSTER_PROJECT_DIR/code"
   SLEEP=""
 fi
 
 
 echo "  sync souce code"
-rsync $FLAGS $SSH_FLAG --exclude="*_orig.*" $LOCAL_DIR/*.{py,sh}  $CLUSTER/
+# if I put *.{py,sh} here, then it does not get parsed well by python
+$run --mode:$RUNTYPE --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.py"  "$CLUSTER_CODE/"
+$run --mode:$RUNTYPE --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.sh"  "$CLUSTER_CODE/"
+if [ $? -ne 0 ]; then
+  exit $?
+fi
+#exit 0
 $SLEEP
 echo "  sync figure making code"
 subdir=figure
-rsync $FLAGS $SSH_FLAG $LOCAL_DIR/$subdir/*.py  $CLUSTER/$subdir
+$run --mode:$RUNTYPE "$LOCAL_DIR/$subdir/*.py"  "$CLUSTER_CODE/$subdir"
+#$run $FLAGS $SSH_FLAG   
 $SLEEP
-rsync $FLAGS $SSH_FLAG $LOCAL_DIR/*.ipynb  $CLUSTER/jupyter
+subdir=jupyter_debug
+$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
+subdir=jupyter_release
+$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
 #subdir=run
 
 
-#sshfs cluster_in2p3:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/
+echo "  REV sync souce code"
+$run --mode:$RUNTYPE  "$CLUSTER_CODE/*_HPC.py"  $LOCAL_DIR/
+$SLEEP
+echo "  REV sync scripts"
+$run --mode:$RUNTYPE  "$CLUSTER_CODE/sbatch*.sh"  $LOCAL_DIR/slurm_scripts
+$run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/*.sh"  $LOCAL_DIR
+#$SLEEP
+#sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/
 
-#rsync -rtvz --progress --exclude *.npy --exclude *.ds --exclude *results* $DATA_QUENTIN/data2 /home/demitau/remote_in2p3/memerr/data2
+#$run -rtvz --progress --exclude *.npy --exclude *.ds --exclude *results* $DATA_QUENTIN/data2 /home/demitau/remote_in2p3/memerr/data2
+
+
+# echo "  sync souce code"
+# $run $FLAGS $SSH_FLAG --exclude="*_orig.*" --exclude="_sync*.sh" $LOCAL_DIR/*.{py,sh}  $CLUSTER_CODE/
+# if [ $? -ne 0 ]; then
+#   exit $?
+# fi
+# $SLEEP
+# echo "  sync figure making code"
+# subdir=figure
+# $run $FLAGS $SSH_FLAG $LOCAL_DIR/$subdir/*.py  $CLUSTER_CODE/$subdir
+# $SLEEP
+# $run $FLAGS $SSH_FLAG $LOCAL_DIR/*.ipynb  $CLUSTER_CODE/jupyter
+# #subdir=run
+# 
+# 
+# echo "  REV sync souce code"
+# $run $FLAGS $SSH_FLAG $CLUSTER_CODE/*_HPC.py  $LOCAL_DIR/*.py
+# $SLEEP
+# echo "  REV sync souce code"
+# $run $FLAGS $SSH_FLAG $CLUSTER_CODE/*.sh  $LOCAL_DIR/*.{py,sh}
+# $SLEEP

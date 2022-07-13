@@ -45,12 +45,13 @@ report = OnlineReport()
 sfreq = 120
 tmin = -0.3
 time_locked = 'reach'  # or 'target'
+n_stample_times = 20
 if time_locked == 'reach':
     tmax, num = 1.8, 8
-    sample_times = np.linspace(0, (tmax-tmin)*sfreq, (tmax-tmin)*sfreq + 1)
+    sample_times = np.linspace(0, (tmax-tmin)*sfreq, int((tmax-tmin)*sfreq + 1) )
 elif time_locked == 'target':
     tmax = 3.5
-    sample_times = np.linspace(0, (tmax-tmin)*sfreq, (tmax-tmin)*sfreq + 1)
+    sample_times = np.linspace(0, (tmax-tmin)*sfreq, int((tmax-tmin)*sfreq + 1) )
     tmax, num = 3.3, 13  # Use for plotting xticks
 times = sample_times/sfreq + tmin
 all_scores = list()
@@ -120,7 +121,7 @@ all_loca_partial_pred = list()
 all_loca_partial_pred.extend(ii[1] for ii in loca_partial_pred.items())
 all_loca_partial_pred = np.array(all_loca_partial_pred)
 
-for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
+for decoding_type, scores in zip(['classic', 'b2b', 'b2bpred'],
                        [[all_visuo, all_loca],
                         [all_visuo_partial, all_loca_partial],
                         [all_visuo_partial_pred, all_loca_partial_pred]]):
@@ -129,10 +130,10 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
     visuo = scores[0][:, 2, :]
     loca = scores[1][:, 2, :]
     fig_diag, axes = plt.subplots(figsize=(3.5, 2.5))
-    if typ == 'classic':
+    if decoding_type == 'classic':
         axes.set_title('Decoding Error')
         plt.ylabel('Decoding Performance (r)')
-    elif typ == 'b2b':
+    elif decoding_type == 'b2b':
         axes.set_title('Decoding Error (partial)')
         plt.ylabel('Decoding Performance (Ê)')
     plt.xlabel('Time (s)')
@@ -159,19 +160,19 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
                           where=sig, color=color, alpha=0.4)
     # plt.legend()
     plt.tight_layout()
-    plt.savefig(op.join(path_fig,save_folder,f'error_{typ}_{time_locked}'),
+    plt.savefig(op.join(path_fig,save_folder,f'error_{decoding_type}_{time_locked}'),
                 dpi=400)
-    #plt.savefig('/Users/quentinra/Desktop/figs_memerror/%s/error_%s_%s.png' % (save_folder, typ, time_locked),
+    #plt.savefig('/Users/quentinra/Desktop/figs_memerror/%s/error_%s_%s.png' % (save_folder, decoding_type, time_locked),
     plt.close()
     # Plot target
     chance = 0
     visuo = scores[0][:, 0, :]
     loca = scores[1][:, 0, :]
     fig_diag, axes = plt.subplots()
-    if typ == 'classic':
+    if decoding_type == 'classic':
         axes.set_title('Decoding Target')
         plt.ylabel('Decoding Performance (r)', fontsize='x-large')
-    elif typ == 'b2b':
+    elif decoding_type == 'b2b':
         axes.set_title('Decoding Target (partial)')
         plt.ylabel('Decoding Performance (E_hat)', fontsize='x-large')
     plt.xlabel('Time', fontsize='x-large')
@@ -198,17 +199,17 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
                           where=sig, color=color, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(op.join(path_fig,save_folder,f'target_{typ}_{time_locked}'))
+    plt.savefig(op.join(path_fig,save_folder,f'target_{decoding_type}_{time_locked}'))
     plt.close()
     # Plot movement
     chance = 0
     visuo = scores[0][:, 1, :]
     loca = scores[1][:, 1, :]
     fig_diag, axes = plt.subplots()
-    if typ == 'classic':
+    if decoding_type == 'classic':
         axes.set_title('Decoding Movement')
         plt.ylabel('Decoding Performance (r)', fontsize='x-large')
-    elif typ == 'b2b':
+    elif decoding_type == 'b2b':
         axes.set_title('Decoding Movement (partial)')
         plt.ylabel('Decoding Performance (E_hat)', fontsize='x-large')
     plt.xlabel('Time', fontsize='x-large')
@@ -235,17 +236,17 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
                           where=sig, color=color, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(op.join(path_fig,save_folder,f'movement_{typ}_{time_locked}'))
+    plt.savefig(op.join(path_fig,save_folder,f'movement_{decoding_type}_{time_locked}'))
     plt.close()
     # Plot previous errors
     chance = 0
     visuo = scores[0][:, 3, :]
     loca = scores[1][:, 3, :]
     fig_diag, axes = plt.subplots()
-    if typ == 'classic':
+    if decoding_type == 'classic':
         axes.set_title('Decoding Previous Error')
         plt.ylabel('Decoding Performance (r)', fontsize='x-large')
-    elif typ == 'b2b':
+    elif decoding_type == 'b2b':
         axes.set_title('Decoding Previous Error (partial)')
         plt.ylabel('Decoding Performance (E_hat)', fontsize='x-large')
     plt.xlabel('Time', fontsize='x-large')
@@ -272,7 +273,7 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
                           where=sig, color=color, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(op.join(path_fig,save_folder,f'prev_error_{typ}_{time_locked}'))
+    plt.savefig(op.join(path_fig,save_folder,f'prev_error_{decoding_type}_{time_locked}'))
     plt.close()
 
     # Plot diff
@@ -281,10 +282,10 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
     loca = scores[1][:, 2, :]
     diff = visuo - loca
     fig_diag, axes = plt.subplots(figsize=(3.5, 2))
-    if typ == 'classic':
+    if decoding_type == 'classic':
         axes.set_title('Difference between Stable and Passive Random')
         plt.ylabel('Decoding Performance (r)')
-    elif typ == 'b2b':
+    elif decoding_type == 'b2b':
         axes.set_title('Decoding Error (partial)')
         plt.ylabel('Decoding Performance (Ê)')
     plt.xlabel('Time (s)')
@@ -312,6 +313,7 @@ for typ, scores in zip(['classic', 'b2b', 'b2bpred'],
                       where=sig, color=color, alpha=0.4)
     # plt.legend()
     plt.tight_layout()
-    plt.savefig(op.join(path_fig,save_folder,f'diff_{typ}_{time_locked}'),
-                dpi=400)
+    fig_fname_full =op.join(path_fig,save_folder,f'diff_{decoding_type}_{time_locked}')
+    plt.savefig(fig_fname_full, dpi=400)
+    print(f'Fig saved to {fig_fname_full}')
     plt.close()

@@ -1,10 +1,12 @@
 import os
 import multiprocessing
+import numpy as np
 
 # path_data = '/Volumes/Samsung_T1/MEGdata/MemErrors/'
 # path_data = '/Volumes/data/MemErrors/data/'
 # path_data = '/data/quentinra/MemErrors/data2/'
 path_data = os.path.expandvars("$DATA_MEMORY_ERRORS_STAB_AND_STOCH")
+path_data_tmp = os.path.expandvars("$DATA_TMP_MEMORY_ERRORS_STAB_AND_STOCH")
 path_fig = os.path.expandvars("$FIG_MEMORY_ERRORS_STAB_AND_STOCH")
                                 #FIG_MEMORY_ERRORS_STAB_AND_STOCH
 
@@ -20,10 +22,29 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 subjects = [f for f in os.listdir(path_data) if f.startswith('sub') ]
 subjects = list(sorted(subjects))
 
-n_jobs = multiprocessing.cpu_count() - 2
+if os.path.expandvars('$USER') == 'demitau':
+    n_jobs = multiprocessing.cpu_count() - 2
+else:
+    n_jobs = multiprocessing.cpu_count()
 XGB_tree_method_def = 'gpu_hist'
 
+##########################
+
+event_ids_tgt = [20, 21, 22, 23, 25, 26, 27, 28]
+event_ids_feedback = [30,35]
+stage2event_ids = { 'target':event_ids_tgt, 'feedback':event_ids_feedback }
+
+env2envcode = dict(stable=0, random=1)
+env2subtr   = dict(stable=20, random=25)
 
 freq_names = ['broad', 'theta', 'alpha', 'beta', 'gamma']
 freqs = [(4, 60), (4, 7), (8, 12), (13, 30), (31, 60)]
 freq_name2freq = dict( list(zip(freq_names,freqs) ) )
+
+target_angs = (np.array([157.5, 112.5, 67.5, 22.5]) + 90) * \
+              (np.pi/180)
+
+stage2time = {'home':(-0.5,0) }
+stim_channel_name = 'UPPT001'
+delay_trig_photodi = 18  # to account for delay between trig. & photodi.
+min_event_duration = 0.02

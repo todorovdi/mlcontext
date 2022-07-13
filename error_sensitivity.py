@@ -3,27 +3,17 @@ import os.path as op
 import numpy as np
 import mne
 from mne.io import read_raw_fif
-from mne.decoding import (cross_val_multiscore, LinearModel,
-                          SPoC)
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler, scale
-from sklearn.model_selection import StratifiedKFold, KFold, ShuffleSplit
-from sklearn.linear_model import Ridge, RidgeCV, LinearRegression
-from sklearn.metrics import make_scorer
-from scipy.stats import spearmanr
-from jr.gat import scorer_spearman, AngularRegression
 from mne import Epochs
-import pandas as pd
+# import pandas as pd
 import warnings
 import sys
 from base2 import (int_to_unicode, point_in_circle,
                    calc_target_coordinates_centered, radius_target,
-                   radius_cursor, partial_reg, B2B_SPoC, 
-                   event_ids, env2envcode, env2subtr)
+                   radius_cursor, env2envcode, env2subtr)
 from config2 import path_data
+from config2 import event_ids_tgt,event_ids_feedback
+from config2 import target_angs
 
-target_angs = (np.array([157.5, 112.5, 67.5, 22.5]) + 90) * \
-              (np.pi/180)
 target_coords = calc_target_coordinates_centered(target_angs)
 
 #subject = sys.argv[1]
@@ -43,7 +33,7 @@ target_coords = calc_target_coordinates_centered(target_angs)
 # time_locked = 'target'  # 'target' or 'reach'
 # Read raw to extra MEG event triggers
 
-# cycle over frequencies 
+# cycle over frequencies
 #print(freq_name + '--------------------------')
 # read behav data
 #fname = op.join(path_data, subject, 'behavdata',
@@ -60,11 +50,12 @@ target_coords = calc_target_coordinates_centered(target_angs)
 # raw = read_raw_ctf(fname_raw, preload=True, system_clock='ignore')
 
 #modify behav_df in place
-def enforceTargetTriggerConsistency(behav_df, epochs, environment,do_delete_trials=1):
+def enforceTargetTriggerConsistency(behav_df, epochs, environment,do_delete_trials=1,
+                                    save_fname=None):
     meg_targets = epochs.events[:, 2].copy()
     targets = np.array( behav_df['target'] )
     for env,envcode in env2envcode.items():
-        trial_inds = np.where(environment == envcode)[0] 
+        trial_inds = np.where(environment == envcode)[0]
         meg_targets[trial_inds] = meg_targets[trial_inds] - env2subtr[env]
 
     if do_delete_trials:
@@ -74,11 +65,14 @@ def enforceTargetTriggerConsistency(behav_df, epochs, environment,do_delete_tria
         delete_trials = [change[1] for change in changes]
         # read behav.pkl and remove bad_trials if bad_trials is not empty
         if delete_trials:
-            behav_df = behav_df_full.copy().drop(delete_trials, errors='ignore')
-            behav_df.to_pickle(fname)
+            #behav_df = behav_df_full.copy().drop(delete_trials, errors='ignore')
+            behav_df = behav_df.drop(delete_trials, errors='ignore')
+            if save_fname is not None:
+                behav_df.to_pickle(save_fname)
 
         if not np.array_equal(meg_targets, targets):
             warnings.warn('MEG events and behavior file do not match')
+    return behav_df
 
 def getErrSensVals(errors_cur,targets_cur,movement_cur):
     # shit errors_cur by -1
@@ -159,7 +153,7 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
                         bad_events.append(ii+iii)
     events = np.delete(events, bad_events, 0)
 
-    epochs = Epochs(raw, events, event_id=event_ids,
+    epochs = Epochs(raw, events, event_id=event_ids_tgt,
                     tmin=tmin, tmax=tmax, preload=True,
                     baseline=None, decim=2)
 
@@ -188,7 +182,7 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     for env in ['stable','random','all']:
         if env in env2envcode:
             envcode = env2envcode[env]
-            trial_inds = np.where(environment == envcode)[0] 
+            trial_inds = np.where(environment == envcode)[0]
         else:
             trial_inds = np.arange(len(environment))
 
@@ -214,12 +208,12 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
         non_hit = np.insert(non_hit, 0, 0)[:-1]
         non_hit[[0, 192]] = False  # Removing first trial of each block
 
-        values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,movement_cur) 
+        values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,movement_cur)
         #Y_es = np.array(values_for_es)
         #analysis_value = analysis_value[:, non_hit].T
 
         values_for_es = values_for_es[:, non_hit]
-        # 0 -- target angs, 1 -- prev target angs, 2 -- current movemnet, 3 -- prev movements, 4 -- prev error 
+        # 0 -- target angs, 1 -- prev target angs, 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
         # es = (target - current) - (prev tgt - prev movemnet) / prev_error
         # prev_error is taken from df['error']
         # movement _relative_ to the target
@@ -227,8 +221,8 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
         #Q: why we divide by prev_error instead of by (Y_es[1]-Y_es[3])
         corr = (values_for_es[0]-values_for_es[2]) - (values_for_es[1]-values_for_es[3])
         es = corr/values_for_es[4]
-        #values_for_es[4]  ==  df['feedback'] - df['target']  
-        
+        #values_for_es[4]  ==  df['feedback'] - df['target']
+
         env2non_hit[env]        = non_hit
         env2corr[env]            = corr
         env2err_sens[env]            = es
@@ -246,10 +240,13 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     return env2err_sens, env2pre_err_sens,env2pre_dec_data, env2non_hit
 
 def getAnalysisData(env, time_locked, control_type, behav_df):
+    control_types_all = ['feedback', 'movement' , 'target', 'belief']
+    assert control_type in control_types_all
+    assert time_locked in ['feedback', 'target']
     environment = np.array(behav_df['environment'])
     if env != 'all':
         envcode = env2envcode[env]
-        trial_inds = np.where(environment == envcode)[0] 
+        trial_inds = np.where(environment == envcode)[0]
     else:
         trial_inds = np.arange(len(environment))
     errors_cur = np.array(behav_df['error'])[trial_inds]
@@ -258,8 +255,8 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
     feedback_cur = np.array(behav_df['feedback'])[trial_inds]
     feedbackX_cur = np.array(behav_df['feedbackX'])[trial_inds]
     feedbackY_cur = np.array(behav_df['feedbackY'])[trial_inds]
-    movement_cur = np.array(behav_df['org_feedback'])[trial_inds]  
-    errors_cur = np.array(behav_df['error'])     [trial_inds] 
+    movement_cur = np.array(behav_df['org_feedback'])[trial_inds]
+    errors_cur = np.array(behav_df['error'])     [trial_inds]
     belief_cur = np.array(behav_df['belief'])    [trial_inds]
 
     prev_targets_cur  = np.insert(targets_cur, 0, 0)[:-1]
@@ -297,28 +294,28 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
                 analysis_name = 'belief_errors_nexterrors'
                 analysis_value = [belief_cur, errors_cur, next_errors_cur]
             # remove trials preceding hit (because no next error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 
+            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur,
                 len(non_hit_cur), 1)[1:])
             non_hit_cur[767] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'
-                analysis_value = [prev_feedback, prev_errors_cur, errors_cur,
+                analysis_value = [prev_feedback_cur, prev_errors_cur, errors_cur,
                                   prev_belief_cur]
             elif control_type == 'movement':
                 analysis_name = 'prevmovement_preverrors_errors_prevbelief'
-                analysis_value = [prev_movement, prev_errors_cur, errors_cur,
+                analysis_value = [prev_movement_cur, prev_errors_cur, errors_cur,
                                   prev_belief_cur]
             elif control_type == 'target':
                 analysis_name = 'prevtarget_preverrors_errors_prevbelief'
-                analysis_value = [prev_targets, prev_errors_cur, errors_cur,
+                analysis_value = [prev_targets_cur, prev_errors_cur, errors_cur,
                                   prev_belief_cur]
             elif control_type == 'belief':
                 analysis_name = 'prevbelief_preverrors_errors'
                 analysis_value = [prev_belief_cur, prev_errors_cur, errors_cur]
             # remove trials following hit (because no previous error)
-            non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
-            non_hit[0] = False  # Removing first trial of each block
+            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 0, 1)[:-1])
+            non_hit_cur[0] = False  # Removing first trial of each block
     elif env == 'stable':
         if time_locked == 'feedback':
             if control_type == 'feedback':
@@ -405,3 +402,68 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
     return analysis_name, analysis_value, non_hit_cur
 
 
+def getEpochs_custom(raw,event_ids, tmin=None,tmax=None, bsl=None ):
+    events = mne.find_events(raw, stim_channel='UPPT001',
+                            min_duration=0.02)
+    events[:, 0] += 18  # to account for delay between trig. & photodi.
+
+    epochs = Epochs(raw, events, event_id=event_ids,
+                            tmin=-0.2, tmax=3, preload=True,
+                            baseline=(-0.2, 0), decim=6)
+    return [ ('custom',epochs) ]
+
+# from td_long2
+def getEpochs(raw,is_short,bsl):
+    events = mne.find_events(raw, stim_channel='UPPT001',
+                            min_duration=0.02)
+    events[:, 0] += 18  # to account for delay between trig. & photodi.
+    # diffence is tmax and which events are taken into acc
+    # also how baseline is computed (what is considered to be baseline data)
+    if is_short:
+        if bsl:
+            epochs_feedback = Epochs(raw, events, event_id=event_ids_feedback,
+                                    tmin=-0.2, tmax=3, preload=True,
+                                    baseline=(-0.2, 0), decim=6)
+        else:
+            epochs_feedback = Epochs(raw, events, event_id=event_ids_feedback,
+                                    tmin=-0.2, tmax=3, preload=True,
+                                    baseline=None, decim=6)
+        epochs_feedback.pick_types(meg=True, misc=False)
+    else:
+        if bsl:
+            epochs_feedback = Epochs(raw, events, event_id=event_ids_feedback,
+                                    tmin=-2, tmax=5, preload=True,
+                                    baseline=None, decim=6)
+            epochs_target = Epochs(raw, events, event_id=event_ids_tgt,
+                                tmin=-5, tmax=2, preload=True,
+                                baseline=None, decim=6)
+            epochs_bsl = Epochs(raw, events, event_id=event_ids_tgt,
+                                tmin=-0.46, tmax=-0.05, preload=True,
+                                baseline=None, decim=6)
+            # Apply baseline before the target to the epochs time-locked on feedback
+            bsl_channels = mne.pick_types(epochs_feedback.info, meg=True)
+            bsl_data = epochs_bsl.get_data()[:, bsl_channels, :]
+            bsl_data = np.mean(bsl_data, axis=2)
+            epochs_feedback._data[:, bsl_channels, :] -= bsl_data[:, :, np.newaxis]
+            # Apply baseline before the target to the epochs time-locked on targets
+            # we use the baseline from trials n-1 (the first trial is remove in
+            # subsequent analysis)
+            epochs_target._data[1:, bsl_channels, :] -= bsl_data[:-1, :, np.newaxis]
+        else:
+            epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+                                    tmin=-2, tmax=5, preload=True,
+                                    baseline=None, decim=6)
+            epochs_target = Epochs(raw, events, event_id=event_ids_tgt,
+                                tmin=-5, tmax=2, preload=True,
+                                baseline=None, decim=6)
+        epochs_feedback.pick_types(meg=True, misc=False)
+        epochs_target.pick_types(meg=True, misc=False)
+
+    if is_short:
+        epochs_type = zip(['feedback'],
+                        [epochs_feedback])
+    else:
+        epochs_type = zip(['feedback', 'target'],
+                        [epochs_feedback, epochs_target])
+
+    return epochs_type

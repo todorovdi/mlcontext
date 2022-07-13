@@ -10,7 +10,7 @@ from csp_my import SPoC
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, scale
 from sklearn.model_selection import StratifiedKFold, KFold, ShuffleSplit
-from sklearn.linear_model import Ridge, RidgeCV, LinearRegression
+from sklearn.linear_model import RidgeCV, LinearRegression
 from sklearn.metrics import make_scorer
 from jr.gat import scorer_spearman, AngularRegression
 from mne import Epochs
@@ -20,8 +20,9 @@ import warnings
 import sys
 from base2 import (int_to_unicode, point_in_circle,getXGBparams,
                    calc_target_coordinates_centered, radius_target,
-                   radius_cursor, B2B_SPoC,target_angs)
+                   radius_cursor, B2B_SPoC)
 from config2 import path_data
+from config2 import event_ids_tgt,event_ids_feedback
 from xgboost import XGBRegressor
 
 from datetime import datetime  as dt
@@ -33,9 +34,6 @@ print(f'__START: {__file__} subj={subject}, hpass={hpass}, '
 mne.cuda.init_cuda()
 n_jobs_MNE='cuda'
 n_jobs_XGB=n_jobs
-
-
-target_coords = calc_target_coordinates_centered(target_angs)
 
 #subject = sys.argv[1]
 #hpass = 'no_filter'  # '0.1', no_hpass, no_filter
@@ -50,12 +48,14 @@ if not os.path.exists(results_folder):
     os.makedirs(results_folder)
 
 ICAstr = 'with_ICA'  # or empty string
-b2b_each_b2b_fit_is_parllel = False
+b2b_each_fit_is_parallel = False
 
-if b2b_each_b2b_fit_is_parllel:
+if b2b_each_fit_is_parallel:
     n_jobs_SPoC = n_jobs
+    add_clf_creopts = getXGBparams(n_jobs = None)
 else:
     n_jobs_SPoC = 1
+    add_clf_creopts = getXGBparams(n_jobs = 1)
 
 # if we parallelize across dims, we want it to be 1
 est_parallel_across_dims = 1
@@ -65,18 +65,13 @@ else:
     n_jobs_per_dim_classical_dec = n_jobs
 add_clf_creopts_est = getXGBparams(n_jobs = n_jobs_per_dim_classical_dec)
 
-time_locked = 'target'
-# home position
-tmin = -0.5; tmax = 0
+#time_locked = 'target'
+## home position
+#tmin = -0.5; tmax = 0
 
-#regression_type = 'Ridge'
-#regression_type = 'xgboost'
+# NEED PARAMS time_locked, tmin,tmax
 
-
-if b2b_each_b2b_fit_is_parllel:
-    add_clf_creopts = getXGBparams(n_jobs = None)
-else:
-    add_clf_creopts = getXGBparams(n_jobs = 1)
+assert regression_type in  ['Ridge', 'xgboost']
 
 ##############################
 # task = 'LocaError'  # 'VisuoMotor' or 'LocaError'
@@ -87,8 +82,8 @@ f = np.load(fname, allow_pickle=True)['arr_0'][()]
 #env2corr      = f['env2corr'][()]
 #env2err_sens      = f['env2err_sens'][()]
 #env2pre_err_sens  = f['env2pre_err_sens'][()]
-env2pre_dec_data  = f['env2pre_dec_data']
-env2non_hit  = f['env2non_hit']
+#env2pre_dec_data  = f['env2pre_dec_data']
+#env2non_hit  = f['env2non_hit']
 
 # read behav data
 fname = op.join(path_data, subject, 'behavdata',
@@ -115,23 +110,35 @@ print(use_preloaded_raw)
 if not use_preloaded_raw:
     raw = read_raw_fif(op.join(path_data, subject, f'raw_{task}_{hpass}_{ICAstr}.fif' ),
             preload=True)
-    events = mne.find_events(raw, stim_channel='UPPT001',
-                                min_duration=0.02)
-    events[:, 0] += 18  # to account for delay between trig. & photodi.
+    #events = mne.find_events(raw, stim_channel='UPPT001',
+    #                            min_duration=0.02)
+    #events[:, 0] += 18  # to account for delay between trig. & photodi.
 
     raw.filter(freq[0], freq[1], n_jobs=n_jobs_MNE)
 
-    epochs = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
-                    tmin=tmin, tmax=tmax, preload=True,
-                    baseline=None, decim=2)
+    bsl = None  # (start,end)
+    if time_locked == 'target':
+        epochs_type = getEpochs_custom(raw, event_ids_tgt, tmin=tmin,tmax=tmax, bsl=bsl)
+    elif time_locked == 'target':
+        epochs_type = getEpochs_custom(raw, event_ids_feedback, tmin=tmin,tmax=tmax, bsl=bsl)
+    else:
+        raise ValueError(f'wrong time_locked={time_locked}')
+    #epochs = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
+    #                tmin=tmin, tmax=tmax, preload=True,
+    #                baseline=None, decim=2)
 
 env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
         random=epochs['25', '26', '27', '28', '35'] )
 
 times = epochs.times
 
-analysis_name = 'prevmovement_preverrors_errors_prevbelief'
+#analysis_name = 'prevmovement_preverrors_errors_prevbelief'
 
+
+#epochs_type = zip(['feedback', 'target'],
+
+r = getAnalysisData(env, time_locked, control_type, behav_df)
+analysis_name, analysis_value, non_hit_cur = r
 
 
 
@@ -159,7 +166,7 @@ elif regression_type == 'xgboost':
 else:
     raise ValueError('wrong regression value')
 
-H = LinearRegression(fit_intercept=False)
+H = LinearRegression(fit_intercept=False, n_jobs= n_jobs_SPoC)
 #G = direct pipeline (spoc + regerssor)
 #H = back pipeline
 b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,

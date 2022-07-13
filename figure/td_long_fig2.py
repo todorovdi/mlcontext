@@ -27,7 +27,6 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 #path_data = '/Volumes/data/MemErrors/data2/'
 hpass = '0.1'  # '0.1', 'detrend', no_hpass
-control_type = 'target'  # 'movement', 'feedback', 'target' or 'belief'
 controls = ['classic', 'b2b']
 is_short = True
 ICA = 'with_ICA'
@@ -63,7 +62,7 @@ if not op.exists( op.join(path_fig, save_folder) ):
 # Plot errors in each environment together
 controls = ['classic', 'b2b']
 
-regression_types = ['Ridge', 'xgboost']
+files_missing = []
 
 for time_locked in time_lockeds:
     times = time_locked[2]
@@ -74,19 +73,25 @@ for time_locked in time_lockeds:
         for subject in subjects:
             results_folder = output_folder
             if control == 'classic':
-                fname_all = 'allscores_%s_%s.npy' % ( time_locked[0],
+                fname_all = f'all_{regression_type}_scores_%s_%s.npy' % ( time_locked[0],
                                                         time_locked[1])
-                fname_stable = 'stablescores_%s_%s.npy' % ( time_locked[0],
+                fname_stable = f'stable_{regression_type}_scores_%s_%s.npy' % ( time_locked[0],
                                                               time_locked[1])
-                fname_random = 'randomscores_%s_%s.npy' % ( time_locked[0],
+                fname_random = f'random_{regression_type}_scores_%s_%s.npy' % ( time_locked[0],
                                                               time_locked[1])
             elif control == 'b2b':
-                fname_all = 'allpartial_scores_%s_%s.npy' % ( time_locked[0],
+                fname_all = f'all_{regression_type}_partial_scores_%s_%s.npy' % ( time_locked[0],
                                                                 time_locked[1])
-                fname_stable = 'stablepartial_scores_%s_%s.npy' % ( time_locked[0],
+                fname_stable = f'stable_{regression_type}_partial_scores_%s_%s.npy' % ( time_locked[0],
                                                                    time_locked[1])
-                fname_random = 'randompartial_scores_%s_%s.npy' % ( time_locked[0],
+                fname_random = f'random_{regression_type}_partial_scores_%s_%s.npy' % ( time_locked[0],
                                                                       time_locked[1])
+            fn = op.join(path_data, subject, 'results',
+                                     results_folder, fname_all)
+            if not os.path.exists( fn):
+                print(f'WARNING missing {fn}')
+                files_missing += [fn]
+                continue
             sc_all = np.load(op.join(path_data, subject, 'results',
                                      results_folder, fname_all))
             sc_stable = np.load(op.join(path_data, subject, 'results',
@@ -96,6 +101,10 @@ for time_locked in time_lockeds:
             all_scores_all.append(sc_all)
             all_scores_stable.append(sc_stable)
             all_scores_random.append(sc_random)
+
+        if not len(all_scores_all) :
+            print('ERROR: no scores found')
+            exit(1)
         all_scores_all = np.array(all_scores_all)
         all_scores_stable = np.array(all_scores_stable)
         all_scores_random = np.array(all_scores_random)
@@ -111,14 +120,14 @@ for time_locked in time_lockeds:
         # plt.fill_between(times, all_scores_all[1].mean(0), where=sig, color=colors[3], alpha=0.3)
         # Plot errors during stable environment
         plt.plot(times, all_scores_stable[1].mean(0), color=colors[0], label='Stable environment', linewidth=0.5)
-        sig = decod_stats(all_scores_stable[1]) < save_folder, 0.05
+        sig = decod_stats(all_scores_stable[1]) < 0.05
         plt.fill_between(times, all_scores_stable[1].mean(0), where=sig, color=colors[0], alpha=0.3)
         # Plot errors during random environment
         plt.plot(times, all_scores_random[1].mean(0), color=colors[1], label='Random environment', linewidth=0.5)
         sig = decod_stats(all_scores_random[1]) < 0.05
         plt.fill_between(times, all_scores_random[1].mean(0), where=sig, color=colors[1], alpha=0.3)
         plt.legend()
-        fname_fig = op.join(path_fig,save_folder,'Exp2_%s_%s_errors' % (time_locked[0], control) )
+        fname_fig = op.join(path_fig,save_folder,f'Exp2_{regression_type}_%s_%s_errors' % (time_locked[0], control) )
         plt.savefig(fname_fig, dpi=400)
         plt.close()
 
@@ -133,18 +142,14 @@ for time_locked in time_lockeds:
         for subject in subjects:
             results_folder = output_folder
             if control == 'classic':
-                fname_stable = '%s_stablescores_%s_%s.npy' % (subject,
-                                                              time_locked[0],
+                fname_stable = f'stable_{regression_type}_scores_%s_%s.npy' % ( time_locked[0],
                                                               time_locked[1])
-                fname_random = '%s_randomscores_%s_%s.npy' % (subject,
-                                                              time_locked[0],
+                fname_random = f'random_{regression_type}_scores_%s_%s.npy' % ( time_locked[0],
                                                               time_locked[1])
             elif control == 'b2b':
-                fname_stable = '%s_stablepartial_scores_%s_%s.npy' % (subject,
-                                                                   time_locked[0],
+                fname_stable = f'stable_{regression_type}_partial_scores_%s_%s.npy' % ( time_locked[0],
                                                                    time_locked[1])
-                fname_random = '%s_randompartial_scores_%s_%s.npy' % (subject,
-                                                                      time_locked[0],
+                fname_random = f'random_{regression_type}_partial_scores_%s_%s.npy' % ( time_locked[0],
                                                                       time_locked[1])
             sc_stable = np.load(op.join(path_data, subject, 'results/',
                                         results_folder, fname_stable))
@@ -164,9 +169,9 @@ for time_locked in time_lockeds:
         plt.plot(times, diff.mean(0), color=colors[0], linewidth=0.5)
         sig = decod_stats(diff) < 0.05
         plt.fill_between(times, diff.mean(0), where=sig, color=colors[0], alpha=0.3)
-        fname_fig = op.join( path_fig, save_folder, 'Exp2_%s_%s_errors_diff' % (time_locked[0], control) )
-        plt.savefig(fname_fig,
-                    dpi=400)
+        fname_fig = op.join( path_fig, save_folder, f'Exp2_{regression_type}_%s_%s_errors_diff' % (time_locked[0], control) )
+        plt.savefig(fname_fig, dpi=400)
+        print(f'Fig saved to {fname_fig}')
         plt.close()
 
 
@@ -183,7 +188,7 @@ for time_locked in time_lockeds:
 #                 if control == 'classic':
 #                     fname = '%s_%sscores_%s_%s.npy' % (subject, env,
 #                                                        time_locked[0],
-#                                                        time_locked[1])
+#                                                files_missing        time_locked[1])
 #                 elif control == 'b2b':
 #                     fname = '%s_%spartial_scores_%s_%s.npy' % (subject, env,
 #                                                                time_locked[0],

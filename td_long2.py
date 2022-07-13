@@ -19,7 +19,7 @@ from tqdm import tqdm
 import sys
 from base2 import (int_to_unicode, point_in_circle, getXGBparams,
                    calc_target_coordinates_centered, radius_target,
-                   radius_cursor, B2B, 
+                   radius_cursor, B2B,
                    event_ids, env2envcode, env2subtr, target_angs)
 from error_sensitivity import getAnalysisData
 from config2 import path_data, subjects
@@ -68,49 +68,58 @@ behav_df = pd.read_pickle(fname)
 raw = read_raw_fif(op.join(path_data, subject,
                    f'raw_{task}_{hpass}_{ICA}.fif' ),
                    preload=True)
-events = mne.find_events(raw, stim_channel='UPPT001',
-                         min_duration=0.02)
-events[:, 0] += 18  # to account for delay between trig. & photodi.
-if is_short:
-    if bsl:
-        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
-                                 tmin=-0.2, tmax=3, preload=True,
-                                 baseline=(-0.2, 0), decim=6)
-    else:
-        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
-                                 tmin=-0.2, tmax=3, preload=True,
-                                 baseline=None, decim=6)
-    epochs_feedback.pick_types(meg=True, misc=False)
-else:
-    if bsl:
-        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
-                                 tmin=-2, tmax=5, preload=True,
-                                 baseline=None, decim=6)
-        epochs_target = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
-                               tmin=-5, tmax=2, preload=True,
-                               baseline=None, decim=6)
-        epochs_bsl = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
-                            tmin=-0.46, tmax=-0.05, preload=True,
-                            baseline=None, decim=6)
-        # Apply baseline before the target to the epochs time-locked on feedback
-        bsl_channels = mne.pick_types(epochs_feedback.info, meg=True)
-        bsl_data = epochs_bsl.get_data()[:, bsl_channels, :]
-        bsl_data = np.mean(bsl_data, axis=2)
-        epochs_feedback._data[:, bsl_channels, :] -= bsl_data[:, :, np.newaxis]
-        # Apply baseline before the target to the epochs time-locked on targets
-        # we use the baseline from trials n-1 (the first trial is remove in
-        # subsequent analysis)
-        epochs_target._data[1:, bsl_channels, :] -= bsl_data[:-1, :, np.newaxis]
-    else:
-        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
-                                 tmin=-2, tmax=5, preload=True,
-                                 baseline=None, decim=6)
-        epochs_target = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
-                               tmin=-5, tmax=2, preload=True,
-                               baseline=None, decim=6)
-    epochs_feedback.pick_types(meg=True, misc=False)
-    epochs_target.pick_types(meg=True, misc=False)
 
+from base2 import getEpochs
+epochs_type = getEpochs(raw,is_short,bsl)
+#events = mne.find_events(raw, stim_channel='UPPT001',
+#                         min_duration=0.02)
+#events[:, 0] += 18  # to account for delay between trig. & photodi.
+#if is_short:
+#    if bsl:
+#        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+#                                 tmin=-0.2, tmax=3, preload=True,
+#                                 baseline=(-0.2, 0), decim=6)
+#    else:
+#        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+#                                 tmin=-0.2, tmax=3, preload=True,
+#                                 baseline=None, decim=6)
+#    epochs_feedback.pick_types(meg=True, misc=False)
+#else:
+#    if bsl:
+#        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+#                                 tmin=-2, tmax=5, preload=True,
+#                                 baseline=None, decim=6)
+#        epochs_target = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
+#                               tmin=-5, tmax=2, preload=True,
+#                               baseline=None, decim=6)
+#        epochs_bsl = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
+#                            tmin=-0.46, tmax=-0.05, preload=True,
+#                            baseline=None, decim=6)
+#        # Apply baseline before the target to the epochs time-locked on feedback
+#        bsl_channels = mne.pick_types(epochs_feedback.info, meg=True)
+#        bsl_data = epochs_bsl.get_data()[:, bsl_channels, :]
+#        bsl_data = np.mean(bsl_data, axis=2)
+#        epochs_feedback._data[:, bsl_channels, :] -= bsl_data[:, :, np.newaxis]
+#        # Apply baseline before the target to the epochs time-locked on targets
+#        # we use the baseline from trials n-1 (the first trial is remove in
+#        # subsequent analysis)
+#        epochs_target._data[1:, bsl_channels, :] -= bsl_data[:-1, :, np.newaxis]
+#    else:
+#        epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+#                                 tmin=-2, tmax=5, preload=True,
+#                                 baseline=None, decim=6)
+#        epochs_target = Epochs(raw, events, event_id=[20, 21, 22, 23, 25, 26, 27, 28],
+#                               tmin=-5, tmax=2, preload=True,
+#                               baseline=None, decim=6)
+#    epochs_feedback.pick_types(meg=True, misc=False)
+#    epochs_target.pick_types(meg=True, misc=False)
+#
+# if is_short:
+#     epochs_type = zip(['feedback'],
+#                       [epochs_feedback])
+# else:
+#     epochs_type = zip(['feedback', 'target'],
+#                       [epochs_feedback, epochs_target])
 
 clf  = RidgeCV()
 clf2 = RidgeCV(fit_intercept=False)
@@ -130,17 +139,11 @@ b2b = B2B(G=G, H=H, n_splits=n_splits_B2B)
 cv = KFold(nb_fold, shuffle=True)
 
 
-if is_short:
-    epochs_type = zip(['feedback'],
-                      [epochs_feedback])
-else:
-    epochs_type = zip(['feedback', 'target'],
-                      [epochs_feedback, epochs_target])
 
 #  Run decoding
 for (time_locked, epochs) in epochs_type:
     # these numbers are trigger values and 20..23 are dif targets
-    env2epochs={'all':epochs['20', '21', '22', '23', '30', 
+    env2epochs={'all':epochs['20', '21', '22', '23', '30',
         '25', '26', '27', '28', '35'],
             'stable':epochs['20', '21', '22', '23', '30'],
             'random':epochs['25', '26', '27', '28', '35'] }
@@ -182,7 +185,7 @@ for (time_locked, epochs) in epochs_type:
                 f'{env}_{regression_type}_scores_{time_locked}_{analysis_name}.npy')
         np.save(fname, np.array(scores))
 
-        fname = op.join(results_folder, 
+        fname = op.join(results_folder,
                 f'{env}_{regression_type}_partial_scores_{time_locked}_{analysis_name}.npy')
         #% (subject, env, , analysis_name))
         np.save(fname, np.array(partial_scores))

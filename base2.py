@@ -11,13 +11,13 @@ radius = int(round(height*0.5*0.8))
 radius_target = 12
 radius_cursor = 8
 
-event_ids = [20, 21, 22, 23, 25, 26, 27, 28]
+#event_ids = [20, 21, 22, 23, 25, 26, 27, 28]  # _tgt
 
 env2envcode = dict(stable=0, random=1)
 env2subtr   = dict(stable=20, random=25)
 
-target_angs = (np.array([157.5, 112.5, 67.5, 22.5]) + 90) * \
-              (np.pi/180)
+from config2 import target_angs
+#target_coords = calc_target_coordinates_centered(target_angs)
 
 
 def int_to_unicode(array):
