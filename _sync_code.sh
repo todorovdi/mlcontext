@@ -54,8 +54,8 @@ fi
 
 echo "  sync souce code"
 # if I put *.{py,sh} here, then it does not get parsed well by python
-$run --mode:$RUNTYPE --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.py"  "$CLUSTER_CODE/"
-$run --mode:$RUNTYPE --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.sh"  "$CLUSTER_CODE/"
+$run --mode:$RUNTYPE --exclude="*HPC*.py" --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.py"  "$CLUSTER_CODE/"
+$run --mode:$RUNTYPE --exclude="*HPC*.sh" --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.sh"  "$CLUSTER_CODE/"
 if [ $? -ne 0 ]; then
   exit $?
 fi
@@ -63,21 +63,20 @@ fi
 $SLEEP
 echo "  sync figure making code"
 subdir=figure
-$run --mode:$RUNTYPE "$LOCAL_DIR/$subdir/*.py"  "$CLUSTER_CODE/$subdir"
+$run --mode:$RUNTYPE --exclude="*HPC*.py" "$LOCAL_DIR/$subdir/*.py"  "$CLUSTER_CODE/$subdir"
 #$run $FLAGS $SSH_FLAG   
 $SLEEP
-subdir=jupyter_debug
-$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
-subdir=jupyter_release
-$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
-#subdir=run
+#subdir=jupyter_debug
+#$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
+#subdir=jupyter_release
+#$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
 
 
 echo "  REV sync souce code"
 $run --mode:$RUNTYPE  "$CLUSTER_CODE/*_HPC.py"  $LOCAL_DIR/
 $SLEEP
 echo "  REV sync scripts"
-$run --mode:$RUNTYPE  "$CLUSTER_CODE/sbatch*.sh"  $LOCAL_DIR/slurm_scripts
+$run --mode:$RUNTYPE  "$CLUSTER_CODE/sbatch*.sh"  $LOCAL_DIR/slurm_scripts_"$SSH_HOSTNAME"
 $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/*.sh"  $LOCAL_DIR
 #$SLEEP
 #sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/

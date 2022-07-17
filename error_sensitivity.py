@@ -450,7 +450,7 @@ def getEpochs(raw,is_short,bsl):
             # subsequent analysis)
             epochs_target._data[1:, bsl_channels, :] -= bsl_data[:-1, :, np.newaxis]
         else:
-            epochs_feedback = Epochs(raw, events, event_id=[30, 35],
+            epochs_feedback = Epochs(raw, events, event_id=event_ids_feedback,
                                     tmin=-2, tmax=5, preload=True,
                                     baseline=None, decim=6)
             epochs_target = Epochs(raw, events, event_id=event_ids_tgt,

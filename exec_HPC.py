@@ -15,7 +15,7 @@ scripts_dir = pjoin( os.path.expandvars('$CODE_MEMORY_ERRORS'))
 print(data_dir_input, scripts_dir)
 
 
-with open('__runpars.txt') as f:
+with open(pjoin(scripts_dir,'__runpars.txt'), 'r' ) as f:
   lines = f.readlines()
 
 line_ind = int(sys.argv[1])

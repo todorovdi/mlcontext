@@ -31,11 +31,11 @@ for hpass in hpasses:
                     ind_glob += 1
         # then we want to clear (after the tasks are finished of course)
         # so it would be some delayed execution... idk
-        par = {'_action':'delete'}
-        par['freq_name'] =freq_name
-        par['hpass'] =hpass
-        par['ind_range'] = ind_loc_start,ind_glob  # [a,b)
-        pars += [par]
+        #par = {'_action':'delete'}
+        #par['freq_name'] =freq_name
+        #par['hpass'] =hpass
+        #par['ind_range'] = ind_loc_start,ind_glob  # [a,b)
+        #pars += [par]
 
 
 ss = []

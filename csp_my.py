@@ -665,6 +665,7 @@ class SPoC(CSP):
         self : instance of SPoC
             Returns the modified instance.
         """
+        assert X.size > 0
         from scipy import linalg
         self._check_Xy(X, y)
 
@@ -691,6 +692,7 @@ class SPoC(CSP):
                 print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
                 for ii, epoch in enumerate(X):
                     #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+                    assert epoch.size > 0
                     covs[ii] = _regularized_covariance(
                         epoch, reg=self.reg, method_params=self.cov_method_params,
                         rank=self.rank)

@@ -24,7 +24,8 @@ from base2 import (int_to_unicode, point_in_circle,getXGBparams,
 from config2 import n_jobs as n_jobs_def
 from config2 import min_event_duration
 from config2 import (path_data,path_data_tmp,freq_name2freq,
-                     stage2event_ids,stim_channel_name,delay_trig_photodi)
+                     stage2event_ids,stim_channel_name,delay_trig_photodi,
+                     stage2evn2event_ids)
 from xgboost import XGBRegressor
 
 from datetime import datetime  as dt
@@ -87,11 +88,12 @@ b2b_each_fit_is_parllel   = int( par.get('b2b_each_fit_is_parllel',0)   )
 classic_dec_verbose       = int( par.get('classic_dec_verbose',3)       )
 
 nb_fold                   = int( par.get('nb_fold',6)                   )
+decim_epochs              = int( par.get('decim_epochs',2)                   )
 n_splits_B2B              = int( par.get('n_splits_B2B',30)             )
 SPoC_n_components         = int( par.get('SPoC_n_components',5)         )
-safety_time_bound = float( par.get('safety_time_bound',0.05) )
+safety_time_bound         = float( par.get('safety_time_bound',0.05) )
 
-analysis_name_from_par = par.get('analysis_name', 'prevmovement_preverrors_errors_prevbelief')
+#analysis_name_from_par = par.get('analysis_name', 'prevmovement_preverrors_errors_prevbelief')
 use_preloaded_raw = int( par.get('use_preloaded_raw', 0) )
 mne_fit_log_level         = par.get('mne_fit_log_level', 'warning')
 
@@ -238,14 +240,20 @@ for tmin_cur,tmax_cur in tminmax:
                 print(f'INFO: Found epochs, loading {fn_epochs_full}')
                 ep = mne.read_epochs(fn_epochs_full)
             else:
-                epochs = Epochs(raw, events, event_id=stage2event_ids[time_locked],
+                #epochs = Epochs(raw, events, event_id=stage2event_ids[time_locked],
+                #                tmin=tmin_cur, tmax=tmax_cur, preload=True,
+                #                baseline=bsl, decim=decim_epochs)
+
+                #event_ids_cur = stage2evn2event_ids[time_locked][env]
+                #ep = epochs[event_ids_cur]
+                ep = Epochs(raw, events, event_id=stage2evn2event_ids[time_locked][env] ,
                                 tmin=tmin_cur, tmax=tmax_cur, preload=True,
-                                baseline=bsl, decim=2)
+                                baseline=bsl, decim=decim_epochs)
                 #del raw
 
-                env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
-                        random=epochs['25', '26', '27', '28', '35'] )
-                ep = env2epochs[env]
+                #env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
+                #        random=epochs['25', '26', '27', '28', '35'] )
+                #ep = env2epochs[env]
                 if save_epochs:
                     if not os.path.exists(path_data_tmp_cursubj):
                         os.makedirs(path_data_tmp_cursubj)
@@ -302,10 +310,9 @@ for tmin_cur,tmax_cur in tminmax:
 
         tmin_safe = tmin_cur + safety_time_bound
         tmax_safe = tmax_cur + safety_time_bound
-
+        #wh = (times > -0.45) & (times < 0.05)
 
         X = ep.pick_types(meg=True, ref_meg=False)._data
-        #wh = (times > -0.45) & (times < 0.05)
         wh = (times > tmin_safe) & (times < tmax_safe)
         X = X[non_hit_cur]  # trial x channel x time
         X = X[:, :, wh]

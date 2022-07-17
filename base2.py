@@ -514,6 +514,15 @@ def partial_reg(Y=None, X=None, n_ensemble=100, clf1=None, clf2=None):
     E_hat = np.mean(H_hats, 0)
     return E_hat
 
+def getGPUavail():
+    try:
+        import GPUtil
+        GPUs_list = GPUtil.getAvailable()
+    except:
+        GPUs_list = []
+
+    return GPUs_list
+
 def getXGBparams(n_jobs=None, tree_method='gpu_hist'):
     if tree_method is None:
         from config2 import XGB_tree_method_def
@@ -532,8 +541,7 @@ def getXGBparams(n_jobs=None, tree_method='gpu_hist'):
 
     if XGB_tree_method == 'gpu_hist':
         #XGB_tree_method = 'gpu_hist'
-        import GPUtil
-        GPUs_list = GPUtil.getAvailable()
+        GPUs_list = getGPUavail()
         if len(GPUs_list):
         #assert len(GPUs_list)
             method_params['gpu_id'] = GPUs_list[0]

@@ -134,7 +134,7 @@ est = SlidingEstimator(pipeline,
 G = make_pipeline(clf2)
 H = LinearRegression(fit_intercept=False)
 
-b2b = B2B(G=G, H=H, n_splits=n_splits_B2B)
+b2b = B2B(G=G, H=H, n_splits=n_splits_B2B, n_jobs=n_jobs)
 
 cv = KFold(nb_fold, shuffle=True)
 
