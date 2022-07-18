@@ -7,6 +7,7 @@ from base2 import decod_stats, gat_stats
 from mne.stats import spatio_temporal_cluster_1samp_test
 from mne.stats import permutation_cluster_1samp_test
 from scipy.stats import ttest_1samp, ttest_rel
+from config2 import genFnSliding
 import seaborn as sns
 import pandas as pd
 from scipy.stats import ttest_rel
@@ -65,37 +66,67 @@ for decoding_type in ['classic', 'b2b']:
         results_folder = output_folder
         for env in environment:
             sc = None
-            if decoding_type == 'classic':
-                fname = f'{env}_{rt}_scores_{analysis_name}_{freq_name}.npy'
-            if decoding_type == 'b2b':
-                fname = f'{env}_{rt}_partial_scores_{analysis_name}_{freq_name}.npy'
-            fname_full = op.join(path_data, subject, 'results',
-                    results_folder, fname)
 
-            ###### renaming
-            if not os.path.exists(fname_full):
-                fname_alt = f'{env}_{rt}_spatial_scores_{analysis_name}_{freq_name}.npy'
-                fname_alt_full = op.join(path_data, subject, 'results',
-                        results_folder, fname_alt)
 
-                if os.path.exists(fname_alt_full):
-                    shutil.move(fname_alt_full,fname_full)
-                    print(f'moved {fname_alt_full} to {fname_full}')
+            tmin_cur = -0.5
+            tmax_cur = 0
+            fname_full = genFnSliding(results_folder, env,regression_type,
+                time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
 
             if not os.path.exists(fname_full):
-                print(f'WARNING: file does not exist: {fname_full}')
-                fnames_missing += [fname_full]
+                print(f'ERROR: {fname_full} does not exist, skipping')
+                fnames_missing.append(fname_full)
                 continue
             else:
-                sc = np.load(fname_full)
-                if not sc.size:
-                    print(f'WARNING: corrupted scores for {fname_full}')
-                    fnames_zero_size += [fname_full]
-                    continue
-                if env == 'stable':
-                    all_scores_stable.append(sc)
-                elif env == 'random':
-                    all_scores_random.append(sc)
+                f = np.load(fname_full)
+                print(f'INFO: loaded {fname_full}')
+                fnames_cur.append(fname_full)
+            if decoding_type == 'classic':
+                sc = f['scores']
+            elif decoding_type == 'b2b':
+                sc = f['partial_scores']
+
+            if not sc.size:
+                print(f'WARNING: corrupted scores for {fname_full}')
+                fnames_zero_size += [fname_full]
+                continue
+
+            if env == 'stable':
+                all_scores_stable.append(sc)
+            elif env == 'random':
+                all_scores_random.append(sc)
+
+            #if decoding_type == 'classic':
+            #    fname = f'{env}_{rt}_scores_{analysis_name}_{freq_name}.npy'
+            #if decoding_type == 'b2b':
+            #    fname = f'{env}_{rt}_partial_scores_{analysis_name}_{freq_name}.npy'
+            #fname_full = op.join(path_data, subject, 'results',
+            #        results_folder, fname)
+
+            ####### renaming
+            #if not os.path.exists(fname_full):
+            #    fname_alt = f'{env}_{rt}_spatial_scores_{analysis_name}_{freq_name}.npy'
+            #    fname_alt_full = op.join(path_data, subject, 'results',
+            #            results_folder, fname_alt)
+
+            #    if os.path.exists(fname_alt_full):
+            #        shutil.move(fname_alt_full,fname_full)
+            #        print(f'moved {fname_alt_full} to {fname_full}')
+
+            #if not os.path.exists(fname_full):
+            #    print(f'WARNING: file does not exist: {fname_full}')
+            #    fnames_missing += [fname_full]
+            #    continue
+            #else:
+            #    sc = np.load(fname_full)
+            #    if not sc.size:
+            #        print(f'WARNING: corrupted scores for {fname_full}')
+            #        fnames_zero_size += [fname_full]
+            #        continue
+            #    if env == 'stable':
+            #        all_scores_stable.append(sc)
+            #    elif env == 'random':
+            #        all_scores_random.append(sc)
     all_scores_stable = np.array(all_scores_stable)
     all_scores_random = np.array(all_scores_random)
 

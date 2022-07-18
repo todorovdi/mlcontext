@@ -31,7 +31,7 @@ par = dict(tuples)
 print(par)
 #sys.exit(1)
 
-
+print(f'final RSID is {line_ind}')
 
 script_name = pjoin(scripts_dir, par['script'])
 try:

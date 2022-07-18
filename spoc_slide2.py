@@ -25,7 +25,7 @@ from config2 import n_jobs as n_jobs_def
 from config2 import min_event_duration
 from config2 import (path_data,path_data_tmp,freq_name2freq,
                      stage2event_ids,stim_channel_name,delay_trig_photodi,
-                     stage2evn2event_ids)
+                     stage2evn2event_ids,genFnSliding)
 from xgboost import XGBRegressor
 
 from datetime import datetime  as dt
@@ -46,6 +46,7 @@ if isinstance(freq_limits,str):
     freq_limits = eval(freq_limits)
 hpass             = par['hpass']  # '0.1', no_hpass, no_filter
 
+assert ',' not in regression_type, regression_type
 #if ',' in regression_type:
 #    regression_type = regression_type.split(',')
 #else:
@@ -311,7 +312,7 @@ for tmin_cur,tmax_cur in tminmax:
             # Regressions for the B2B
             G = make_pipeline(spoc, xgb)
         else:
-            raise ValueError('wrong regression value')
+            raise ValueError(f'wrong regression value {regression_type}')
 
         H = LinearRegression(fit_intercept=False, n_jobs= n_jobs_SPoC)
         #G = direct pipeline (spoc + regerssor)

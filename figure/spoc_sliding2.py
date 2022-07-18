@@ -79,6 +79,7 @@ files_missing = []
 time_lockeds = ['target', 'feedback']
 envs = ['stable','random']
 #envs = ['stable','random','all']  # so far I did not compute for 'all'
+env2color = dict( zip(envs,colors) )
 
 from config2 import stage2time_bounds,genFnSliding
 
@@ -172,7 +173,6 @@ for time_locked in time_lockeds:
             print('ERROR: no scores found')
             sys.exit(1)
 
-        env2color = dict( zip(envs,colors) )
 
         plt.title('%s decoding error' % decoding_type, fontsize=14)
         for env,scs in env2all_scores.items():
@@ -194,10 +194,12 @@ for time_locked in time_lockeds:
 
         plt.legend()
 
-        fname_fig = op.join(path_fig,save_folder,f'Exp2_{regression_type}_%s_%s_errors' % (time_locked, decoding_type) )
+        fname_fig = op.join(path_fig,save_folder,
+            f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}_errors' )
         plt.savefig(fname_fig, dpi=400)
         plt.close()
 
+print('First fig finsihed')
 ############################################################################
 ############################################################################
 
@@ -230,6 +232,9 @@ for time_locked in time_lockeds:
             #plt.savefig(fname_fig, dpi=400)
             #plt.close()
 
+
+np.savez( pjoin(path_fig,save_folder, f'{regression_type}_{freq_name}_gathered.npz'), time_locked_decoding_type_env2scores=tpls)
+
 for (time_locked,decoding_type,env2all_scores) in tpls:
     diff = env2all_scores['stable'][1] - env2all_scores['random'][1]
 
@@ -239,11 +244,12 @@ for (time_locked,decoding_type,env2all_scores) in tpls:
     sig = decod_stats(diff) < 0.05
     plt.fill_between(tmins, diff.mean(0), where=sig, color=colors[0], alpha=0.3)
     fname_fig = op.join( path_fig, save_folder,
-        f'Exp2_{regression_type}_%s_%s_errors_diff' % (time_locked, decoding_type) )
+        f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}' )
     plt.savefig(fname_fig, dpi=400)
     print(f'Fig saved to {fname_fig}')
     plt.close()
 
+print('Second fig finsihed')
 
 #for time_locked in time_lockeds:
 #    start, end = stage2time_bounds[time_locked]

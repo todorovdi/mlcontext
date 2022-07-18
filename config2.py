@@ -24,9 +24,10 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 ####################
 
 hostname = socket.gethostname()
-if hostname.startswith('jsfc'):
-    print('Hostname = ',hostname)
-else:
+#if hostname.startswith('jsfc'):
+#    print('Hostname = ',hostname)
+#    # do nothing
+if not hostname.startswith('jsfc'):
     try:
         from jupyter_helpers.notifications import Notifications
         #p = '/usr/share/sounds/gnome/default/alerts/'
