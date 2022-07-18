@@ -56,7 +56,7 @@ if ',' in env_to_run:
 else:
     env_to_run = [env_to_run]
 
-output_folder = par.get('output_folder',f'spoc_home2_{hpass}')
+output_folder = par.get('output_folder',f'spoc_sliding2_{hpass}')
 ICAstr = par.get('ICAstr','with_ICA'  )  # empty string is allowed
 time_locked = par.get('time_locked','target')
 control_type = par.get('control_type','movement')
@@ -92,6 +92,9 @@ decim_epochs              = int( par.get('decim_epochs',2)                   )
 n_splits_B2B              = int( par.get('n_splits_B2B',30)             )
 SPoC_n_components         = int( par.get('SPoC_n_components',5)         )
 safety_time_bound         = float( par.get('safety_time_bound',0.05) )
+crop                      = par.get('crop',None) ;
+if crop is not None:
+    crop = eval(crop)
 
 #analysis_name_from_par = par.get('analysis_name', 'prevmovement_preverrors_errors_prevbelief')
 use_preloaded_raw = int( par.get('use_preloaded_raw', 0) )
@@ -196,13 +199,29 @@ fn_flt_raw_full = op.join(path_data_tmp_cursubj, fn_flt_raw )
 fn_events = f'events_{task}_{hpass}_{ICAstr}.txt'
 fn_events_full = op.join(path_data, subject, fn_events )
 
+raw = None
 if load_flt_raw and os.path.exists(fn_flt_raw_full) and os.path.exists(fn_events_full):
     print(f'INFO: Found filtered raw, loading {fn_flt_raw_full}')
-    raw = read_raw_fif(fn_flt_raw_full, preload=True)
-    events = mne.read_events(fn_events_full)
-else:
+    try:
+        raw = read_raw_fif(fn_flt_raw_full, preload=True)
+        print('raw.times[-1] = ',raw.times[-1] )
+
+        if crop is not None:
+            raw.crop(crop[0],crop[1])
+            events = mne.find_events(raw, stim_channel=stim_channel_name,
+                                        min_duration=min_event_duration)
+            events[:, 0] += delay_trig_photodi
+        else:
+            events = mne.read_events(fn_events_full)
+    except Exception as e:
+        print('loading filtered raw failed, got exception ',str(e))
+
+
+if raw is None:
     raw = read_raw_fif(op.join(path_data, subject, f'raw_{task}_{hpass}_{ICAstr}.fif' ),
             preload=True)
+    if crop is not None:
+        raw.crop(crop[0],crop[1])
     events = mne.find_events(raw, stim_channel=stim_channel_name,
                                 min_duration=min_event_duration)
     events[:, 0] += delay_trig_photodi
@@ -232,7 +251,7 @@ for tmin_cur,tmax_cur in tminmax:
         bsl = None
         if (not use_preloaded_raw) or (not preloaded_raw_is_present):
 
-            fn = f'raw_{task}_{hpass}_{ICAstr}_{freq_name}_{env}_{time_locked}_{tmin_cur:.2f},{tmax_cur:.2f}.fif'
+            fn = f'{task}_{hpass}_{ICAstr}_{freq_name}_{env}_{time_locked}_{tmin_cur:.2f},{tmax_cur:.2f}_epochs.fif'
             fn_epochs_full = op.join(path_data_tmp_cursubj, fn)
 
 
@@ -323,6 +342,12 @@ for tmin_cur,tmax_cur in tminmax:
 
         dim = Y.shape[1]
 
+        svd = {'par':par}
+        #fn_suffix = f'{env}_{regression_type}_{time_locked}_{analysis_name}_{freq_name}_t={tmin_cur:.2f},{tmax_cur:.2f}'
+        #fn = f'{fn_suffix}.npz'
+        #fname = op.join(results_folder, fn)
+
+        fname_full = genFnSliding(results_folder, env,regression_type,time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
         ##########################################################################
         ########################## Classic decoding ##############################
         ##########################################################################
@@ -351,9 +376,9 @@ for tmin_cur,tmax_cur in tminmax:
             scores = np.array(scores)
 
             # save scores
-            fn = f'{env}_{regression_type}_scores_{analysis_name}_{freq_name}.npy'
-            fname = op.join(results_folder, fn)
-            print(f'Finished saving {fname}')
+            svd['scores'] = scores
+            np.savez(fname_full, **svd)
+            print(f'Finished scores to {fname_full}')
 
         #X: trialx x MEG x time
         #Y: trials x vals
@@ -367,16 +392,15 @@ for tmin_cur,tmax_cur in tminmax:
             b2b.fit(X, Y)
 
             partial_scores = np.diag(b2b.E_)
-            np.save(fname, np.array(scores))
-            fname = op.join(results_folder,
-                f'{env}_{regression_type}_partial_scores_{analysis_name}_{freq_name}.npy')
+            svd['partial_scores'] = partial_scores
+            np.savez(fname_full, **svd)
             # NOTE: here he use spaRtial scores, was written wrong
             #                '%s_%spartial_scores_%s_%s.npy' % (subject, env,
             #                                                   analysis_name,
             #                                                   freq_name))
-            np.save(fname, np.array(partial_scores))
+            #np.save(fname, np.array(partial_scores))
 
-            print(f'Finished saving {fname}')
+            print(f'Finished saving partial_scores {fname_full}')
 
         del b2b
         del est,cv,H,G

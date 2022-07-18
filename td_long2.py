@@ -127,6 +127,7 @@ clf2 = RidgeCV(fit_intercept=False)
 # Estimators for classic decoding
 kwargs = dict()
 pipeline = make_pipeline(StandardScaler(), LinearModel(clf))
+# parallel over X split over n_jobs (so parallel across dims)
 est = SlidingEstimator(pipeline,
                        scoring=make_scorer(scorer_spearman),
                        n_jobs=n_jobs, **kwargs)
@@ -139,6 +140,33 @@ b2b = B2B(G=G, H=H, n_splits=n_splits_B2B, n_jobs=n_jobs)
 cv = KFold(nb_fold, shuffle=True)
 
 
+####################################  Sliding
+#with ProgressBar(X.shape[-1], mesg=mesg) as pb:
+#    estimators = parallel(
+#        p_func(self.base_estimator, split, y, pb.subset(pb_idx),
+#                **fit_params)
+#        for pb_idx, split in array_split_idx(X, n_jobs, axis=-1))
+
+#def array_split_idx(ary, indices_or_sections, axis=0, n_per_split=1):
+#    """Do what numpy.array_split does, but add indices."""
+#    # this only works for indices_or_sections as int
+#    indices_or_sections = _ensure_int(indices_or_sections)
+#    ary_split = np.array_split(ary, indices_or_sections, axis=axis)
+#    idx_split = np.array_split(np.arange(ary.shape[axis]), indices_or_sections)
+#    idx_split = (np.arange(sp[0] * n_per_split, (sp[-1] + 1) * n_per_split)
+#                 for sp in idx_split)
+#    return zip(idx_split, ary_split)
+
+#class _PBSubsetUpdater(object):
+#
+#    def __init__(self, pb, idx):
+#        self.mmap = pb._mmap
+#        self.idx = idx
+#
+#    def update(self, ii):
+#        self.mmap[self.idx[ii - 1]] = True
+
+########################################
 
 #  Run decoding
 for (time_locked, epochs) in epochs_type:
@@ -158,12 +186,14 @@ for (time_locked, epochs) in epochs_type:
         analysis_name, analysis_value, non_hit_cur = r
 
         X = ep.pick_types(meg=True, ref_meg=False)._data
-        X = X[non_hit_cur]
+        X = X[non_hit_cur]   # trial x channel x time
         Y = np.array(analysis_value)
         Y = Y[:, non_hit_cur].T
+        # Y.shape =  trial x dim
 
         scores = list()
         # Classic decoding using SlidingEstimator
+        # over variables (dim)
         for ii in tqdm(range(Y.shape[1])):
             y = Y[:, ii]
             score = cross_val_multiscore(est, X, y=y, cv=cv, n_jobs=n_jobs)
@@ -175,6 +205,7 @@ for (time_locked, epochs) in epochs_type:
         Y = scale(Y)
 
         print('---- Starting computing partial scores')
+        # over time
         for ii in tqdm(range(X.shape[-1])):
             Xii = scale(X[:, :, ii])
             b2b.fit(Xii, Y)
