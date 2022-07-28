@@ -2,9 +2,11 @@ import os, sys
 import os.path as op
 import numpy as np
 import matplotlib.pyplot as plt
+from config2 import stage2time_bounds,genFnSliding
 from config2 import subjects, path_fig, path_data
 from base2 import decod_stats
 import seaborn as sns
+from config2 import analysis_name2var_ord
 
 sns.set_palette('colorblind')
 plt.style.use('seaborn')
@@ -28,7 +30,7 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 
 #path_data = '/Volumes/data/MemErrors/data2/'
-hpass = '0.1'  # '0.1', 'detrend', no_hpass
+#hpass = '0.1'  # '0.1', 'detrend', no_hpass
 decoding_types = ['classic', 'b2b']
 ICA = 'with_ICA'
 control_type = 'movement'
@@ -65,7 +67,6 @@ def getAnalysisName(time_locked,control_type):
 #    save_folder = 'Exp2_td_long_%s_%s_%s' % (hpass, control_type, ICA)
 #    output_folder = 'td_long2_%s_%s' % (hpass, ICA)
 
-output_folder = f'spoc_sliding_{hpass}'
 save_folder = 'Exp2_sliding_%s_%s_%s' % (hpass, control_type, ICA)
 
 if not op.exists( op.join(path_fig, save_folder) ):
@@ -81,22 +82,72 @@ envs = ['stable','random']
 #envs = ['stable','random','all']  # so far I did not compute for 'all'
 env2color = dict( zip(envs,colors) )
 
-from config2 import stage2time_bounds,genFnSliding
 
-shift = 0.25
-dur   = 0.464
+#shift = 0.25
+#dur   = 0.464
+#shift = 0.116
+#dur   = 0.464
+
+def collectResults(subject,hpass):
+    output_folder = f'spoc_sliding_{hpass}'
+    from config2 import freq_name2freq
+    import re
+    freqstr = '|'.join( freq_name2freq.keys() )
+
+    dir_full = op.join(path_data, subject, 'results', output_folder)
+    fns = os.listdir ( dir_full )
+    tuples = []
+    regex = re.compile(r'(stable|random)_(Ridge|xgboost)_(feedback|target)_(.*)_(' +freqstr+ ')_t=(.*),(.*)\.npz')
+    for fn in fns:
+        r = re.match( regex, fn)
+        #print(r )
+        if r is None:
+            print(f'wrong fn = {fn}')
+        grps = r.groups(); #print(grps)
+        env_cur,rt_cur,time_locked_cur,analysis_name_cur,freq_name_cur,tmin,tmax = grps
+
+        if (regression_type,freq_name) != (rt_cur,freq_name_cur):
+            continue
+
+        fn_full = op.join(dir_full,fn)
+        f = np.load( fn_full, allow_pickle=1)
+        tuples += [ (os.stat(fn_full).st_mtime, fn, fn_full, f['par'][()], *grps )  ]
+        del f
+
+    srt = sorted(tuples, key=lambda x: x[0])
+
+    par = pars[-1]
+    if par['slide_windows_type'] == 'auto':
+        from config2 import stage2time_bounds
+        start, end = stage2time_bounds[time_locked]
+        start, end = eval( par.get(f'time_bounds_slide_{time_locked}', (start,end) ) )
+        shift = par.get('slide_window_shift',None)
+        dur = par.get('slide_window_dur', None)
+        tmins = np.arange(start,end,shift)
+        tmaxs = dur + tmins
+
+        tminmax = zip(tmins,tmaxs)
+
+        #tuples_a.shape
+    import pandas as pd
+    df_collect = pd.DataFrame(tuples,
+        columns=['mtime', 'fn', 'fn_full', 'par','env','rt','time_locked','analysis_name','freq_name','tmin','tmax' ] )
+
+    return df_collect
+
 
 fnames_failed = []
-ss = []
+#ss = []
 
 tpls = []
 
 for time_locked in time_lockeds:
-    start, end = stage2time_bounds[time_locked]
-    tmins = np.arange(start,end,shift)
-    tmaxs = dur + tmins
-    tminmaxs = list(zip(tmins,tmaxs) )
-    analysis_name = getAnalysisName(time_locked,control_type)
+    #start, end = stage2time_bounds[time_locked]
+    #tmins = np.arange(start,end,shift)
+    #tmaxs = dur + tmins
+    #tminmaxs = list(zip(tmins,tmaxs) )
+    #analysis_name = getAnalysisName(time_locked,control_type)
+
 
     for decoding_type in decoding_types:
         #all_scores_all = list()
@@ -104,17 +155,26 @@ for time_locked in time_lockeds:
         #all_scores_random = list()
         env2all_scores = dict(   zip(envs, [[]]*len(envs) ) )
         for env in envs:
+            #sub_df['fn_full']
             fnames_cur =  []
             #env2all_scores[env] = list with len = len(subjects)
             scores_cur_env = []
             for subject in subjects:
+                df_collect = collectResults(subject,hpass)
+                sub_df = df_collect[ (df_collect['time_locked'] == time_locked) &\
+                                    (df_collect['env'] == env) ]
+                tmins = sub_df['tmin']
+                tmaxs = sub_df['tmax']
+
+
                 scores_cur_env_cur_subj = []
-                for ti,(tmin_cur,tmax_cur) in enumerate(tminmaxs):
-                    s =  f'{env}_{subject}_{ti}'
-                    ss += [s]
-                    results_folder = op.join(path_data,subject,'results',output_folder)
-                    fname_full = genFnSliding(results_folder, env,regression_type,
-                        time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
+                for  fname_full, tmin in sub_df[ ['fn_full','tmin'] ].to_numpy():
+                #for ti,(tmin_cur,tmax_cur) in enumerate(tminmaxs):
+                    #s =  f'{env}_{subject}_{ti}'
+                    #ss += [s]
+                    #results_folder = op.join(path_data,subject,'results',output_folder)
+                    #fname_full = genFnSliding(results_folder, env,regression_type,
+                    #    time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
 
                     if not os.path.exists(fname_full):
                         print(f'ERROR: {fname_full} does not exist, skipping')
@@ -129,13 +189,42 @@ for time_locked in time_lockeds:
                     elif decoding_type == 'b2b':
                         sc = f['partial_scores']
 
-                    scores_cur_env_cur_subj.append(sc)
-                    ############ end of cycle over time
+                    sc_aug = np.empty( len(sc) + 1)
+                    sc_aug[:len(sc)] = sc
+                    sc_aug[len(sc)] = float(tmin)
+                    scores_cur_env_cur_subj.append( sc_aug  )
+                #    ############ end of cycle over time
+                #for ti,(tmin_cur,tmax_cur) in enumerate(tminmaxs):
+                #    s =  f'{env}_{subject}_{ti}'
+                #    ss += [s]
+                #    results_folder = op.join(path_data,subject,'results',output_folder)
+                #    fname_full = genFnSliding(results_folder, env,regression_type,
+                #        time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
+
+                #    if not os.path.exists(fname_full):
+                #        print(f'ERROR: {fname_full} does not exist, skipping')
+                #        fnames_failed.append(fname_full)
+                #        continue
+                #    else:
+                #        f = np.load(fname_full)
+                #        print(f'INFO: loaded {fname_full}')
+                #        fnames_cur.append(fname_full)
+                #    if decoding_type == 'classic':
+                #        sc = f['scores']
+                #    elif decoding_type == 'b2b':
+                #        sc = f['partial_scores']
+
+                #    scores_cur_env_cur_subj.append(sc)
+                #    ############ end of cycle over time
                 scores_cur_env.append(np.array(scores_cur_env_cur_subj) )
                 ############ end of cycle over subjects
-            env2all_scores[env] = np.array( scores_cur_env )
-            assert len(  env2all_scores[env] ) == len(subjects)
-        assert len(  env2all_scores['stable'] ) == len(subjects)
+            #shape = (20, 61, 5)#
+            a = np.array( scores_cur_env )
+            # to get vars x subj x times
+            aa = a.transpose( (2,0,1))
+            env2all_scores[env] = aa
+            assert  env2all_scores[env].shape[1] == len(subjects)
+        assert  env2all_scores['stable'].shape[1] == len(subjects)
 
         tpls += [ (time_locked,decoding_type,env2all_scores) ]
 
@@ -174,30 +263,37 @@ for time_locked in time_lockeds:
             sys.exit(1)
 
 
-        plt.title('%s decoding error' % decoding_type, fontsize=14)
-        for env,scs in env2all_scores.items():
-            scs = np.array(scs)
-            # to get vars x subj x times
-            scs = scs.transpose( (2,0,1))
+        analysis_name = sub_df['analysis_name'].to_list()[0]
+        var_order = analysis_name2var_ord[analysis_name]
 
-            env2all_scores[env ] = scs
+        for vari,varn in enumerate(var_order):
+            plt.title(f'{decoding_type} decoding {varn}', fontsize=14)
+            for env,scs in env2all_scores.items():
+                scs_all = np.array(scs)
+                tmins_all = scs[-1,:,:]
+                tmins_ = tmins_all[0]  # take of the first subject
+                scs = scs_all[:-1,:,:]
 
-            vals = scs[1,...]
-            ys = vals.mean(axis=0)  # mean over subjects
-            plt.plot(tmins, ys, color=env2color[env], label=f'{env} environment', linewidth=0.5)
-            sig = decod_stats(vals) < 0.05
-            plt.fill_between(tmins, ys, where=sig, color=env2color[env], alpha=0.3)
-            # Plot errors during random environment
-            #plt.plot(times, all_scores_random[1].mean(0), color=colors[1], label='Random environment', linewidth=0.5)
-            #sig = decod_stats(all_scores_random[1]) < 0.05
-            #plt.fill_between(times, all_scores_random[1].mean(0), where=sig, color=colors[1], alpha=0.3)
+                vals = scs[vari,...]
+                ys_ = vals.mean(axis=0)  # mean over subjects
 
-        plt.legend()
+                # tmins are not sorted
+                a = sorted( zip(tmins_,ys_), key=lambda x: x[0] )
+                tmins,ys = zip(*a)
 
-        fname_fig = op.join(path_fig,save_folder,
-            f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}_errors' )
-        plt.savefig(fname_fig, dpi=400)
-        plt.close()
+                plt.plot(tmins, ys, color=env2color[env], label=f'{env} environment', linewidth=0.5)
+                sig = decod_stats(vals) < 0.05
+                plt.fill_between(tmins, ys, where=sig, color=env2color[env], alpha=0.3)
+                # Plot errors during random environment
+                #plt.plot(times, all_scores_random[1].mean(0), color=colors[1], label='Random environment', linewidth=0.5)
+                #sig = decod_stats(all_scores_random[1]) < 0.05
+                #plt.fill_between(times, all_scores_random[1].mean(0), where=sig, color=colors[1], alpha=0.3)
+
+            plt.legend()
+            fname_fig = op.join(path_fig,save_folder,
+                f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}_{varn}' )
+            plt.savefig(fname_fig, dpi=400)
+            plt.close()
 
 print('First fig finsihed')
 ############################################################################
@@ -236,18 +332,41 @@ print('First fig finsihed')
 np.savez( pjoin(path_fig,save_folder, f'{regression_type}_{freq_name}_gathered.npz'), time_locked_decoding_type_env2scores=tpls)
 
 for (time_locked,decoding_type,env2all_scores) in tpls:
-    diff = env2all_scores['stable'][1] - env2all_scores['random'][1]
 
-    plt.title('%s decoding error differences' % decoding_type, fontsize=14)
-    # Plot errors during stable environment
-    plt.plot(tmins, diff.mean(0), color=colors[0], linewidth=0.5)
-    sig = decod_stats(diff) < 0.05
-    plt.fill_between(tmins, diff.mean(0), where=sig, color=colors[0], alpha=0.3)
-    fname_fig = op.join( path_fig, save_folder,
-        f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}' )
-    plt.savefig(fname_fig, dpi=400)
-    print(f'Fig saved to {fname_fig}')
-    plt.close()
+    analysis_name = getAnalysisName(time_locked,control_type)
+    var_order = analysis_name2var_ord[analysis_name]
+
+    for vari,varn in enumerate(var_order):
+        env2scs = {}
+        for env,scs in env2all_scores.items():
+            scs_all = np.array(scs)
+            tmins_all = scs[-1,:,:]
+            tmins_ = tmins_all[0]  # take of the first subject
+            scs = scs_all[:-1,:,:]
+
+            vals_ = scs[vari,...]
+            #ys_ = vals.mean(axis=0)  # mean over subjects
+
+            # tmins are not sorted
+            a = sorted( zip(tmins_,vals_.T), key=lambda x: x[0] )
+            tmins,vals = zip(*a)
+            vals = np.array(vals).T
+
+            env2scs[env] = np.array(vals)
+
+        # TODO: use argsort to solve
+        diff = env2scs['stable'] - env2scs['random']
+
+        plt.title(f'{decoding_type} decoding {varn} differences', fontsize=14)
+        # Plot errors during stable environment
+        plt.plot(tmins, diff.mean(0), color=colors[0], linewidth=0.5)
+        sig = decod_stats(diff) < 0.05
+        plt.fill_between(tmins, diff.mean(0), where=sig, color=colors[0], alpha=0.3)
+        fname_fig = op.join( path_fig, save_folder,
+            f'Exp2{varn}_{regression_type}_{freq_name}_{time_locked}_{decoding_type}' )
+        plt.savefig(fname_fig, dpi=400)
+        print(f'Fig saved to {fname_fig}')
+        plt.close()
 
 print('Second fig finsihed')
 

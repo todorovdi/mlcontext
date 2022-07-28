@@ -28,6 +28,7 @@ for arg in sys.argv[1:-2]:
 excludes_str = ' '.join(excludes)
 
 ######################
+DEBUG = 0
 
 p = d1
 starind = d1.find('*')
@@ -40,7 +41,10 @@ else:
         p = d1
     else:
         p = str(Path(d1).parent) + '/'
-print(f'Source = {d1} (p={p}), dest = {d2}')
+
+home = os.path.expandvars('$HOME')
+lh = len(home) + 1
+print(f'Source = {d1[lh:]} (p={p[lh:]}), dest = {d2[lh:]}')
 
 ######################
 
@@ -50,6 +54,8 @@ include_str = ''
 #    include_str = f'--include={pattern}'
 #    print('ptattern = ',pattern)
 
+if DEBUG:
+    print(f'dry = {dry}, {include_str}, {excludes_str}')
 
 #first_arg = p
 first_arg = d1
@@ -61,21 +67,35 @@ if dry:
 
 # from d1 to d2
 s = f'rsync -rtvhn --itemize-changes {include_str} {excludes_str} --exclude={__file__} {first_arg} {d2}'
+if DEBUG:
+    print(s)
 out = sp.getoutput(s)
 out = out.split('\n')
 
+if DEBUG:
+    print(out)
 #################
 file_contents_changed_dest = []
 file_contents_changed_src = []
 file_added = []
 time_changed = []
 changes = out[1:-3]
+if DEBUG:
+    print(changes)
+#################
 for change in changes:
+    if change.find("No such file or directory") >= 0:
+        continue
+
     spaceloc = change.find(' ')
     code = change[:spaceloc]
     fn = change[spaceloc+1:]
+
+    if DEBUG:
+        print(f'change,code = {change,code}')
     if 's' in code:
 
+        #print(change)
         tst1 = os.stat( os.path.join(p,fn) ).st_mtime
         tst2 = os.stat( os.path.join(d2,fn) ).st_mtime
 

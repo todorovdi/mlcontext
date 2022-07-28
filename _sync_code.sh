@@ -16,7 +16,7 @@ else
   exit 1
 fi
 
-run="python _rsync_careful.py"
+run="python3 _rsync_careful.py"
 LOCAL_DIR="/home/demitau/memerr_code"
 #FLAGS="-rtvh$DRY_RUN_FLAG --progress"
 # for dry run
@@ -65,6 +65,9 @@ echo "  sync figure making code"
 subdir=figure
 $run --mode:$RUNTYPE --exclude="*HPC*.py" "$LOCAL_DIR/$subdir/*.py"  "$CLUSTER_CODE/$subdir"
 #$run $FLAGS $SSH_FLAG   
+echo "  sync params"
+subdir=params
+$run --mode:$RUNTYPE  "--exclude *HPC*.ini" "$LOCAL_DIR/$subdir/*.ini"  $CLUSTER_CODE/$subdir
 $SLEEP
 #subdir=jupyter_debug
 #$run --mode:$RUNTYPE $LOCAL_DIR/$subdir  $CLUSTER_CODE/$subdir
@@ -78,6 +81,10 @@ $SLEEP
 echo "  REV sync scripts"
 $run --mode:$RUNTYPE  "$CLUSTER_CODE/sbatch*.sh"  $LOCAL_DIR/slurm_scripts_"$SSH_HOSTNAME"
 $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/*.sh"  $LOCAL_DIR
+
+echo "  REV sync params"
+subdir=params
+$run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/$subdir/*HPC*.ini"  $LOCAL_DIR/$subdir
 #$SLEEP
 #sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/
 

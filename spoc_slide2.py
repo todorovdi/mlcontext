@@ -1,4 +1,4 @@
-import os
+import os, gc
 import os.path as op
 import numpy as np
 import mne
@@ -19,29 +19,78 @@ from Levenshtein import editops
 import warnings
 import sys
 from base2 import (int_to_unicode, point_in_circle,getXGBparams,
-                   calc_target_coordinates_centered, radius_target,
-                   radius_cursor, B2B_SPoC,target_angs, getGPUavail)
+                   calc_target_coordinates_centered,
+                   B2B_SPoC,target_angs, getGPUavail)
 from config2 import n_jobs as n_jobs_def
-from config2 import min_event_duration
-from config2 import (path_data,path_data_tmp,freq_name2freq,
-                     stage2event_ids,stim_channel_name,delay_trig_photodi,
-                     stage2evn2event_ids,genFnSliding)
+from config2 import (min_event_duration,genFnSliding,
+                     path_data,path_data_tmp,freq_name2freq,
+                     stim_channel_name,delay_trig_photodi,
+                     stage2evn2event_ids, paramFileRead)
 from xgboost import XGBRegressor
 
 from datetime import datetime  as dt
 from joblib import Parallel, delayed
 from error_sensitivity import getAnalysisData
+import argparse
+
+parser = argparse.ArgumentParser()
+
+#parser.add_argument('-a','--address', help='URL to be indexed', required=True)
+#parser.add_argument("-j","--jsonauth",
+#					help="JSON Google Authentication file path, default $HOME/google-auth.json",
+#					default="/home/sqlpac/google-auth.json",
+#					dest="jfile")
+#parser.add_argument("-y","--year",
+#                      type=int,
+#                      default=2020,
+#                      help="Year extraction")
+#parser.add_argument("-v","--verbosity", help="Verbosity",
+# action="store_false")
 
 
+#if args.year :
+#  print('Current year selected')
 
 target_coords = calc_target_coordinates_centered(target_angs)
+
+from config2 import genArgParser
+parser = genArgParser()
+
+print(sys.argv)
+
+args = parser.parse_args()
+par = vars(args)
+
+if par['runpar_line_ind'] is not None:
+    from config2 import path_code
+    with open(op.join(path_code,'__runpars.txt'), 'r' ) as f:
+        lines = f.readlines()
+    line = lines[args.runpar_line_ind]
+    from config2 import parline2par
+    par = parline2par(line)
+
+    par.update( vars(args)  )
+else:
+    par = vars(args)
+    if 'param_file' in par:
+        par_from_file = paramFileRead(par['param_file'])
+        par_cmd = par
+        par = par_from_file
+        for pn,pv in par_cmd.items():
+            if pv is not None:
+                par[pn] = pv
+
+
+
+#n_jobs            = args.n_jobs
+#subject           = args.subject
 
 n_jobs            = int( par.get('n_jobs', n_jobs_def) )
 subject           = par['subject']
 env_to_run        = par['env_to_run']; env = env_to_run  #
 regression_type   = par['regression_type']               #
 freq_name         = par['freq_name']
-freq_limits       = par.get('freq_limits',freq_name2freq[freq_name] )
+freq_limits       = par.get('freq_limits',freq_name2freq[freq_name])
 if isinstance(freq_limits,str):
     freq_limits = eval(freq_limits)
 hpass             = par['hpass']  # '0.1', no_hpass, no_filter
@@ -62,22 +111,41 @@ ICAstr = par.get('ICAstr','with_ICA'  )  # empty string is allowed
 time_locked = par.get('time_locked','target')
 control_type = par.get('control_type','movement')
 # home position
-tmin = par.get('tmin','-0.5')
-tmax = par.get('tmax','0')
+if par['slide_windows_type'] == 'auto':
+    from config2 import stage2time_bounds
+    start, end = stage2time_bounds[time_locked]
+    start, end = eval( par.get(f'time_bounds_slide_{time_locked}', (start,end) ) )
+    shift = par.get('slide_window_shift',None)
+    dur = par.get('slide_window_dur', None)
+    tmins = np.arange(start,end,shift)
+    tmaxs = dur + tmins
 
-if ',' in tmin:
-    tmin = tmin.split(',')
-    tmin = map(float,tmin)
-else:
-    tmin = [float(tmin) ]
+    tminmax = zip(tmins,tmaxs)
+elif par['slide_windows_type'] == 'explicit':
+    tmin = par.get('tmin',None)
+    tmax = par.get('tmax',None)
 
-if ',' in tmax:
-    tmax = tmax.split(',')
-    tmax = map(float,tmax)
-else:
-    tmax = [float(tmax)]
-tminmax = zip(tmin,tmax)
+    if ',' in tmin:
+        tmin = tmin.split(',')
+        tmin = map(float,tmin)
+    else:
+        tmin = [float(tmin) ]
 
+    if ',' in tmax:
+        tmax = tmax.split(',')
+        tmax = map(float,tmax)
+    else:
+        tmax = [float(tmax)]
+    tminmax = zip(tmin,tmax)
+
+# to save to the final file
+par['tminmax'] = tminmax
+
+DEBUG = int(par.get('debug',0) )
+if DEBUG:
+    print('---------------------- DEBUG MODE --------------------- ')
+    print('---------------------- DEBUG MODE --------------------- ')
+    print('---------------------- DEBUG MODE --------------------- ')
 # task = 'LocaError'  # 'VisuoMotor' or 'LocaError'
 task = par.get('task','VisuoMotor')
 
@@ -85,20 +153,25 @@ do_classic_dec            = int( par.get('do_classic_dec',1)            )
 do_partial_dec            = int( par.get('do_partial_dec',1)            )
 est_parallel_across_dims  = int( par.get('est_parallel_across_dims',1)  )
 est_parallel_within_dim   = int( par.get('est_parallel_within_dim',0)   )
-b2b_each_fit_is_parllel   = int( par.get('b2b_each_fit_is_parllel',0)   )
+b2b_each_fit_is_parallel  = int( par.get('b2b_each_fit_is_parallel',0)   )
 classic_dec_verbose       = int( par.get('classic_dec_verbose',3)       )
+
+B2B_SPoC_parallel_type = par.get('B2B_SPoC_parallel_type', 'across_splits')
+# 'across_splits_and_dims'
 
 nb_fold                   = int( par.get('nb_fold',6)                   )
 decim_epochs              = int( par.get('decim_epochs',2)                   )
 n_splits_B2B              = int( par.get('n_splits_B2B',30)             )
 SPoC_n_components         = int( par.get('SPoC_n_components',5)         )
 safety_time_bound         = float( par.get('safety_time_bound',0.05) )
+random_seed               = int( par.get('random_seed',0) )
 crop                      = par.get('crop',None) ;
 if crop is not None:
     crop = eval(crop)
 
 #analysis_name_from_par = par.get('analysis_name', 'prevmovement_preverrors_errors_prevbelief')
 use_preloaded_raw = int( par.get('use_preloaded_raw', 0) )
+use_preloaded_flt_raw = int( par.get('use_preloaded_flt_raw', 0) )
 mne_fit_log_level         = par.get('mne_fit_log_level', 'warning')
 
 load_epochs  = int( par.get('load_epochs',0)  ) # only reg type and env would be optimized
@@ -106,9 +179,12 @@ save_epochs  = int( par.get('save_epochs',0)  ) # only reg type and env
 load_flt_raw = int( par.get('load_flt_raw',1) )
 save_flt_raw = int( par.get('save_flt_raw',1) )
 
+exit_after = par.get('exit_after','end')
 
 ##########################################################################
 ##########################################################################
+
+np.random.seed(random_seed)
 
 print(f'__START: {__file__} subj={subject}, hpass={hpass}, '
       f'regression_type={regression_type}, freq_name={freq_name}, '
@@ -131,7 +207,7 @@ results_folder = op.join(path_data,subject,'results',output_folder)
 if not os.path.exists(results_folder):
     os.makedirs(results_folder)
 
-if b2b_each_fit_is_parllel:
+if b2b_each_fit_is_parallel:
     n_jobs_SPoC = n_jobs
 else:
     n_jobs_SPoC = 1
@@ -149,7 +225,7 @@ add_clf_creopts_est = getXGBparams(n_jobs = n_jobs_per_dim_classical_dec)
 #regression_type = 'Ridge'
 #regression_type = 'xgboost'
 
-if b2b_each_fit_is_parllel:
+if b2b_each_fit_is_parallel:
     add_clf_creopts = getXGBparams(n_jobs = None)
 else:
     add_clf_creopts = getXGBparams(n_jobs = 1)
@@ -175,33 +251,30 @@ behav_df = pd.read_pickle(fname)
 freq = freq_limits
 print(f'---------- Starting freq = {freq_name}')
 # read raw data
-run = list()
-files = os.listdir(op.join(path_data, subject))
-run.extend(([op.join(
-            path_data, subject + '/')
-            + f for f in files if task in f]))
-fname_raw = run[0]
 
-print(f'use_preloaded_raw = {use_preloaded_raw}')
+print(f'use_preloaded_raw = {use_preloaded_raw}, use_preloaded_flt_raw={use_preloaded_flt_raw}')
 #import sys; sys.exit(1)
 # get raw and events from raw file
-# raw = read_raw_ctf(fname_raw, preload=True, system_clock='ignore')
 try:
     len(ep)
     preloaded_raw_is_present = True
+    preloaded_flt_raw_is_present = True
 except NameError as e:
     preloaded_raw_is_present = False
+    preloaded_flt_raw_is_present = False
+    raw = None
 
 
 path_data_tmp_cursubj = op.join(path_data_tmp, subject)
 fn_flt_raw = f'raw_{task}_{hpass}_{ICAstr}_{freq_name}.fif'
 fn_flt_raw_full = op.join(path_data_tmp_cursubj, fn_flt_raw )
 
-fn_events = f'events_{task}_{hpass}_{ICAstr}.txt'
+fn_events = f'{task}_{hpass}_{ICAstr}_eve.txt'
 fn_events_full = op.join(path_data, subject, fn_events )
 
-raw = None
-if load_flt_raw and os.path.exists(fn_flt_raw_full) and os.path.exists(fn_events_full):
+if load_flt_raw and os.path.exists(fn_flt_raw_full) \
+    and os.path.exists(fn_events_full) and \
+    (not (use_preloaded_flt_raw and preloaded_flt_raw_is_present) ):
     print(f'INFO: Found filtered raw, loading {fn_flt_raw_full}')
     try:
         raw = read_raw_fif(fn_flt_raw_full, preload=True)
@@ -260,30 +333,17 @@ for tmin_cur,tmax_cur in tminmax:
                 print(f'INFO: Found epochs, loading {fn_epochs_full}')
                 ep = mne.read_epochs(fn_epochs_full)
             else:
-                #epochs = Epochs(raw, events, event_id=stage2event_ids[time_locked],
-                #                tmin=tmin_cur, tmax=tmax_cur, preload=True,
-                #                baseline=bsl, decim=decim_epochs)
-
-                #event_ids_cur = stage2evn2event_ids[time_locked][env]
-                #ep = epochs[event_ids_cur]
                 ep = Epochs(raw, events, event_id=stage2evn2event_ids[time_locked][env] ,
                                 tmin=tmin_cur, tmax=tmax_cur, preload=True,
                                 baseline=bsl, decim=decim_epochs)
-                #del raw
 
-                #env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
-                #        random=epochs['25', '26', '27', '28', '35'] )
-                #ep = env2epochs[env]
                 if save_epochs:
                     if not os.path.exists(path_data_tmp_cursubj):
                         os.makedirs(path_data_tmp_cursubj)
                     print(f'Saved epochs to {fn_epochs_full}')
                     ep.save(fn_epochs_full,overwrite=True)
 
-        #times = epochs.times
         times = ep.times
-        import gc; gc.collect()
-
 
         ##########################################################################
         ########################## Prepare ML       ##############################
@@ -318,7 +378,7 @@ for tmin_cur,tmax_cur in tminmax:
         #G = direct pipeline (spoc + regerssor)
         #H = back pipeline
         b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
-                parallel_type='across_splits_and_dims',n_jobs=n_jobs)
+                parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
         # Cross-validation
         cv = KFold(nb_fold, shuffle=True)
 
@@ -329,7 +389,7 @@ for tmin_cur,tmax_cur in tminmax:
         #analysis_value = env2pre_dec_data[env]
 
         tmin_safe = tmin_cur + safety_time_bound
-        tmax_safe = tmax_cur + safety_time_bound
+        tmax_safe = tmax_cur - safety_time_bound
         #wh = (times > -0.45) & (times < 0.05)
 
         X = ep.pick_types(meg=True, ref_meg=False)._data
@@ -341,7 +401,15 @@ for tmin_cur,tmax_cur in tminmax:
 
         assert X.size > 0
 
+        if DEBUG:
+            from config2 import DEBUG_ntrials,DEBUG_nchannels
+            X = X[:DEBUG_ntrials,:DEBUG_nchannels]
+            Y = Y[:DEBUG_ntrials]
+
         dim = Y.shape[1]
+
+        if exit_after == 'dat_prep':
+            sys.exit(0)
 
         svd = {'par':par}
         #fn_suffix = f'{env}_{regression_type}_{time_locked}_{analysis_name}_{freq_name}_t={tmin_cur:.2f},{tmax_cur:.2f}'
@@ -358,7 +426,9 @@ for tmin_cur,tmax_cur in tminmax:
             scoring = make_scorer(scorer_spearman)
             scores = list()
             # over all dims
-            def _est_run(est,X,y,cv,scoring,n_jobs):
+            def _est_run(est,X,y,cv,scoring,n_jobs,seed):
+                if seed >= 0:
+                    np.random.seed(seed)
                 with mne.use_log_level(mne_fit_log_level):
                     score = cross_val_multiscore(est, X, y=y, cv=cv, scoring=scoring,
                                                     n_jobs=n_jobs, verbose=classic_dec_verbose)
@@ -366,13 +436,14 @@ for tmin_cur,tmax_cur in tminmax:
                 return score
 
             if est_parallel_across_dims and n_jobs > 1:
+                seeds = np.random.randint(1000, size=dim)
                 scores = Parallel(n_jobs=n_jobs)(
-                    delayed(_est_run)(est,X,Y[:,dimi],cv,scoring,n_jobs_per_dim_classical_dec ) \
-                        for dimi in range(dim ))
+                    delayed(_est_run)(est,X,Y[:,dimi],cv,scoring,n_jobs_per_dim_classical_dec,seed ) \
+                        for dimi,seed in zip(np.arange(dim), seeds  ) )
             else:
                 for dimi in range(dim):
                     y = Y[:, dimi]
-                    score = _est_run(est,X,y,cv,scoring,n_jobs_per_dim_classical_dec)
+                    score = _est_run(est,X,y,cv,scoring,n_jobs_per_dim_classical_dec,-1)
                     scores.append(score)
             scores = np.array(scores)
 
@@ -380,6 +451,10 @@ for tmin_cur,tmax_cur in tminmax:
             svd['scores'] = scores
             np.savez(fname_full, **svd)
             print(f'Finished scores to {fname_full}')
+
+
+        if exit_after == 'classic_decoding':
+            sys.exit(0)
 
         #X: trialx x MEG x time
         #Y: trials x vals
@@ -403,8 +478,11 @@ for tmin_cur,tmax_cur in tminmax:
 
             print(f'Finished saving partial_scores {fname_full}')
 
-        del b2b
-        del est,cv,H,G
-        del X,Y
-        del spoc,spoc_est
         gc.collect()
+        if exit_after == 'end' and not DEBUG:
+            del b2b
+            del est,cv,H,G
+            del X,Y
+            del spoc,spoc_est
+        if exit_after == 'end_single' and not DEBUG:
+            sys.exit(0)

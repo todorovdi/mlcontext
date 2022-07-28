@@ -9,10 +9,11 @@ import warnings
 import sys
 from base2 import (int_to_unicode, point_in_circle,
                    calc_target_coordinates_centered, radius_target,
-                   radius_cursor, env2envcode, env2subtr)
+                   radius_cursor)
 from config2 import path_data
-from config2 import event_ids_tgt,event_ids_feedback
+from config2 import event_ids_tgt,event_ids_feedback, env2envcode, env2subtr
 from config2 import target_angs
+from Levenshtein import editops
 
 target_coords = calc_target_coordinates_centered(target_angs)
 
@@ -50,31 +51,57 @@ target_coords = calc_target_coordinates_centered(target_angs)
 # raw = read_raw_ctf(fname_raw, preload=True, system_clock='ignore')
 
 #modify behav_df in place
-def enforceTargetTriggerConsistency(behav_df, epochs, environment,do_delete_trials=1,
+def enforceTargetTriggerConsistency(behav_df, epochs, environment,
+                                    do_delete_trials=1,
                                     save_fname=None):
     meg_targets = epochs.events[:, 2].copy()
-    targets = np.array( behav_df['target'] )
+    #targets = np.array( behav_df['target_codes'] )
+    targets = np.array( behav_df['target_inds'] )
+    assert len(targets)
+    assert len(meg_targets)
+    print(  len(targets) , len(meg_targets) )
     for env,envcode in env2envcode.items():
         trial_inds = np.where(environment == envcode)[0]
         meg_targets[trial_inds] = meg_targets[trial_inds] - env2subtr[env]
 
+    behav_df_res = None
     if do_delete_trials:
-        from Levenshtein import editops
-        changes = editops(int_to_unicode(targets), int_to_unicode(meg_targets))
+        changes = editops(int_to_unicode(targets),
+                          int_to_unicode(meg_targets))
         # we have missing triggers in MEG file so we delete stuff from behav file
         delete_trials = [change[1] for change in changes]
         # read behav.pkl and remove bad_trials if bad_trials is not empty
-        if delete_trials:
+        if len( delete_trials) :
+            print(f'enforceTargetTriggerConsistency: removing '
+                  f'{len(delete_trials)} trials' )
             #behav_df = behav_df_full.copy().drop(delete_trials, errors='ignore')
-            behav_df = behav_df.drop(delete_trials, errors='ignore')
+            behav_df_res = behav_df.drop(delete_trials, errors='ignore')
             if save_fname is not None:
                 behav_df.to_pickle(save_fname)
 
-        if not np.array_equal(meg_targets, targets):
-            warnings.warn('MEG events and behavior file do not match')
-    return behav_df
+            targets_old = np.array( behav_df['target_inds'] )
+            targets = np.array( behav_df_res['target_inds'] )
+            print(len(targets), len(targets_old))
 
+            assert len(targets)
+        else:
+            behav_df_res = behav_df
+
+
+        if np.array_equal(meg_targets, targets):
+            if len(delete_trials):
+                print(f'enforceTargetTriggerConsistency: Deleted {len(delete_trials)} trials')
+        else:
+            warnings.warn('MEG events and behavior file do not match')
+
+        assert behav_df is not None
+    else:
+        behav_df_res = behav_df
+    return behav_df_res
+
+# legacy
 def getErrSensVals(errors_cur,targets_cur,movement_cur):
+    # here targets_cur should be indices of targets
     # shit errors_cur by -1
     prev_errors_cur   = np.insert(errors_cur, 0, 0)[:-1]
     prev_targets_cur  = np.insert(targets_cur, 0, 0)[:-1]
@@ -84,14 +111,75 @@ def getErrSensVals(errors_cur,targets_cur,movement_cur):
                       prev_errors_cur]
     values_for_es = [target_angs[targets_cur],
                      target_angs[prev_targets_cur],
-                     movement_cur, prev_movement_cur,
+                     movement_cur,
+                     prev_movement_cur,
                      prev_errors_cur]
     return np.array(values_for_es), np.array(analysis_value)
+
+
+def computeErrSens2(behav_df, epochs, subject, trial_inds, do_delete_trials=1,
+                    enforce_consistency=0):
+    # before enforcing consistencey
+    environment  = np.array(behav_df['environment'])
+    # modifies behav_df in place
+    if enforce_consistency:
+        behav_df = enforceTargetTriggerConsistency(behav_df, epochs, environment,
+                                        do_delete_trials=do_delete_trials )
+    targets      = np.array(behav_df['target_inds'])
+    # after enforcing consistencey
+    environment  = np.array(behav_df['environment'])
+    errors       = np.array(behav_df['error'])
+    #feedback     = np.array(behav_df['feedback'])
+    feedbackX    = np.array(behav_df['feedbackX'])
+    feedbackY    = np.array(behav_df['feedbackY'])
+    movement = np.array(behav_df['org_feedback'])
+
+    # after deleting wrong triggers
+    targets_cur = targets[trial_inds]
+    # Feedback positions
+    #feedback_cur = feedback[trial_inds]
+    feedbackX_cur = feedbackX[trial_inds]
+    feedbackY_cur = feedbackY[trial_inds]
+    # Movement positions [after deleting wrong trials]
+    movement_cur = movement[trial_inds]
+    # Error positions
+    errors_cur = errors[trial_inds]
+
+    # keep only non_hit trials
+    non_hit_cur = point_in_circle(targets_cur, target_coords,
+                                        feedbackX_cur, feedbackY_cur,
+                                        radius_target + radius_cursor)
+    non_hit = non_hit_cur
+    non_hit = np.array(non_hit)
+    # remove trials following hit (because no previous error)
+    # non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+    non_hit = np.insert(non_hit, 0, 0)[:-1]
+    non_hit[[0, 192]] = False  # Removing first trial of each block
+
+    values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,
+                                                  movement_cur)
+    #Y_es = np.array(values_for_es)
+    #analysis_value = analysis_value[:, non_hit].T
+
+    values_for_es = values_for_es[:, non_hit]
+    # 0 -- target angs, 1 -- prev target angs, 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
+    # es = (target - current) - (prev tgt - prev movemnet) / prev_error
+    # prev_error is taken from df['error']
+    # movement _relative_ to the target
+
+    #Q: why we divide by prev_error instead of by (Y_es[1]-Y_es[3])
+    corr = (values_for_es[0]-values_for_es[2]) - (values_for_es[1]-values_for_es[3])
+    es = corr/values_for_es[4]
+    #values_for_es[4]  ==  df['feedback'] - df['target']
+
+    return non_hit,corr,es,values_for_es
 
 # ICA can be also ''
 # here value of hpass is not imporant because we use only stim channel. Still we need to set something so that we can read it
 def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None,
         force_resave_raw = 0,  ICA = 'with_ICA', hpass=0.1  ):
+    from config2 import cleanEvents,delay_trig_photodi
+
     tmin = -0.5
     tmax = 0
     stim_chn = 'UPPT001'
@@ -122,36 +210,37 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     assert raw is not None
 
     events = mne.find_events(raw, stim_channel=stim_chn, min_duration=0.02)
-    events[:, 0] += 18  # to account for delay between trig. & photodi.
+    events[:, 0] += delay_trig_photodi  # to account for delay between trig. & photodi.
     # check that a target trigger is always followed by a reach trigger
-    t = -1
-    bad_trials = list()
-    bad_events = list()
-    for ii, event in enumerate(events):
-        if event[2] in [20, 21, 22, 23]:
-            t += 1
-            if events[ii+1, 2] == 100:
-                if events[ii+2, 2] != 30:
-                    bad_trials.append(t)
-                    warnings.warn('Bad sequence of triggers')
-                    # Delete bad events until the next beginning of a trial (10)
-                    bad_events.append(ii - 1)
-                    for iii in range(5):
-                        if events[ii + iii, 2] == 10:
-                            break
-                        else:
-                            bad_events.append(ii+iii)
-            elif events[ii+1, 2] != 30:
-                bad_trials.append(t)
-                warnings.warn('Bad sequence of triggers')
-                # Delete bad events until the next beginning of a trial (10)
-                bad_events.append(ii - 1)
-                for iii in range(5):
-                    if events[ii + iii, 2] == 10:
-                        break
-                    else:
-                        bad_events.append(ii+iii)
-    events = np.delete(events, bad_events, 0)
+    #t = -1
+    #bad_trials = list()
+    #bad_events = list()
+    #for ii, event in enumerate(events):
+    #    if event[2] in [20, 21, 22, 23]:
+    #        t += 1
+    #        if events[ii+1, 2] == 100:
+    #            if events[ii+2, 2] != 30:
+    #                bad_trials.append(t)
+    #                warnings.warn('Bad sequence of triggers')
+    #                # Delete bad events until the next beginning of a trial (10)
+    #                bad_events.append(ii - 1)
+    #                for iii in range(5):
+    #                    if events[ii + iii, 2] == 10:
+    #                        break
+    #                    else:
+    #                        bad_events.append(ii+iii)
+    #        elif events[ii+1, 2] != 30:
+    #            bad_trials.append(t)
+    #            warnings.warn('Bad sequence of triggers')
+    #            # Delete bad events until the next beginning of a trial (10)
+    #            bad_events.append(ii - 1)
+    #            for iii in range(5):
+    #                if events[ii + iii, 2] == 10:
+    #                    break
+    #                else:
+    #                    bad_events.append(ii+iii)
+    #events = np.delete(events, bad_events, 0)
+    events = cleanEvents(events)
 
     epochs = Epochs(raw, events, event_id=event_ids_tgt,
                     tmin=tmin, tmax=tmax, preload=True,
@@ -163,8 +252,9 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     behav_df_full = behav_df.copy()
 
     environment  = np.array(behav_df_full['environment'])
+    # modifies behav_df in place
     enforceTargetTriggerConsistency(behav_df, epochs, environment, do_delete_trials=1 )
-    targets      = np.array(behav_df['target'])
+    targets      = np.array(behav_df['target_inds'])
     environment  = np.array(behav_df['environment'])
     feedback     = np.array(behav_df['feedback'])
     feedbackX    = np.array(behav_df['feedbackX'])

@@ -18,23 +18,32 @@ import warnings
 import sys
 from base2 import (int_to_unicode, point_in_circle,getXGBparams,
                    calc_target_coordinates_centered, radius_target,
-                   radius_cursor, partial_reg, B2B_SPoC,
-                   event_ids, env2envcode, env2subtr, target_angs)
-from config2 import path_data
+                   radius_cursor, partial_reg, B2B_SPoC, target_angs)
+from config2 import path_data, stage2evn2event_ids,  env2envcode, env2subtr
 from error_sensitivity import enforceTargetTriggerConsistency
 from xgboost import XGBRegressor
 
 ###########
 from datetime import datetime  as dt
+
+
+#freq_name = ['broad']
+#freqs = [(4, 60)]
+
+
 print(f'__START: {__file__} subj={subject}, hpass={hpass}, '
       f'regression_type={regression_type}, freq_name={freq_name}, '
       f'env={env_to_run} at {dt.now()}')
 
+env = env_to_run
 mne.cuda.init_cuda()
 n_jobs_SPoC = n_jobs
 n_jobs_MNE='cuda'
 n_splits_B2B = 30
-each_fit_is_parallel = False
+b2b_each_fit_is_parallel = 0
+
+
+B2B_SPoC_parallel_type = 'across_splits'
 
 if b2b_each_fit_is_parallel:
     add_clf_creopts = getXGBparams(n_jobs = None)
@@ -67,8 +76,8 @@ env2non_hit       = f['env2non_hit']
 
 nb_fold = 6
 
-freq_names = ['broad']
-freqs = [(4, 60)]
+
+
 
 results_folder = op.join(path_data,subject,'results',output_folder)
 if not os.path.exists(results_folder):
@@ -77,8 +86,12 @@ if not os.path.exists(results_folder):
 ICA = 'with_ICA'  # or empty string
 
 time_locked = 'target'
+safety_time_bound = 0.1
 tmin = -0.5
 tmax = 0
+
+tmin_safe = tmin + safety_time_bound
+tmax_safe = tmax - safety_time_bound
 
 #use_preloaded_raw = True
 
@@ -88,7 +101,7 @@ fname = op.join(path_data, subject, 'behavdata',
 behav_df = pd.read_pickle(fname)
 # Read behav files and Compare behav and MEG events
 # Compare meg events to behav events
-targets      = np.array(behav_df['target'])
+targets      = np.array(behav_df['target_inds'])
 environment  = np.array(behav_df['environment'])
 behav_df_full = behav_df
 
@@ -129,7 +142,20 @@ fname_raw = run[0]
 # raw = read_raw_ctf(fname_raw, preload=True, system_clock='ignore')
 fname_raw_full = op.join(path_data, subject, f'raw_{task}_{hpass}_{ICA}.fif')
 
-if not use_preloaded_raw:
+#env = 'all'
+#event_ids_all = stage2evn2event_ids[time_locked][env]
+event_ids_all = stage2evn2event_ids[time_locked]['all']
+
+try:
+    raw.info
+    preloaded_raw_is_present = True
+    preloaded_flt_raw_is_present = True
+except NameError as e:
+    preloaded_raw_is_present = False
+    preloaded_flt_raw_is_present = False
+    raw = None
+
+if (not use_preloaded_raw) or (raw is None):
     if not os.path.exists(fname_raw_full):
         print(f'{fname_raw_full} does not exist, exiting')
         sys.exit(1)
@@ -168,9 +194,9 @@ if not use_preloaded_raw:
                         bad_events.append(ii+iii)
     events = np.delete(events, bad_events, 0)
 
-    raw.filter(freq[0], freq[1], n_jobs=n_jobs_MNE)
+    raw.filter(freqs[0], freqs[1], n_jobs=n_jobs_MNE)
 
-epochs = Epochs(raw, events, event_id = event_ids,
+epochs = Epochs(raw, events, event_id = event_ids_all,
                 tmin=tmin, tmax=tmax, preload=True,
                 baseline=None, decim=2)
 
@@ -183,6 +209,7 @@ env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
         random=epochs['25', '26', '27', '28', '35'] )
 
 #for env,envcode in env2envcode.items():
+envcode = env2envcode[env]
 trial_inds = np.where(environment == envcode)[0]
 meg_targets_cur = epochs.copy().events[:, 2]
 meg_targets_cur[trial_inds] = meg_targets_cur[trial_inds] - env2subtr[env]
@@ -210,6 +237,7 @@ errors_cur = errors[trial_inds]
 #non_hit = np.insert(non_hit, 0, 0)[:-1]
 #non_hit[[0, 192]] = False  # Removing first trial of each block
 
+ep = env2epochs[env]
 non_hit = env2non_hit[env]
 
 abs_errors_cur = np.abs(errors_cur)
@@ -242,13 +270,14 @@ else:
     raise ValueError('wrong regression value')
 H = LinearRegression(fit_intercept=False, n_jobs=n_jobs)
 b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
-        each_fit_is_parallel=b2b_each_fit_is_parallel)
+        parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
 # Cross-validation
 cv = KFold(nb_fold, shuffle=True)
 
 
-ep = env2epochs[env]
 analysis_value = env2pre_dec_data[env]
+
+sys.exit(0)
 
 #values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,movement_cur)
 #Y_es = np.array(values_for_es)
@@ -256,7 +285,8 @@ analysis_value = env2pre_dec_data[env]
 #Y_es
 
 X = ep.pick_types(meg=True, ref_meg=False)._data
-wh = (times > -0.48) & (times < 0.01)
+#wh = (times > -0.48) & (times < 0.01)
+wh = (times > tmin_safe) & (times < tmax_safe)
 X = X[non_hit]
 X = X[:, :, wh]
 Y = np.array(analysis_value)
@@ -269,11 +299,17 @@ y = Y[:, 3]
 y_preds = np.zeros(len(y))
 scores = list()
 print('Starting CV')
+nsplit = 0
+
+mne_fit_log_level ='warning'
 for train, test in cv.split(X, y):
-    est.fit(X[train], y[train])
+    print(f'Starting split N={nsplit}')
+    with mne.use_log_level(mne_fit_log_level):
+        est.fit(X[train], y[train])
     y_preds[test] = est.predict(X[test])
     score = spearmanr(y_preds[test], y[test])
     scores.append(score[0])
+    nsplit += 1
 diff = np.abs(y - y_preds)
 
 # run partial decoding

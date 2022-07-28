@@ -13,8 +13,6 @@ radius_cursor = 8
 
 #event_ids = [20, 21, 22, 23, 25, 26, 27, 28]  # _tgt
 
-env2envcode = dict(stable=0, random=1)
-env2subtr   = dict(stable=20, random=25)
 
 from config2 import target_angs
 #target_coords = calc_target_coordinates_centered(target_angs)

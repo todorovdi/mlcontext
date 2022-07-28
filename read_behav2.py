@@ -1,7 +1,6 @@
 import os
 import os.path as op
 import numpy as np
-import matplotlib.pyplot as plt
 from pandas import DataFrame as df
 from config2 import *
 from base2 import (width, height, radius, calc_target_coordinates_centered,
@@ -91,35 +90,99 @@ err = list()
 feedbackX = list()
 feedbackY = list()
 targets = list()
+target_locs = list()
+target_inds = list()
+target_codes = list()
 perturbations = list()
 trajectoryX_ = list()
 trajectoryY_ = list()
 org_feedbackX = list()
 org_feedbackY = list()
 environment = list()
+# old
+#for trial in range(nb_trials):
+#    trial_inds = np.where(log[:, 0] == trial)[0]
+#    target_phase = np.where(log[trial_inds, 1] == 20)[0]
+#    feedback_phase = np.where(log[trial_inds, 1] == 30)[0]
+#    err.append(log[trial_inds[feedback_phase[10]], 10])
+#    # clockwise perturbation is positive in the task. Here we apply minus to
+#    # use trigonometry convention (counterclockwise is positive)
+#    perturbations.append(-log[trial_inds[feedback_phase[10]], 3])
+#    trajectoryX_.append(log[trial_inds[target_phase], 4] - width/2)
+#    trajectoryY_.append(-(log[trial_inds[target_phase], 5] - height/2))
+#    feedbackX.append(log[trial_inds[feedback_phase[10]], 6] - width/2)
+#    feedbackY.append(-(log[trial_inds[feedback_phase[10]], 7] - height/2))
+#    org_feedbackX.append(log[trial_inds[feedback_phase[10]], 8] - width/2)
+#    org_feedbackY.append(-(log[trial_inds[feedback_phase[10]], 9] - height/2))
+#    targets.append(int(log[trial_inds[feedback_phase[10]], 2]))
+#    environment.append(int(log[trial_inds[feedback_phase[10]], 11]))
+
+
+ab = env2envcode.items()
+a,b = zip(*ab)
+envcode2env = dict( zip(b,a) )
+# log is an array of shape numtrials x numvars
 # width -- size of the screen
+TARGET_PHASE = 20
+FEEDBACK_PHASE = 30
+col_trigger = 1
+col_tgt    = 2
+col_pert   = 3
+col_traj_X = 4
+col_traj_Y = 5
+
+col_feedback_X = 6
+col_feedback_Y = 7
+
+col_org_feedback_X = 8
+col_org_feedback_Y = 9
+
+col_err = 10
+col_env = 11
+spec_timeind = 10
+# Q: why alwasy 10th index?
 for trial in range(nb_trials):
-    i = np.where(log[:, 0] == trial)[0]
-    target_phase = np.where(log[i, 1] == 20)[0]
-    feedback_phase = np.where(log[i, 1] == 30)[0]
-    err.append(log[i[feedback_phase[10]], 10])
+    trial_inds = np.where(log[:, 0] == trial)[0]
+    log_cur = log[trial_inds,:]
+    timeinds_tgt = np.where(log_cur[:,col_trigger] == TARGET_PHASE)[0]
+    timeinds_fb  = np.where(log_cur[:,col_trigger] == FEEDBACK_PHASE)[0]
+
+    err.append(log_cur[timeinds_fb[spec_timeind], col_err])
     # clockwise perturbation is positive in the task. Here we apply minus to
     # use trigonometry convention (counterclockwise is positive)
-    perturbations.append(-log[i[feedback_phase[10]], 3])
-    trajectoryX_.append(log[i[target_phase], 4] - width/2)
-    trajectoryY_.append(-(log[i[target_phase], 5] - height/2))
-    feedbackX.append(log[i[feedback_phase[10]], 6] - width/2)
-    feedbackY.append(-(log[i[feedback_phase[10]], 7] - height/2))
-    org_feedbackX.append(log[i[feedback_phase[10]], 8] - width/2)
-    org_feedbackY.append(-(log[i[feedback_phase[10]], 9] - height/2))
-    targets.append(int(log[i[feedback_phase[10]], 2]))
-    environment.append(int(log[i[feedback_phase[10]], 11]))
+    perturbations.append(-log_cur[timeinds_fb[spec_timeind], col_pert])
+    trajectoryX_.append(  log_cur[timeinds_tgt, col_traj_X] - width/2)
+    trajectoryY_.append(-(log_cur[timeinds_tgt, col_traj_Y] - height/2))
+
+    feedbackX.append(  log_cur[timeinds_fb[spec_timeind], col_feedback_X] - width/2)
+    feedbackY.append(-(log_cur[timeinds_fb[spec_timeind], col_feedback_Y] - height/2))
+
+    org_feedbackX.append(  log_cur[timeinds_fb[spec_timeind], col_org_feedback_X] - width/2)
+    org_feedbackY.append(-(log_cur[timeinds_fb[spec_timeind], col_org_feedback_Y] - height/2))
+
+    envcode = int(log_cur[timeinds_fb[spec_timeind], col_env])
+    env = envcode2env[envcode]
+    environment.append(envcode)
+    # it is in int from 0 to 3
+    target_ind = int(log_cur[timeinds_fb[spec_timeind], col_tgt])
+    target_inds.append(target_ind)
+    if env == 'stable':
+        target_codes.append( event_ids_tgt_stable[target_ind] )
+    else:
+        target_codes.append( event_ids_tgt_random[target_ind] )
+
+    target_locs.append( target_angs[target_inds[trial]] )
+
+
+
 err = np.array(err)
 feedbackX = np.array(feedbackX)  # x coordinate of the feedback
 feedbackY = np.array(feedbackY)  # y coordinate of the feedback
 org_feedbackX = np.array(org_feedbackX)  # x coordinate of the org_feedback
 org_feedbackY = np.array(org_feedbackY)  # y coordinate of the org_feedback
-targets = np.array(targets)  # trial type (from 0 to 3)
+target_codes = np.array(target_codes)  # trial type (from 0 to 3)
+target_inds = np.array(target_inds)  # trial type (from 0 to 3)
+target_locs = np.array(target_locs)  # trial type (from 0 to 3)
 environment = np.array(environment)
 perturbations = np.array(perturbations)
 trajectoryX = np.array(trajectoryX_, dtype=object)
@@ -132,12 +195,12 @@ org_feedback = calc_rad_angle_from_coordinates(org_feedbackX,
 # get error in rad
 errors = list()
 for trial in range(nb_trials):
-    errors.append(feedback[trial] - target_angs[targets[trial]])
+    errors.append(feedback[trial] - target_locs[trial])
 errors = np.array(errors)
 # get the belief in rad
 belief = list()
 for trial in range(nb_trials):
-    belief.append(org_feedback[trial] - target_angs[targets[trial]])
+    belief.append(org_feedback[trial] - target_locs[trial])
 belief = np.array(belief)
 
 # # plot errors and perturbations
@@ -168,7 +231,9 @@ behav_df = df({'trials': range(nb_trials),
                'feedback': feedback,
                'org_feedback': org_feedback,
                'belief': belief,
-               'target': targets,
+               'target_inds': target_inds,
+               'target_codes': target_codes,
+               'target_locs': target_locs,
                'RT': reaction_time,
                'trial_duration': trial_duration,
                'movement_duration': movement_duration,

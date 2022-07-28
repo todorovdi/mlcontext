@@ -32,11 +32,20 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 #path_data = '/Volumes/data/MemErrors/data2/'
 #hpass = 'no_filter'  # '0.1', 'detrend', no_hpass
-output_folder = f'spoc_home2_{hpass}'
 analysis_name = 'prevmovement_preverrors_errors_prevbelief'
 analyses = ['Prev_movement', 'Prev_errors', 'Errors', 'Prev_belief']
 
-save_folder = 'SPoC2_%s' % analysis_name
+try:
+    a = seed
+    print(f'INFO: taking data generated using seed = {seed}')
+    output_folder = f'spoc_home2_{hpass}_seed{seed}'
+    save_folder = f'SPoC2_{hpass}_{analysis_name}_seed{seed}'
+    seed_excplicit = 1
+except NameError as e:
+    seed_excplicit = 0
+    output_folder = f'spoc_home2_{hpass}'
+    save_folder = f'SPoC2_{hpass}_{analysis_name}'
+
 if not op.exists( op.join(path_fig, save_folder) ):
     os.mkdir(op.join(path_fig, save_folder) )
 
@@ -47,6 +56,7 @@ assert regression_type in regression_types_all
 saved_successfully = []
 
 import shutil
+
 
 task = 'VisuoMotor'
 time_locked = 'target'
@@ -63,7 +73,8 @@ for decoding_type in ['classic', 'b2b']:
     for subject in subjects:
         print(f'Starting subject {subject}')
         # results_folder = 'decoding_no_hpass_no_bsl'
-        results_folder = output_folder
+        results_folder = op.join(path_data, subject,'results', output_folder)
+        fnames_cur = []
         for env in environment:
             sc = None
 

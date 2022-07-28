@@ -122,6 +122,8 @@ class VisuoMotor:
         self.colorTarget = [0, 255, 0]
         self.trialsArray = np.empty([1, 2])  # Initialize trialsArray
 
+        # choose ranomdly from two sts of trials and perturb
+        # note that trials_vector does not change
         a = np.random.sample()
         if a >= 0.5:
             trials_vector = [5, 15, 5, 15, 5, 15, 5, 15]

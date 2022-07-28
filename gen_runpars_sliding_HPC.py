@@ -7,10 +7,14 @@ script = 'spoc_slide2.py'
 #rts = ['Ridge', 'xgboost']
 #hpasses = ['no_filter', '0.1', '0.05']
 rts = ['Ridge']
-hpasses = ['0.1']
+#hpasses = ['no_filter', '0.1', '0.05'] 
+hpasses = ['no_filter'] 
 
-shift = 0.25
+#shift = 0.25
 dur   = 0.464
+#shift = dur / 2
+shift = dur / 4
+
 #dur   = 0.5
 #tmins = np.arange(-3,-0.5+shift,shift)
 #analysis_name = 'sliding_prevmovement_preverrors_errors_prevbelief'
@@ -26,6 +30,7 @@ dur   = 0.464
 # decim=6)
 
 envs = ['stable', 'random']
+seed = 0
 
 pars = []
 # when freq is outside subject I could re-use filterd raws
@@ -46,11 +51,17 @@ for hpass in hpasses:
                     par = {}
                     par['script']=script
                     par['decim_epochs']=2
+                    par['n_jobs']=n_jobs
+                    par['use_preloaded_raw'] = 0
+
+                    par['seed']=seed
+
+                    par['hpass'] =hpass
+                    par['output_folder'] = f'spoc_sliding_{hpass}'
+
                     par['tmin']=','.join( map(str,tmins) )
                     par['tmax']=','.join( map(str,tmaxs) )
                     par['subject']=subject
-                    par['n_jobs']=n_jobs
-                    par['hpass'] =hpass
                     par['time_locked'] = time_locked
                     par['control_type'] = control_type
                     par['regression_type'] = ','.join(rts)
@@ -58,9 +69,7 @@ for hpass in hpasses:
                     par['freq_limits'] =freq_limits
                     par['env_to_run'] = ','.join(envs)
                     #par['analysis_name'] = analysis_name
-                    par['output_folder'] = f'spoc_sliding_{hpass}'
-                    par['use_preloaded_raw'] = 0
-                    #par['safety_time_bound'] = 0
+                    par['safety_time_bound'] = 0
                     pars += [par]
                     ind_glob += 1
 
