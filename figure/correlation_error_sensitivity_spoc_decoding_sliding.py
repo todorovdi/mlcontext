@@ -33,7 +33,8 @@ ICA = 'with_ICA'
 hpass = 'no_filter'
 #save_folder = 'corr_es_SPoC_decod_slide_%s_%s' % (hpass, ICA)
 save_folder   = 'corr_spoc_es_sliding2_%s' % (hpass)
-output_folder = 'corr_spoc_es_sliding2_%s' % hpass
+output_folder = 'corrr_spoc_es_sliding2_%s' % hpass
+#/p/project/icei-hbp-2020-0012/lyon/memerr/data2/sub08_TXVPROYY/results/spoc_sliding_no_filte
 if not op.exists( op.join(path_fig, save_folder) ):
     os.mkdir(op.join(path_fig, save_folder) )
 
@@ -136,41 +137,43 @@ for env in envs:
             res = ttest_1samp(df_curwnd[ ppname ] ,0)
             print(env,tmin,ppname, res)
 
-        nr = 10; nc =2
-        ww = 5; hh = 3
-        fig, axs = plt.subplots(nr,nc,figsize=(nc*ww,nr*hh) , sharex='col', sharey='row' )
-        axs = axs.ravel()
-        assert len(axs) >= len(subjects)
-        #for ii in range(len(all_diff)):
-        for ii,subject in enumerate(subjects):
-            df_curwnd_cursubj = df_curwnd[ df_curwnd['subject'] == subject ]
-            diff = df_curwnd_cursubj['diff']
-            es   = df_curwnd_cursubj['es']
-            if len(diff) and len(es):
-                diff = diff.to_numpy()[0]
-                es   = es.to_numpy()[0]
-                ax = axs[ii]
-                ax.plot(diff, es, 'o', alpha=0.1, color=colors[1])
-                #ax.set_xticks([])
-                #ax.set_yticks([])
-                ax.set_title(f'{subject},{env} tmin={tmin} diff vs es')
-
-        time_locked = 'target'
-        fname_fig = op.join( path_fig, save_folder,
-            f'diff_vs_es__{tmin}_{env}_{regression_type}_{freq_name}_{time_locked}.png' )
-        plt.savefig(fname_fig, dpi=300)
-        print(f'Fig saved to {fname_fig}')
-        plt.close()
-
         # mean over subjects
         sc = np.array ( list( df_curwnd['scores_es'].to_numpy() ) )
         scm = sc.mean(axis=1) # mean over splits
         scores += [ scm.mean() ]
 
-    fig = plt.figure(figsize = (10,3) )
+        if plot_diff_vs_es:
+            nr = 10; nc =2
+            ww = 5; hh = 3
+            fig, axs = plt.subplots(nr,nc,figsize=(nc*ww,nr*hh) , sharex='col', sharey='row' )
+            axs = axs.ravel()
+            assert len(axs) >= len(subjects)
+            #for ii in range(len(all_diff)):
+            for ii,subject in enumerate(subjects):
+                df_curwnd_cursubj = df_curwnd[ df_curwnd['subject'] == subject ]
+                diff = df_curwnd_cursubj['diff']
+                es   = df_curwnd_cursubj['es']
+                if len(diff) and len(es):
+                    diff = diff.to_numpy()[0]
+                    es   = es.to_numpy()[0]
+                    ax = axs[ii]
+                    ax.plot(diff, es, 'o', alpha=0.1, color=colors[1])
+                    #ax.set_xticks([])
+                    #ax.set_yticks([])
+                    ax.set_title(f'{subject},{env} tmin={tmin} diff vs es')
+
+            time_locked = 'target'
+            fname_fig = op.join( path_fig, save_folder,
+                f'diff_vs_es__{tmin}_{env}_{regression_type}_{freq_name}_{time_locked}.png' )
+            plt.savefig(fname_fig, dpi=300)
+            print(f'Fig saved to {fname_fig}')
+            plt.close()
+
+
+    fig = plt.figure(figsize = (10,4) )
     ax = plt.gca()
-    ax.plot(tmins_srt,scores)
-    ax.set_title(f'scores decoding erros sens {regression_type}')
+    ax.plot( list(map(float,tmins_srt) ) ,scores)
+    ax.set_title(f'{env}: scores decoding erros sens {regression_type}')
 
     fname_fig = op.join( path_fig, save_folder,
         f'tmin_vs_scores_es__{env}_{regression_type}_{freq_name}_{time_locked}.png' )

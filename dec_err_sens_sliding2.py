@@ -101,8 +101,8 @@ if par['slide_windows_type'] == 'auto':
     from config2 import stage2time_bounds
     start, end = stage2time_bounds[time_locked]
     start, end = eval( par.get(f'time_bounds_slide_{time_locked}', (start,end) ) )
-    shift = par.get('slide_window_shift',None)
-    dur = par.get('slide_window_dur', None)
+    shift = float( par['slide_window_shift'] )
+    dur =   float( par['slide_window_dur'  ] )
     tmins = np.arange(start,end,shift)
     tmaxs = dur + tmins
 
