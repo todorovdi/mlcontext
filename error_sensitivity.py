@@ -14,6 +14,7 @@ from config2 import path_data
 from config2 import event_ids_tgt,event_ids_feedback, env2envcode, env2subtr
 from config2 import target_angs
 from Levenshtein import editops
+from config2 import delay_trig_photodi, min_event_duration
 
 target_coords = calc_target_coordinates_centered(target_angs)
 
@@ -100,25 +101,52 @@ def enforceTargetTriggerConsistency(behav_df, epochs, environment,
     return behav_df_res
 
 # legacy
-def getErrSensVals(errors_cur,targets_cur,movement_cur):
-    # here targets_cur should be indices of targets
-    # shit errors_cur by -1
-    prev_errors_cur   = np.insert(errors_cur, 0, 0)[:-1]
-    prev_targets_cur  = np.insert(targets_cur, 0, 0)[:-1]
-    prev_movement_cur = np.insert(movement_cur, 0, 0)[:-1]
-    analysis_value = [prev_targets_cur, prev_movement_cur,
-                      errors_cur,
-                      prev_errors_cur]
-    values_for_es = [target_angs[targets_cur],
-                     target_angs[prev_targets_cur],
-                     movement_cur,
-                     prev_movement_cur,
-                     prev_errors_cur]
-    return np.array(values_for_es), np.array(analysis_value)
+def getErrSensVals(errors,targets,movement, time_locked='target'):
+    # here targets should be indices of targets
+    # shit errors by -1
+
+    #getAnalysisData('all',time_locked,control_type,behad_df)
+    varnames_def = ['target','prev_target', 'movement', 'prev_movement',
+                'prev_errors']
+
+    if time_locked == 'target':
+        prev_errors   = np.insert(errors, 0, 0)[:-1]
+        prev_targets  = np.insert(targets, 0, 0)[:-1]
+        prev_movement = np.insert(movement, 0, 0)[:-1]
+        analysis_value = [prev_targets, prev_movement,
+                        errors,
+                        prev_errors]
+
+        values_for_es = [target_angs[targets],
+                        target_angs[prev_targets],
+                        movement,
+                        prev_movement,
+                        prev_errors]
+        varnames = varnames_def
+    else:
+        next_errors  = np.insert(errors, len(errors), 0)[1:]
+        next_target  = np.insert(errors, len(errors), 0)[1:]
+        next_movement  = np.insert(errors, len(movement), 0)[1:]
+
+        analysis_value = [targets, movement,
+                        next_errors,
+                        errors]
+
+        values_for_es = [target_angs[next_target],
+                        target_angs[targets],
+                        next_movement,
+                        movement,
+                        errors]
+
+        varnames = ['next_target','target', 'next_movement', 'movement',
+                    'error']
+
+    return np.array(values_for_es), np.array(analysis_value), varnames, varnames_def
 
 
 def computeErrSens2(behav_df, epochs, subject, trial_inds, do_delete_trials=1,
-                    enforce_consistency=0):
+                    enforce_consistency=0, time_locked='target'):
+    from config2 import n_trials_in_block as N
     # before enforcing consistencey
     environment  = np.array(behav_df['environment'])
     # modifies behav_df in place
@@ -146,33 +174,41 @@ def computeErrSens2(behav_df, epochs, subject, trial_inds, do_delete_trials=1,
     errors_cur = errors[trial_inds]
 
     # keep only non_hit trials
-    non_hit_cur = point_in_circle(targets_cur, target_coords,
+    non_hit_not_adj = point_in_circle(targets_cur, target_coords,
                                         feedbackX_cur, feedbackY_cur,
                                         radius_target + radius_cursor)
-    non_hit = non_hit_cur
-    non_hit = np.array(non_hit)
-    # remove trials following hit (because no previous error)
-    # non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
-    non_hit = np.insert(non_hit, 0, 0)[:-1]
-    non_hit[[0, 192]] = False  # Removing first trial of each block
+    #non_hit = non_hit_cur
+    #non_hit = np.array(non_hit)
+    ## remove trials following hit (because no previous error)
+    ## non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+    ## normally it should depend on env
+    #non_hit = np.insert(non_hit, 0, 0)[:-1]
+    #non_hit[[0, N]] = False  # Removing first trial of each block
+    # Q -- which non-hit should we use here?
 
-    values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,
-                                                  movement_cur)
+    #non_hit = adjustNonHit(non_hit_not_adj,env,time_locked)
+
+    values_for_es,analysis_value,varnames,varnames_def = getErrSensVals(errors_cur,targets_cur,
+                                                  movement_cur,
+                                                  time_locked = time_locked)
+    #df = pd.DataFrame( values_for_es, columns=varnames)
+
     #Y_es = np.array(values_for_es)
     #analysis_value = analysis_value[:, non_hit].T
 
-    values_for_es = values_for_es[:, non_hit]
+    #values_for_es = values_for_es[:, non_hit]
     # 0 -- target angs, 1 -- prev target angs, 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
     # es = (target - current) - (prev tgt - prev movemnet) / prev_error
     # prev_error is taken from df['error']
     # movement _relative_ to the target
 
     #Q: why we divide by prev_error instead of by (Y_es[1]-Y_es[3])
-    corr = (values_for_es[0]-values_for_es[2]) - (values_for_es[1]-values_for_es[3])
-    es = corr/values_for_es[4]
+    corr = (values_for_es[0]-values_for_es[2]) - \
+        (values_for_es[1]-values_for_es[3])
+    es = corr / values_for_es[4]
     #values_for_es[4]  ==  df['feedback'] - df['target']
 
-    return non_hit,corr,es,values_for_es
+    return non_hit_not_adj, corr, es, values_for_es, varnames, varnames_def
 
 # ICA can be also ''
 # here value of hpass is not imporant because we use only stim channel. Still we need to set something so that we can read it
@@ -209,7 +245,8 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
             raw.save(fname_raw_full_onlystim, overwrite=True )
     assert raw is not None
 
-    events = mne.find_events(raw, stim_channel=stim_chn, min_duration=0.02)
+    events = mne.find_events(raw, stim_channel=stim_chn,
+                             min_duration=min_event_duration)
     events[:, 0] += delay_trig_photodi  # to account for delay between trig. & photodi.
     # check that a target trigger is always followed by a reach trigger
     #t = -1
@@ -298,7 +335,7 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
         non_hit = np.insert(non_hit, 0, 0)[:-1]
         non_hit[[0, 192]] = False  # Removing first trial of each block
 
-        values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,movement_cur)
+        values_for_es,analysis_value,varnames,varnames_def = getErrSensVals(errors_cur,targets_cur,movement_cur)
         #Y_es = np.array(values_for_es)
         #analysis_value = analysis_value[:, non_hit].T
 
@@ -329,184 +366,216 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
 
     return env2err_sens, env2pre_err_sens,env2pre_dec_data, env2non_hit
 
+def adjustNonHit(non_hit,env,time_locked):
+    non_hit = non_hit.copy()
+    from config2 import n_trials_in_block as N
+    if env == 'all':
+        if time_locked == 'feedback':
+            # remove trials preceding hit (because no next error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            non_hit[N*4 - 1] = False  # Removing last trial of each block
+        elif time_locked == 'target':
+            # remove trials following hit (because no previous error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            non_hit[0] = False  # Removing first trial of each block
+    elif env == 'stable':
+        if time_locked == 'feedback':
+            # remove trials preceding hit (because no next error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            non_hit[[N-1, N*2-1]] = False  # Removing last trial of each block
+        elif time_locked == 'target':
+            # remove trials following hit (because no previous error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            non_hit[[0, N]] = False  # Removing first trial of each block
+    elif env == 'random':
+        if time_locked == 'feedback':
+            # remove trials preceding hit (because no next error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            non_hit[[N-1, N*2-1]] = False  # Removing last trial of each block
+        elif time_locked == 'target':
+            # remove trials following hit (because no previous error)
+            non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            non_hit[[0, N]] = False  # Removing first trial of each block
+    return non_hit
+
 def getAnalysisData(env, time_locked, control_type, behav_df):
     control_types_all = ['feedback', 'movement' , 'target', 'belief']
     assert control_type in control_types_all
     assert time_locked in ['feedback', 'target']
-    environment = np.array(behav_df['environment'])
+    environment_all = np.array(behav_df['environment'])
     if env != 'all':
         envcode = env2envcode[env]
-        trial_inds = np.where(environment == envcode)[0]
+        trial_inds = np.where(environment_all == envcode)[0]
     else:
-        trial_inds = np.arange(len(environment))
-    errors_cur = np.array(behav_df['error'])[trial_inds]
+        trial_inds = np.arange(len(environment_all))
 
-    targets_cur = np.array(behav_df['target'])[trial_inds]
-    feedback_cur = np.array(behav_df['feedback'])[trial_inds]
-    feedbackX_cur = np.array(behav_df['feedbackX'])[trial_inds]
-    feedbackY_cur = np.array(behav_df['feedbackY'])[trial_inds]
-    movement_cur = np.array(behav_df['org_feedback'])[trial_inds]
-    errors_cur = np.array(behav_df['error'])     [trial_inds]
-    belief_cur = np.array(behav_df['belief'])    [trial_inds]
+    errors = np.array(behav_df['error'])[trial_inds]
 
-    prev_targets_cur  = np.insert(targets_cur, 0, 0)[:-1]
-    prev_errors_cur  = np.insert(errors_cur, 0, 0)[:-1]
-    next_errors_cur  = np.insert(errors_cur, len(errors_cur), 0)[1:]
-    prev_feedback_cur  = np.insert(feedback_cur, 0, 0)[:-1]
-    prev_movement_cur  = np.insert(movement_cur, 0, 0)[:-1]
-    prev_belief_cur  = np.insert(belief_cur, 0, 0)[:-1]
-    next_belief_cur  = np.insert(belief_cur, len(belief_cur), 0)[1:]
+    targets = np.array(behav_df['target'])[trial_inds]
+    feedback = np.array(behav_df['feedback'])[trial_inds]
+    feedbackX = np.array(behav_df['feedbackX'])[trial_inds]
+    feedbackY = np.array(behav_df['feedbackY'])[trial_inds]
+    movement = np.array(behav_df['org_feedback'])[trial_inds]
+    errors = np.array(behav_df['error'])     [trial_inds]
+    belief = np.array(behav_df['belief'])    [trial_inds]
 
-    non_hit_cur = point_in_circle(targets_cur, target_coords,
-                          feedbackX_cur, feedbackY_cur,
-                          radius_target + radius_cursor)
-    non_hit_cur = np.array(non_hit_cur)
+    prev_targets  = np.insert(targets, 0, 0)[:-1]
+    prev_errors  = np.insert(errors, 0, 0)[:-1]
+    next_errors  = np.insert(errors, len(errors), 0)[1:]
+    prev_feedback  = np.insert(feedback, 0, 0)[:-1]
+    prev_movement  = np.insert(movement, 0, 0)[:-1]
+    prev_belief  = np.insert(belief, 0, 0)[:-1]
+    next_belief  = np.insert(belief, len(belief), 0)[1:]
 
+    non_hit = point_in_circle(targets, target_coords,
+                          feedbackX, feedbackY,
+                          radius_target + radiussor)
+    non_hit = np.array(non_hit)
 
-    N = 192 # ntrials in the block
+    from config2 import n_trials_in_block as N
+    non_hit = adjustNonHit(non_hit,env,time_locked)
     if env == 'all':
         #ep = epochs['20', '21', '22', '23', '30',
         #            '25', '26', '27', '28', '35']
         if time_locked == 'feedback':
             if control_type == 'feedback':
                 analysis_name = 'feedback_errors_next_errors_belief'
-                analysis_value = [feedback_cur, errors_cur, next_errors_cur,
-                                  belief_cur]
+                analysis_value = [feedback, errors, next_errors,
+                                  belief]
             elif control_type == 'movement':
                 analysis_name = 'movement_errors_next_errors_belief'
-                analysis_value = [movement_cur, errors_cur, next_errors_cur,
-                                  belief_cur]
+                analysis_value = [movement, errors, next_errors,
+                                  belief]
             elif control_type == 'target':
                 analysis_name = 'target_errors_nexterrors_belief'
-                analysis_value = [targets_cur, errors_cur, next_errors_cur,
-                                  belief_cur]
+                analysis_value = [targets, errors, next_errors,
+                                  belief]
             elif control_type == 'belief':
                 analysis_name = 'belief_errors_nexterrors'
-                analysis_value = [belief_cur, errors_cur, next_errors_cur]
+                analysis_value = [belief, errors, next_errors]
             # remove trials preceding hit (because no next error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur,
-                len(non_hit_cur), 1)[1:])
-            non_hit_cur[767] = False  # Removing last trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            #non_hit[N*4 - 1] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'
-                analysis_value = [prev_feedback_cur, prev_errors_cur, errors_cur,
-                                  prev_belief_cur]
+                analysis_value = [prev_feedback, prev_errors, errors,
+                                  prev_belief]
             elif control_type == 'movement':
                 analysis_name = 'prevmovement_preverrors_errors_prevbelief'
-                analysis_value = [prev_movement_cur, prev_errors_cur, errors_cur,
-                                  prev_belief_cur]
+                analysis_value = [prev_movement, prev_errors, errors,
+                                  prev_belief]
             elif control_type == 'target':
                 analysis_name = 'prevtarget_preverrors_errors_prevbelief'
-                analysis_value = [prev_targets_cur, prev_errors_cur, errors_cur,
-                                  prev_belief_cur]
+                analysis_value = [prev_targets, prev_errors, errors,
+                                  prev_belief]
             elif control_type == 'belief':
                 analysis_name = 'prevbelief_preverrors_errors'
-                analysis_value = [prev_belief_cur, prev_errors_cur, errors_cur]
+                analysis_value = [prev_belief, prev_errors, errors]
             # remove trials following hit (because no previous error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 0, 1)[:-1])
-            non_hit_cur[0] = False  # Removing first trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            #non_hit[0] = False  # Removing first trial of each block
     elif env == 'stable':
         if time_locked == 'feedback':
             if control_type == 'feedback':
                 analysis_name = 'feedback_errors_next_errors_belief'
-                analysis_value = [feedback_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [feedback, errors,
+                                  next_errors, belief]
             elif control_type == 'movement':
                 analysis_name = 'movement_errors_next_errors_belief'
-                analysis_value = [movement_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [movement, errors,
+                                  next_errors, belief]
             elif control_type == 'target':
                 analysis_name = 'target_errors_nexterrors_belief'
-                analysis_value = [targets_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [targets, errors,
+                                  next_errors, belief]
             elif control_type == 'belief':
                 analysis_name = 'belief_errors_nexterrors'
-                analysis_value = [belief_cur, errors_cur,
-                                  next_errors_cur]
+                analysis_value = [belief, errors,
+                                  next_errors]
             # remove trials preceding hit (because no next error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, len(non_hit_cur), 1)[1:])
-            non_hit_cur[[N-1, N*2-1]] = False  # Removing last trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            #non_hit[[N-1, N*2-1]] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'
-                analysis_value = [prev_feedback_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_feedback, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'movement':
                 analysis_name = 'prevmovement_preverrors_errors_prevbelief'
-                analysis_value = [prev_movement_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_movement, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'target':
                 analysis_name = 'prevtarget_preverrors_errors_prevbelief'
-                analysis_value = [prev_targets_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_targets, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'belief':
                 analysis_name = 'prevbelief_preverrors_errors'
-                analysis_value = [prev_belief_cur, prev_errors_cur,
-                                  errors_cur]
+                analysis_value = [prev_belief, prev_errors,
+                                  errors]
             # remove trials following hit (because no previous error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 0, 1)[:-1])
-            non_hit_cur[[0, N]] = False  # Removing first trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            #non_hit[[0, N]] = False  # Removing first trial of each block
     elif env == 'random':
         if time_locked == 'feedback':
             if control_type == 'feedback':
                 analysis_name = 'feedback_errors_next_errors_belief'
-                analysis_value = [feedback_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [feedback, errors,
+                                  next_errors, belief]
             elif control_type == 'movement':
                 analysis_name = 'movement_errors_next_errors_belief'
-                analysis_value = [movement_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [movement, errors,
+                                  next_errors, belief]
             elif control_type == 'target':
                 analysis_name = 'target_errors_nexterrors_belief'
-                analysis_value = [targets_cur, errors_cur,
-                                  next_errors_cur, belief_cur]
+                analysis_value = [targets, errors,
+                                  next_errors, belief]
             elif control_type == 'belief':
                 analysis_name = 'belief_errors_nexterrors'
-                analysis_value = [belief_cur, errors_cur,
-                                  next_errors_cur]
+                analysis_value = [belief, errors,
+                                  next_errors]
             # remove trials preceding hit (because no next error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, len(non_hit_cur), 1)[1:])
-            non_hit_cur[[N-1, N*2-1]] = False  # Removing last trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, len(non_hit), 1)[1:])
+            #non_hit[[N-1, N*2-1]] = False  # Removing last trial of each block
         elif time_locked == 'target':
             if control_type == 'feedback':
                 analysis_name = 'prevfeedback_preverrors_errors_prevbelief'
-                analysis_value = [prev_feedback_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_feedback, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'movement':
                 analysis_name = 'prevmovement_preverrors_errors_prevbelief'
-                analysis_value = [prev_movement_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_movement, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'target':
                 analysis_name = 'prevtarget_preverrors_errors_prevbelief'
-                analysis_value = [prev_targets_cur, prev_errors_cur,
-                                  errors_cur, prev_belief_cur]
+                analysis_value = [prev_targets, prev_errors,
+                                  errors, prev_belief]
             elif control_type == 'belief':
                 analysis_name = 'prevbelief_preverrors_errors'
-                analysis_value = [prev_belief_cur, prev_errors_cur,
-                                  errors_cur]
+                analysis_value = [prev_belief, prev_errors,
+                                  errors]
             # remove trials following hit (because no previous error)
-            non_hit_cur = ~(~non_hit_cur | ~np.insert(non_hit_cur, 0, 1)[:-1])
-            non_hit_cur[[0, 192]] = False  # Removing first trial of each block
+            #non_hit = ~(~non_hit | ~np.insert(non_hit, 0, 1)[:-1])
+            #non_hit[[0, N]] = False  # Removing first trial of each block
 
-    return analysis_name, analysis_value, non_hit_cur
+    return analysis_name, analysis_value, non_hit
 
 
-def getEpochs_custom(raw,event_ids, tmin=None,tmax=None, bsl=None ):
-    events = mne.find_events(raw, stim_channel='UPPT001',
-                            min_duration=0.02)
-    events[:, 0] += 18  # to account for delay between trig. & photodi.
-
-    epochs = Epochs(raw, events, event_id=event_ids,
-                            tmin=-0.2, tmax=3, preload=True,
-                            baseline=(-0.2, 0), decim=6)
-    return [ ('custom',epochs) ]
+#def getEpochs_custom(raw,event_ids, tmin=None,tmax=None, bsl=None ):
+#    events = mne.find_events(raw, stim_channel='UPPT001',
+#                            min_duration=0.02)
+#    events[:, 0] += delay_trig_photodi  # to account for delay between trig. & photodi.
+#
+#    epochs = Epochs(raw, events, event_id=event_ids,
+#                            tmin=-0.2, tmax=3, preload=True,
+#                            baseline=(-0.2, 0), decim=6)
+#    return [ ('custom',epochs) ]
 
 # from td_long2
 def getEpochs(raw,is_short,bsl):
     events = mne.find_events(raw, stim_channel='UPPT001',
-                            min_duration=0.02)
-    events[:, 0] += 18  # to account for delay between trig. & photodi.
+                            min_duration=min_event_duration)
+    events[:, 0] += delay_trig_photodi  # to account for delay between trig. & photodi.
     # diffence is tmax and which events are taken into acc
     # also how baseline is computed (what is considered to be baseline data)
     if is_short:

@@ -104,6 +104,7 @@ stage2time = {'home':(-0.5,0) }
 stim_channel_name = 'UPPT001'
 delay_trig_photodi = 18  # to account for delay between trig. & photodi.
 min_event_duration = 0.02
+n_trials_in_block = 192
 
 #DEBUG_ntrials       = 20
 #DEBUG_nchannels     = 3

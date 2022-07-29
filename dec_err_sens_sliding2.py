@@ -24,7 +24,8 @@ from config2 import (min_event_duration,genFnSliding,
                      stim_channel_name,delay_trig_photodi,
                      stage2evn2event_ids, stage2evn2event_ids_str,
                      paramFileRead, env2envcode, env2subtr)
-from error_sensitivity import enforceTargetTriggerConsistency, computeErrSens2
+from error_sensitivity import (enforceTargetTriggerConsistency,
+                               computeErrSens2,adjustNonHit)
 #from error_sensitivity import enforceTargetTriggerConsistency
 from xgboost import XGBRegressor
 
@@ -91,7 +92,7 @@ if ',' in env_to_run:
 else:
     env_to_run = [env_to_run]
 
-output_folder = par.get('output_folder',f'spoc_sliding2_{hpass}')
+output_folder = par.get('output_folder',f'corr_spoc_es_sliding2_{hpass}')
 ICAstr = par.get('ICAstr','with_ICA'  )  # empty string is allowed
 time_locked = par.get('time_locked','target')
 control_type = par.get('control_type','movement')
@@ -267,6 +268,8 @@ fn_events_full = op.join(path_data, subject, fn_events )
 
 from config2 import cleanEvents
 
+loaded_flt_raw = False
+
 if load_flt_raw and os.path.exists(fn_flt_raw_full) \
     and os.path.exists(fn_events_full) and \
     (not (use_preloaded_flt_raw and preloaded_flt_raw_is_present) ):
@@ -284,11 +287,13 @@ if load_flt_raw and os.path.exists(fn_flt_raw_full) \
             events = cleanEvents(events)
         else:
             events = mne.read_events(fn_events_full)
+        loaded_flt_raw = True
     except Exception as e:
         print('loading filtered raw failed, got exception ',str(e))
 
 
-if raw is None:
+if (raw is None) or ( (not loaded_flt_raw) and \
+    ( not (use_preloaded_flt_raw and preloaded_flt_raw_is_present) ) ):
     raw = read_raw_fif(op.join(path_data, subject, f'raw_{task}_{hpass}_{ICAstr}.fif' ),
             preload=True)
     if crop is not None:
@@ -320,7 +325,7 @@ for tmin_cur,tmax_cur in tminmax:
                         analysis_name,freq_name,tmin_cur,tmax_cur)
 
 
-        #event_ids_all = stage2evn2event_ids[time_locked]['all']
+        # first we need to take all events to ensure consistency
         event_ids_all = stage2evn2event_ids[time_locked]['all']
         bsl = None
         epochs = Epochs(raw, events, event_id = event_ids_all,
@@ -359,9 +364,23 @@ for tmin_cur,tmax_cur in tminmax:
             trial_inds = np.arange(len(environment))
 
         #non_hit = env2non_hit[env]
-        non_hit,corr,es,values_for_es = computeErrSens2(behav_df_cur, epochs,
+        non_hit_not_adj,corr,es,values_for_es,varnames,varnames_def =\
+            computeErrSens2(behav_df_cur, epochs,
                         subject, trial_inds,
                         enforce_consistency = 0)
+        non_hit_not_adj = np.array(non_hit_not_adj)
+
+
+        non_hit = adjustNonHit(non_hit_not_adj,env,time_locked)
+        # 0 -- target angs, 1 -- prev target angs,
+        # 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
+
+        values_for_es = values_for_es[:, non_hit]
+        corr = corr[non_hit]
+        es = es[non_hit]
+
+        prev_error    = np.array(values_for_es[4] )
+        prev_movement = np.array(values_for_es[3] )
 
         #abs_errors_cur = np.abs(errors_cur)
         times = epochs.times
@@ -388,14 +407,12 @@ for tmin_cur,tmax_cur in tminmax:
         ##es = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))/Y_es[4]
         ##corr = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))
         ## Classic decoding
-        ## Decod only prev_errors
+        ## Decod only prev_errors (or prev movements?)
         #y = Y[:, 3]
 
 
         #############################
 
-        # y = corr
-        y = es  # already non_hit
 
         ##################################
 
@@ -443,6 +460,9 @@ for tmin_cur,tmax_cur in tminmax:
         #Y_es
 
 
+        # y = corr
+        y = es  # already non_hit
+
         y_preds = np.zeros(len(y))
         scores = list()
         print('Starting CV')
@@ -459,8 +479,12 @@ for tmin_cur,tmax_cur in tminmax:
 
         svd = {'par':par}
         svd['es'] = es
+        svd['prev_error']    = prev_error
+        svd['prev_movement'] = prev_movement
+        svd['varnames'] = varnames
+        svd['corr'] = corr
         svd['diff'] = diff
-        svd['scores'] = scores
+        svd['scores_es'] = np.array(scores)
 
         np.savez(fname_full, **svd)
         print(f'Finished scores to {fname_full}')

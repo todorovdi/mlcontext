@@ -88,53 +88,9 @@ env2color = dict( zip(envs,colors) )
 #shift = 0.116
 #dur   = 0.464
 
-def collectResults(subject,hpass):
-    output_folder = f'spoc_sliding_{hpass}'
-    from config2 import freq_name2freq
-    import re
-    freqstr = '|'.join( freq_name2freq.keys() )
+from postproc import collectResults
 
-    dir_full = op.join(path_data, subject, 'results', output_folder)
-    fns = os.listdir ( dir_full )
-    tuples = []
-    regex = re.compile(r'(stable|random)_(Ridge|xgboost)_(feedback|target)_(.*)_(' +freqstr+ ')_t=(.*),(.*)\.npz')
-    for fn in fns:
-        r = re.match( regex, fn)
-        #print(r )
-        if r is None:
-            print(f'wrong fn = {fn}')
-        grps = r.groups(); #print(grps)
-        env_cur,rt_cur,time_locked_cur,analysis_name_cur,freq_name_cur,tmin,tmax = grps
-
-        if (regression_type,freq_name) != (rt_cur,freq_name_cur):
-            continue
-
-        fn_full = op.join(dir_full,fn)
-        f = np.load( fn_full, allow_pickle=1)
-        tuples += [ (os.stat(fn_full).st_mtime, fn, fn_full, f['par'][()], *grps )  ]
-        del f
-
-    srt = sorted(tuples, key=lambda x: x[0])
-
-    par = pars[-1]
-    if par['slide_windows_type'] == 'auto':
-        from config2 import stage2time_bounds
-        start, end = stage2time_bounds[time_locked]
-        start, end = eval( par.get(f'time_bounds_slide_{time_locked}', (start,end) ) )
-        shift = par.get('slide_window_shift',None)
-        dur = par.get('slide_window_dur', None)
-        tmins = np.arange(start,end,shift)
-        tmaxs = dur + tmins
-
-        tminmax = zip(tmins,tmaxs)
-
-        #tuples_a.shape
-    import pandas as pd
-    df_collect = pd.DataFrame(tuples,
-        columns=['mtime', 'fn', 'fn_full', 'par','env','rt','time_locked','analysis_name','freq_name','tmin','tmax' ] )
-
-    return df_collect
-
+output_folder = f'spoc_sliding_{hpass}'
 
 fnames_failed = []
 #ss = []
@@ -160,7 +116,9 @@ for time_locked in time_lockeds:
             #env2all_scores[env] = list with len = len(subjects)
             scores_cur_env = []
             for subject in subjects:
-                df_collect = collectResults(subject,hpass)
+                #df_collect = collectResults(subject,hpass)
+                df_collect = collectResults(subject,output_folder,freq_name,
+                            regression_type=regression_type)
                 sub_df = df_collect[ (df_collect['time_locked'] == time_locked) &\
                                     (df_collect['env'] == env) ]
                 tmins = sub_df['tmin']
