@@ -30,10 +30,9 @@ target_angs = (np.array([157.5, 112.5, 67.5, 22.5]) + 90) * \
 target_coords = calc_target_coordinates_centered(target_angs)
 
 ICA = 'with_ICA'
-hpass = 'no_filter'
+#hpass = 'no_filter'
 #save_folder = 'corr_es_SPoC_decod_slide_%s_%s' % (hpass, ICA)
 save_folder   = 'corr_spoc_es_sliding2_%s' % (hpass)
-output_folder = 'corrr_spoc_es_sliding2_%s' % hpass
 #/p/project/icei-hbp-2020-0012/lyon/memerr/data2/sub08_TXVPROYY/results/spoc_sliding_no_filte
 if not op.exists( op.join(path_fig, save_folder) ):
     os.mkdir(op.join(path_fig, save_folder) )
@@ -127,6 +126,7 @@ for env in envs:
     df_curenv = df[ df['env'] == env ]
     df_curenv_srt = df_curenv.sort_values(by=['tmin'], key=lambda x: list(map(float,x) ) )
     scores = []
+    scores_std = []
     for tmin in tmins_srt:
         df_curwnd = df_curenv_srt[ df_curenv_srt['tmin'] == tmin ]
         #scores.append( df_curwnd.mean['scores'] )
@@ -141,6 +141,8 @@ for env in envs:
         sc = np.array ( list( df_curwnd['scores_es'].to_numpy() ) )
         scm = sc.mean(axis=1) # mean over splits
         scores += [ scm.mean() ]
+
+        scores_std += [ scm.std() ]
 
         if plot_diff_vs_es:
             nr = 10; nc =2
@@ -172,7 +174,12 @@ for env in envs:
 
     fig = plt.figure(figsize = (10,4) )
     ax = plt.gca()
-    ax.plot( list(map(float,tmins_srt) ) ,scores)
+    tmins_srt_f = list(map(float,tmins_srt) )
+    scores = np.array(scores)
+    scores_std = np.array(scores_std)
+    ax.plot(tmins_srt_f  ,scores)
+    ax.plot(tmins_srt_f  ,scores - scores_std, ls=':')
+    ax.plot(tmins_srt_f  ,scores + scores_std, ls=':')
     ax.set_title(f'{env}: scores decoding erros sens {regression_type}')
 
     fname_fig = op.join( path_fig, save_folder,
