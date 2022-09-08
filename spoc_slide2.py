@@ -430,15 +430,17 @@ for tmin_cur,tmax_cur in tminmax:
                 if seed >= 0:
                     np.random.seed(seed)
                 with mne.use_log_level(mne_fit_log_level):
-                    score = cross_val_multiscore(est, X, y=y, cv=cv, scoring=scoring,
-                                                    n_jobs=n_jobs, verbose=classic_dec_verbose)
+                    score = cross_val_multiscore(est, X, y=y, cv=cv,
+                            scoring=scoring, n_jobs=n_jobs,
+                            verbose=classic_dec_verbose)
                 score = score.mean(axis=0)
                 return score
 
             if est_parallel_across_dims and n_jobs > 1:
                 seeds = np.random.randint(1000, size=dim)
                 scores = Parallel(n_jobs=n_jobs)(
-                    delayed(_est_run)(est,X,Y[:,dimi],cv,scoring,n_jobs_per_dim_classical_dec,seed ) \
+                    delayed(_est_run)(est,X,Y[:,dimi],cv,scoring,\
+                            n_jobs_per_dim_classical_dec,seed ) \
                         for dimi,seed in zip(np.arange(dim), seeds  ) )
             else:
                 for dimi in range(dim):

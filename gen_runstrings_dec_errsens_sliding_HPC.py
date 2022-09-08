@@ -10,12 +10,13 @@ script = 'dec_err_sens_sliding2.py'
 #hpasses = ['no_filter', '0.1', '0.05']
 rts = ['Ridge']
 #hpasses = ['no_filter', '0.1', '0.05'] 
-hpasses = ['no_filter'] 
+hpasses = ['no_filter', '0.1'] 
+#hpasses = ['no_filter'] 
 
 #shift = 0.25
 dur   = 0.464
-#shift = dur / 2
-shift = dur / 4
+shift = dur / 2
+#shift = dur / 4
 
 #dur   = 0.5
 #tmins = np.arange(-3,-0.5+shift,shift)
@@ -31,7 +32,8 @@ shift = dur / 4
 #, decim=6)
 # decim=6)
 
-envs = ['stable', 'random']
+#envs = ['stable', 'random']
+envs = ['all']
 seed = 0
 
 #ipy = get_ipython()

@@ -35,6 +35,10 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 env2envcode = dict(stable=0, random=1)
 env2subtr   = dict(stable=20, random=25)
 
+a,b = list( zip( *list( env2envcode.items() ) ) )
+envcode2env = dict( zip( b,a ) )
+
+
 ####################
 
 hostname = socket.gethostname()

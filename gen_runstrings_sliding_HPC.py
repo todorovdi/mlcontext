@@ -14,8 +14,8 @@ hpasses = ['no_filter']
 
 #shift = 0.25
 dur   = 0.464
-#shift = dur / 2
-shift = dur / 4
+shift = dur / 2
+#shift = dur / 4
 
 #dur   = 0.5
 #tmins = np.arange(-3,-0.5+shift,shift)

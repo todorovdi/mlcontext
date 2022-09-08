@@ -6,7 +6,7 @@ from mne.io import read_raw_fif
 from csp_my import SPoC
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import KFold
-from sklearn.linear_model import RidgeCV, LinearRegression
+from sklearn.linear_model import RidgeCV
 import xgboost
 #from sklearn.metrics import make_scorer
 from scipy.stats import spearmanr
@@ -192,7 +192,12 @@ n_jobs_XGB=n_jobs
 
 results_folder = op.join(path_data,subject,'results',output_folder)
 if not os.path.exists(results_folder):
-    os.makedirs(results_folder)
+    try:
+        os.makedirs(results_folder)
+    except OSError as e:
+        if not os.path.exists(results_folder):
+            os.makedirs(results_folder)
+
 
 if each_SPoC_fit_is_parallel:
     n_jobs_SPoC = n_jobs
@@ -244,8 +249,11 @@ targets_codes_full      = np.array(behav_df_full['target_codes'])
 #for freq_name, freq in freq_names_freqs:
 freq = freq_limits
 print(f'---------- Starting freq = {freq_name}')
-# read raw data
 
+
+############################################################################
+################################## read raw data
+############################################################################
 print(f'use_preloaded_raw = {use_preloaded_raw}, use_preloaded_flt_raw={use_preloaded_flt_raw}')
 #import sys; sys.exit(1)
 # get raw and events from raw file
@@ -268,8 +276,8 @@ fn_events_full = op.join(path_data, subject, fn_events )
 
 from config2 import cleanEvents
 
+#################  load filtered raw if present
 loaded_flt_raw = False
-
 if load_flt_raw and os.path.exists(fn_flt_raw_full) \
     and os.path.exists(fn_events_full) and \
     (not (use_preloaded_flt_raw and preloaded_flt_raw_is_present) ):
@@ -292,6 +300,7 @@ if load_flt_raw and os.path.exists(fn_flt_raw_full) \
         print('loading filtered raw failed, got exception ',str(e))
 
 
+# if raw is not present, re-filter it from zero
 if (raw is None) or ( (not loaded_flt_raw) and \
     ( not (use_preloaded_flt_raw and preloaded_flt_raw_is_present) ) ):
     raw = read_raw_fif(op.join(path_data, subject, f'raw_{task}_{hpass}_{ICAstr}.fif' ),
@@ -316,14 +325,24 @@ if (raw is None) or ( (not loaded_flt_raw) and \
 
         mne.write_events(fn_events_full, events, overwrite=True)
 
+# take epochs for all events
+# ensure target trigger consistency
+# get trial inds
+# extrace error sens using behav data
+# adjust Non Hit -- ?
+# add safety bound for time
+# take only necessary epochs (corresp to time_lock and to env)
+# take non-hit es and non-hit X
+# create SPoC and attach ridge CV to it
+# fit and predict, compute diff and score
+
+##################################    Start calc
 for tmin_cur,tmax_cur in tminmax:
     for env in env_to_run:
-
         analysis_name = 'err_sens'
         fname_full = genFnSliding(results_folder, env,
                         regression_type,time_locked,
                         analysis_name,freq_name,tmin_cur,tmax_cur)
-
 
         # first we need to take all events to ensure consistency
         event_ids_all = stage2evn2event_ids[time_locked]['all']
@@ -343,17 +362,10 @@ for tmin_cur,tmax_cur in tminmax:
         if exit_after == 'enforce_consist':
             sys.exit(0)
 
-        #env2epochs=dict(stable=epochs['20', '21', '22', '23', '30'],
-        #        random=epochs['25', '26', '27', '28', '35'] )
-
-        #for env,envcode in env2envcode.items():
-
         # TODO: maybe I have to reread stuff after ensuring consistency
-        envcode = env2envcode[env]
         environment = np.array(behav_df_cur['environment'])
 
         #targets      = np.array(behav_df_cur['target'])
-        #errors       = np.array(behav_df_cur['error'])
         #movement     = np.array(behav_df_cur['org_feedback'])
 
         if env in env2envcode:
@@ -364,57 +376,30 @@ for tmin_cur,tmax_cur in tminmax:
             trial_inds = np.arange(len(environment))
 
         #non_hit = env2non_hit[env]
-        non_hit_not_adj,corr,es,values_for_es,varnames,varnames_def =\
-            computeErrSens2(behav_df_cur, epochs,
-                        subject, trial_inds,
-                        enforce_consistency = 0)
-        non_hit_not_adj = np.array(non_hit_not_adj)
+        #non_hit_not_adj,corr,es,values_for_es,varnames,varnames_def =\
+        non_hit_not_adj, df_esv, vndef2vn  =\
+            computeErrSens2(behav_df_cur, trial_inds, epochs,
+                         enforce_consistency = 0)
 
+        non_hit = adjustNonHit(non_hit_not_adj, env, time_locked)
+        #corr = corr[non_hit]   # not used, only saved
+        correction_non_hit = df_esv['correction'][non_hit]
+        err_sens_non_hit   = df_esv['err_sens'][non_hit]
 
-        non_hit = adjustNonHit(non_hit_not_adj,env,time_locked)
-        # 0 -- target angs, 1 -- prev target angs,
-        # 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
-
-        values_for_es = values_for_es[:, non_hit]
-        corr = corr[non_hit]
-        es = es[non_hit]
-
-        prev_error    = np.array(values_for_es[4] )
-        prev_movement = np.array(values_for_es[3] )
-
-        #abs_errors_cur = np.abs(errors_cur)
+        ################################  prepare X
         times = epochs.times
-        # analysis_name = 'target_movement_errors_preverrors'
         # idk why but its really important to have str values here instead of ints
         ep = epochs[ stage2evn2event_ids_str[time_locked][env] ]
-
         tmin_safe = tmin_cur + safety_time_bound
         tmax_safe = tmax_cur - safety_time_bound
 
         X = ep.pick_types(meg=True, ref_meg=False)._data
-
         assert X.shape[0] == len(non_hit), (X.shape, len(non_hit) )
-        #wh = (times > -0.48) & (times < 0.01)
         wh = (times > tmin_safe) & (times < tmax_safe)
         X = X[non_hit]
         X = X[:, :, wh]
 
-        #############################
-
-        # orig
-        #Y = np.array(analysis_value)
-        #Y = Y[:, non_hit].T
-        ##es = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))/Y_es[4]
-        ##corr = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))
-        ## Classic decoding
-        ## Decod only prev_errors (or prev movements?)
-        #y = Y[:, 3]
-
-
-        #############################
-
-
-        ##################################
+        ##################################  prepare classif
 
         spoc = SPoC(n_components=5, log=True, reg='oas',
                     rank='full', n_jobs=n_jobs_SPoC,
@@ -423,14 +408,10 @@ for tmin_cur,tmax_cur in tminmax:
         if regression_type == 'Ridge':
             alphas = np.logspace(-5, 5, 12)
             est = make_pipeline(spoc, RidgeCV())
-            # Regressions for the B2B
-            G = make_pipeline(spoc,
-                                RidgeCV(alphas=alphas, fit_intercept=False))
         elif regression_type == 'xgboost':
             xgb = XGBRegressor(**add_clf_creopts)
             est = make_pipeline(spoc, xgb)
             # Regressions for the B2B
-            G = make_pipeline(spoc, xgb)
 
             #param_grid = {
             #    'pca__n_components': [5, 10, 15, 20, 25, 30],
@@ -441,80 +422,86 @@ for tmin_cur,tmax_cur in tminmax:
             #  cv=5, n_jobs=-1, scoring='roc_auc')
         else:
             raise ValueError('wrong regression value')
-        H = LinearRegression(fit_intercept=False, n_jobs=n_jobs)
-        #b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
-        #        parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
+
         # Cross-validation
         cv = KFold(nb_fold, shuffle=True)
 
-        #ep = env2epochs[env]
-        #ep = Epochs(raw, events, event_id=stage2evn2event_ids[time_locked][env] ,
-        #                tmin=tmin_cur, tmax=tmax_cur, preload=True,
-        #                baseline=bsl, decim=decim_epochs)
-
-        #analysis_value = env2pre_dec_data[env]
-
-        #values_for_es,analysis_value = getErrSensVals(errors_cur,targets_cur,movement_cur)
-        #Y_es = np.array(values_for_es)
-        #Y_es = Y_es[:, non_hit]
-        #Y_es
-
-
-        # y = corr
-        y = es  # already non_hit
-
-        y_preds = np.zeros(len(y))
-        scores = list()
-        print('Starting CV')
-        nsplit = 0
-        for train, test in cv.split(X, y):
-            print(f'Starting split N={nsplit}')
-            with mne.use_log_level(mne_fit_log_level):
-                est.fit(X[train], y[train])
-            y_preds[test] = est.predict(X[test])
-            score = spearmanr(y_preds[test], y[test])
-            scores.append(score[0])
-            nsplit += 1
-        diff = np.abs(y - y_preds)
-
+        ##################################
         svd = {'par':par}
-        svd['es'] = es
-        svd['prev_error']    = prev_error
+        ##################################  run classif
+
+        vars_to_decode = ['err_sens', 'correction', 'prev_error']
+        #y = err_sens_non_hit  # already non_hit
+        #y_preds = np.zeros(len(y))
+        #scores = list()
+        #print(f'Starting CV for regression_type={regression_type}')
+        #nsplit = 0
+        #for train, test in cv.split(X, y):
+        #    print(f'Starting split N={nsplit}')
+        #    with mne.use_log_level(mne_fit_log_level):
+        #        est.fit(X[train], y[train])
+        #    y_preds[test] = est.predict(X[test])
+        #    score = spearmanr(y_preds[test], y[test])
+        #    scores.append(score[0])
+        #    nsplit += 1
+        #diff = np.abs(y - y_preds)
+
+        #svd['diff_err_sens_pred'] = diff
+        #svd['scores_err_sens'] = np.array(scores)
+        ###########################
+        #addvars = ['error', 'correction']
+        addvar_dict = {}
+        for addvar in vars_to_decode:
+            if addvar in behav_df_cur.columns:
+                vals       = np.array(behav_df_cur[addvar])
+            elif addvar in df_esv.columns:
+                vals       = np.array(df_esv[addvar])
+            vals_non_hit = vals[non_hit]  # already non_hit
+
+            res = {}
+
+            y = vals_non_hit
+            y_preds = np.zeros(len(y))
+            scores = list()
+            print(f'{addvar}: Starting CV for regression_type={regression_type}')
+            nsplit = 0
+            for train, test in cv.split(X, y):
+                print(f'Starting split N={nsplit}')
+                with mne.use_log_level(mne_fit_log_level):
+                    est.fit(X[train], y[train])
+                y_preds[test] = est.predict(X[test])
+                score = spearmanr(y_preds[test], y[test])
+                scores.append(score[0])
+                nsplit += 1
+            diff = np.abs(y - y_preds)
+
+            res['diff']   = diff
+            res['scores'] = scores
+            res['vals'] = vals_non_hit  # non_hit
+
+            print(f'{addvar} scores average = {np.mean(scores):.4f}' )
+
+            addvar_dict[addvar] = res
+
+        svd['decoding_per_var'] = addvar_dict
+        ##################################  save res
+
+        # 0 -- target angs, 1 -- prev target angs,
+        # 2 -- current movemnet, 3 -- prev movements, 4 -- prev error
+        #values_for_es = values_for_es[:, non_hit]
+        # I'm not sure I really need it, just legacy
+        #prev_error    = np.array(values_for_es[4] )
+        #prev_movement = np.array(values_for_es[3] )
+        #prev_error    = df_esv[vndef2vn['prev_error'] ]    [ non_hit]
+        prev_movement = df_esv[vndef2vn['prev_movement'] ] [ non_hit]
+        #svd['prev_error']    = prev_error
         svd['prev_movement'] = prev_movement
-        svd['varnames'] = varnames
-        svd['corr'] = corr
-        svd['diff'] = diff
-        svd['scores_es'] = np.array(scores)
+
+        #svd['err_sens'] = err_sens_non_hit
+        svd['varnames'] = list( vndef2vn.values() )
+        svd['varnames_def2varnames'] = vndef2vn
+        svd['non_hit'] = non_hit
+        #svd['correction'] = correction_non_hit
 
         np.savez(fname_full, **svd)
         print(f'Finished scores to {fname_full}')
-
-        # run partial decoding
-        # Y = scale(Y)
-        # ensemble = ShuffleSplit(n_splits=20, test_size=.5)
-        # H_hats = list()
-        # for G_set, H_set in ensemble.split(Y[:, 0], X):
-        #     Y_hats = list()
-        #     for ii in range(Y.shape[1]):
-        #         y = Y[:, ii]
-        #         Y_hat = G.fit(X[G_set], y[G_set]).predict(X)
-        #         Y_hats.append(Y_hat)
-        #     Y_hats = np.array(Y_hats).T
-        #     H_hat = H.fit(Y[H_set], Y_hats[H_set]).coef_
-        #     H_hats.append(H_hat)
-        # partial_scores = np.diag(np.mean(H_hats, 0))
-        # save scores
-
-        #fname = op.join(results_folder,
-        #                f'{regression_type}_{env}_preverror_{freq_name}.npy')
-        #np.save(fname, np.array(y))
-        #fname = op.join(results_folder,
-        #                f'{regression_type}_{env}_diff_{freq_name}.npy')
-        #np.save(fname, np.array(diff))
-        #fname = op.join(results_folder,
-        #                f'{regression_type}_{env}_scores_{freq_name}.npy')
-        #np.save(fname, np.array(scores))
-        #print(f'Saved {fname}')
-
-        ###########################################
-

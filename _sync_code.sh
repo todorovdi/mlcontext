@@ -79,7 +79,7 @@ echo "  REV sync souce code"
 $run --mode:$RUNTYPE  "$CLUSTER_CODE/*_HPC.py"  $LOCAL_DIR/
 $SLEEP
 echo "  REV sync scripts"
-$run --mode:$RUNTYPE  "$CLUSTER_CODE/sbatch*.sh"  $LOCAL_DIR/slurm_scripts_"$SSH_HOSTNAME"
+$run --mode:$RUNTYPE  "$CLUSTER_CODE/slurm_scripts/sbatch*.sh"  $LOCAL_DIR/slurm_scripts_"$SSH_HOSTNAME"
 $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/*.sh"  $LOCAL_DIR
 
 echo "  REV sync params"

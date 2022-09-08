@@ -307,6 +307,7 @@ for train, test in cv.split(X, y):
     with mne.use_log_level(mne_fit_log_level):
         est.fit(X[train], y[train])
     y_preds[test] = est.predict(X[test])
+    # correlation between prediction and reality
     score = spearmanr(y_preds[test], y[test])
     scores.append(score[0])
     nsplit += 1
