@@ -143,15 +143,21 @@ b2b_each_fit_is_parallel  = int( par.get('b2b_each_fit_is_parallel',0)   )
 each_SPoC_fit_is_parallel = int( par.get('each_SPoC_fit_is_parallel',1)   )
 classic_dec_verbose       = int( par.get('classic_dec_verbose',3)       )
 
+
+decode_merge_pert = int( par.get('decode_merge_pert',1)   )
+decode_per_pert   = int( par.get('decode_per_pert',1)   )
+
 B2B_SPoC_parallel_type = par.get('B2B_SPoC_parallel_type', 'across_splits')
 # 'across_splits_and_dims'
 
+nskip_trial               = int( par.get('nskip_trial',1)                   )
 nb_fold                   = int( par.get('nb_fold',6)                   )
 decim_epochs              = int( par.get('decim_epochs',2)                   )
 n_splits_B2B              = int( par.get('n_splits_B2B',30)             )
 SPoC_n_components         = int( par.get('SPoC_n_components',5)         )
 safety_time_bound         = float( par.get('safety_time_bound',0.05) )
 random_seed               = int( par.get('random_seed',0) )
+save_result               = int( par.get('save_result',1) )
 crop                      = par.get('crop',None) ;
 if crop is not None:
     crop = eval(crop)
@@ -240,6 +246,9 @@ env2non_hit  = f['env2non_hit']
 # read behav data
 fname = op.join(path_data, subject, 'behavdata',
                 f'behav_{task}_df.pkl' )
+# where we would save cleaned df
+fname_EC = op.join(path_data, subject, 'behavdata',
+                f'behav_{task}_df_EC.pkl' )
 behav_df_full = pd.read_pickle(fname)
 
 targets_codes_full      = np.array(behav_df_full['target_codes'])
@@ -343,11 +352,11 @@ for tmin_cur,tmax_cur in tminmax:
         fname_full = genFnSliding(results_folder, env,
                         regression_type,time_locked,
                         analysis_name,freq_name,tmin_cur,tmax_cur)
-
-        # first we need to take all events to ensure consistency
-        event_ids_all = stage2evn2event_ids[time_locked]['all']
         bsl = None
-        epochs = Epochs(raw, events, event_id = event_ids_all,
+
+        ####################   ensure consistency ################
+        event_ids_all_for_EC = stage2evn2event_ids['target']['all']
+        epochs_for_EC = Epochs(raw, events, event_id = event_ids_all_for_EC,
                         tmin=tmin_cur, tmax=tmax_cur, preload=True,
                         baseline=bsl, decim=decim_epochs)
 
@@ -355,9 +364,18 @@ for tmin_cur,tmax_cur in tminmax:
         environment_full = np.array(behav_df_full['environment'])
         ## modifies in place
         behav_df_cur = enforceTargetTriggerConsistency(behav_df_full.copy(),
-                                        epochs,
+                                        epochs_for_EC,
                                         environment_full,
-                                        save_fname=fname)
+                                        save_fname=fname_EC)
+
+        ####################################
+
+
+        # first we need to take all events to ensure consistency
+        event_ids_all = stage2evn2event_ids[time_locked]['all']
+        epochs = Epochs(raw, events, event_id = event_ids_all,
+                        tmin=tmin_cur, tmax=tmax_cur, preload=True,
+                        baseline=bsl, decim=decim_epochs)
 
         if exit_after == 'enforce_consist':
             sys.exit(0)
@@ -371,18 +389,24 @@ for tmin_cur,tmax_cur in tminmax:
         if env in env2envcode:
             envcode = env2envcode[env]
             trial_inds = np.where(environment == envcode)[0]
+            subdf = behav_df_cur[ behav_df_cur['environment'] == envcode ]
         else:
             assert env == 'all'
             trial_inds = np.arange(len(environment))
+            subdf = behav_df_cur
 
         #non_hit = env2non_hit[env]
         #non_hit_not_adj,corr,es,values_for_es,varnames,varnames_def =\
+                #non_hit_not_adj, df_esv, vndef2vn  =\
+                #    computeErrSens2(behav_df_cur, trial_inds, epochs,
+                #                 enforce_consistency = 0)
         non_hit_not_adj, df_esv, vndef2vn  =\
-            computeErrSens2(behav_df_cur, trial_inds, epochs,
+            computeErrSens2(subdf, None, epochs,
                          enforce_consistency = 0)
 
         non_hit = adjustNonHit(non_hit_not_adj, env, time_locked)
         #corr = corr[non_hit]   # not used, only saved
+        # not that this is ADJUSTED non hit, it is not the same as df_esv['non_hit']
         correction_non_hit = df_esv['correction'][non_hit]
         err_sens_non_hit   = df_esv['err_sens'][non_hit]
 
@@ -401,27 +425,6 @@ for tmin_cur,tmax_cur in tminmax:
 
         ##################################  prepare classif
 
-        spoc = SPoC(n_components=5, log=True, reg='oas',
-                    rank='full', n_jobs=n_jobs_SPoC,
-                    fit_log_level=mne_fit_log_level)
-        # Regression for classic decoding
-        if regression_type == 'Ridge':
-            alphas = np.logspace(-5, 5, 12)
-            est = make_pipeline(spoc, RidgeCV())
-        elif regression_type == 'xgboost':
-            xgb = XGBRegressor(**add_clf_creopts)
-            est = make_pipeline(spoc, xgb)
-            # Regressions for the B2B
-
-            #param_grid = {
-            #    'pca__n_components': [5, 10, 15, 20, 25, 30],
-            #    'model__max_depth': [2, 3, 5, 7, 10],
-            #    'model__n_estimators': [10, 100, 500],
-            #}
-            #grid = GridSearchCV(pipeline, param_grid,
-            #  cv=5, n_jobs=-1, scoring='roc_auc')
-        else:
-            raise ValueError('wrong regression value')
 
         # Cross-validation
         cv = KFold(nb_fold, shuffle=True)
@@ -450,26 +453,73 @@ for tmin_cur,tmax_cur in tminmax:
         #svd['scores_err_sens'] = np.array(scores)
         ###########################
         #addvars = ['error', 'correction']
-        addvar_dict = {}
-        for addvar in vars_to_decode:
+
+        def ML(varname, mask=None, name=''):
+            print(f'-- decoding {varname}')
+            addvar = varname
             if addvar in behav_df_cur.columns:
                 vals       = np.array(behav_df_cur[addvar])
             elif addvar in df_esv.columns:
                 vals       = np.array(df_esv[addvar])
             vals_non_hit = vals[non_hit]  # already non_hit
 
+
             res = {}
 
-            y = vals_non_hit
+
+
+            # mask is done based on df_esv and X is based on epochs. But they
+            # were supposed to be aligned by ensure consistency
+            if mask is not None:
+                y = vals_non_hit[mask]
+                Xcur = X[mask]
+            else:
+                y = vals_non_hit
+                Xcur = X
+
+            mask_not_inf = ~np.isinf(y)
+            y    = y[mask_not_inf]
+            Xcur = Xcur[mask_not_inf]
+
+            if nskip_trial > 1:
+                y = y[::nskip_trial]
+                Xcur = Xcur[::nskip_trial]
+
+
+            ##############################
+            spoc = SPoC(n_components=5, log=True, reg='oas',
+                        rank='full', n_jobs=min(n_jobs_SPoC, Xcur.shape[0] ),
+                        fit_log_level=mne_fit_log_level)
+            # Regression for classic decoding
+            if regression_type == 'Ridge':
+                alphas = np.logspace(-5, 5, 12)
+                est = make_pipeline(spoc, RidgeCV())
+            elif regression_type == 'xgboost':
+                xgb = XGBRegressor(**add_clf_creopts)
+                est = make_pipeline(spoc, xgb)
+                # Regressions for the B2B
+
+                #param_grid = {
+                #    'pca__n_components': [5, 10, 15, 20, 25, 30],
+                #    'model__max_depth': [2, 3, 5, 7, 10],
+                #    'model__n_estimators': [10, 100, 500],
+                #}
+                #grid = GridSearchCV(pipeline, param_grid,
+                #  cv=5, n_jobs=-1, scoring='roc_auc')
+            else:
+                raise ValueError('wrong regression value')
+            ##############################
+
+
             y_preds = np.zeros(len(y))
             scores = list()
             print(f'{addvar}: Starting CV for regression_type={regression_type}')
             nsplit = 0
-            for train, test in cv.split(X, y):
+            for train, test in cv.split(Xcur, y):
                 print(f'Starting split N={nsplit}')
                 with mne.use_log_level(mne_fit_log_level):
-                    est.fit(X[train], y[train])
-                y_preds[test] = est.predict(X[test])
+                    est.fit(Xcur[train], y[train])
+                y_preds[test] = est.predict(Xcur[test])
                 score = spearmanr(y_preds[test], y[test])
                 scores.append(score[0])
                 nsplit += 1
@@ -477,13 +527,31 @@ for tmin_cur,tmax_cur in tminmax:
 
             res['diff']   = diff
             res['scores'] = scores
-            res['vals'] = vals_non_hit  # non_hit
+            res['vals']   = y  # non_hit
+            res['mask_valid'] = mask_not_inf
 
-            print(f'{addvar} scores average = {np.mean(scores):.4f}' )
+            print(f'{addvar} {name} scores average = {np.mean(scores):.4f}' )
+            return res
 
-            addvar_dict[addvar] = res
 
-        svd['decoding_per_var'] = addvar_dict
+        if decode_merge_pert:
+            print('-------------  Just decoding')
+            addvar_dict = {}
+            for addvar in vars_to_decode:
+                res = ML(addvar)
+                addvar_dict[addvar] = res
+            svd['decoding_per_var'] = addvar_dict
+
+        if decode_per_pert:
+            addvar_dict = {}
+            for addvar in vars_to_decode:
+                for pertval in behav_df_cur['perturbation'].unique():
+                    print(f'-------------  per pert decoding, pert = {pertval}')
+                    mask = df_esv['perturbation'][non_hit] == pertval
+                    res = ML(addvar, mask, name= f'pert={pertval}')
+                    addvar_dict[ (addvar, int(pertval) ) ] = res
+            svd['decoding_per_var_and_pert'] = addvar_dict
+
         ##################################  save res
 
         # 0 -- target angs, 1 -- prev target angs,
@@ -503,5 +571,6 @@ for tmin_cur,tmax_cur in tminmax:
         svd['non_hit'] = non_hit
         #svd['correction'] = correction_non_hit
 
-        np.savez(fname_full, **svd)
-        print(f'Finished scores to {fname_full}')
+        if save_result:
+            np.savez(fname_full, **svd)
+            print(f'Finished scores to {fname_full}')

@@ -42,12 +42,8 @@ if not op.exists( op.join(path_fig, save_folder) ):
 #fname_full = genFnSliding(results_folder, env,
 #                regression_type,time_locked,
 #                analysis_name,freq_name,tmin_cur,tmax_cur)
-envs = ['stable', 'random', 'all']
-
-DEBUG = 0
 if DEBUG:
-    subjects = subjects[:1]
-    envs = ['stable']
+    #subjects = subjects[:1]
     print("--------------   DEBUG MODE  --------------")
     print("--------------   DEBUG MODE  --------------")
     print("--------------   DEBUG MODE  --------------")
@@ -73,9 +69,13 @@ fnames_failed = []
 #tpls = []
 df_persubj=[]
 from postproc import collectResults
-ktes = ['err_sens', 'correction', 'prev_error' ]
 
-fname_df_full = pjoin(path_fig, save_folder, 'df')
+if isinstance(env,str):
+    envstr = env
+else:
+    envstr = ','.join(env)
+
+fname_df_full = pjoin(path_fig, save_folder, f'df_{envstr}')
 
 
 df_mode = 'preloaded'
@@ -92,7 +92,8 @@ if not use_preload_df:
             #        keys_to_extract = ['par','scores_err_sens','diff_err_sens_pred',
             #                           'err_sens', 'prev_error', 'correction'] )
             df_collect1 = collectResults(subject,output_folder,freq_name,
-                    keys_to_extract = ['par', 'non_hit'],
+                    keys_to_extract = ['par', 'non_hit'], env=env,
+                    time_locked = time_locked,
                     time_start=time_start, time_end=time_end )
             fns = list( df_collect1['fn'] )
             df_collect2 = collectResults(subject, output_folder, freq_name,
@@ -100,17 +101,26 @@ if not use_preload_df:
                                         parent_key = 'decoding_per_var',
                                         df = df_collect1,
                                         time_start=time_start, time_end=time_end)
+            df_collect2['perturbation'] = np.nan
 
+            df_collect3 = collectResults(subject, output_folder, freq_name,
+                    keys_to_extract = ktes,
+                                        parent_key = 'decoding_per_var_and_pert',
+                                        df = df_collect2,
+                                        cokey = 'perturbation',
+                                        time_start=time_start, time_end=time_end)
             #for kte in set(df_collect2.columns) - set(df_collect1.columns):
             #    df_collect1[kte] = df_collect2[kte]
 
-            df_persubj += [df_collect1]
-            del df_collect1
-            del df_collect2
+            df_persubj += [df_collect2, df_collect3]
+            if not DEBUG:
+                del df_collect1
+                del df_collect2
+                del df_collect3
             #tmins = df_persubj[df_persubj[env] == 'stable' ]   ['tmin']
-        df = pd.concat( df_persubj )
-        df.reset_index(inplace=True)
-        df.drop('index',1,inplace=True)
+        df = pd.concat( df_persubj, ignore_index=True )
+        #df.reset_index(inplace=True)
+        #df.drop('index',1,inplace=True)
 
         df_mode = 'new'
 
@@ -134,14 +144,14 @@ fnames_cur = []
 ##################################   Add columns to the database
 # compute correlation between  differences (between prediction and reality) and error sens
 df['pp:diff_es:r']       = df.apply(lambda x: spearmanr(
-    x['err_sens_diff'], x['err_sens_vals'])[0], axis=1 )
+    x['err_sens_diff'], x['err_sens_vals'])[0] if x['err_sens_vals'] is not None else np.nan, axis=1 )
 # compute correlation between  differences (between prediction and reality) and error sens
 df['pp:diff_abscorr:r']  = df.apply(lambda x: spearmanr(
-    x['correction_diff'], np.abs(x['correction_vals']) )[0], axis=1 )
+    x['correction_diff'], np.abs(x['correction_vals']) )[0] if x['err_sens_vals'] is not None else np.nan, axis=1 )
 df['pp:abspe_es:r']      = df.apply(lambda x: spearmanr(
-    np.abs(x['prev_error_vals']), x['err_sens_vals'])[0], axis=1 )
+    np.abs(x['prev_error_vals']), x['err_sens_vals'])[0] if x['err_sens_vals'] is not None else np.nan, axis=1 )
 
-df['abspe'] = df['prev_error_vals'].apply(np.abs)
+df['abspe'] = df['prev_error_vals'].apply(lambda x: np.abs(x) if x is not None else None )
 
 # Partial correlation [1] measures the degree of association between x and y,
 # after removing the effect of one or more controlling variables (covar, or Z).
@@ -158,6 +168,8 @@ df['abspe'] = df['prev_error_vals'].apply(np.abs)
 def pcorr(row):
     colnames = [ 'err_sens_diff','err_sens_vals', 'abspe' ]
     vals = [ row[coln] for coln in colnames ]
+    if vals[0] is None:
+        return np.nan, np.nan
     data = pd.DataFrame( dict( zip(colnames,vals) ) )
     results = partial_corr(data=data, x=colnames[0], y=colnames[1], covar=[colnames[2]],
                             method='spearman')
@@ -194,24 +206,150 @@ ppnames = [ 'pp:diff_es_pe:r', 'pp:diff_es:r',    'pp:diff_abscorr:r', 'pp:abspe
 # increases, so does y. Negative correlations imply that as x increases, y
 # decreases.
 
+for kte in ktes:
+    df[f'{kte}_scores_mean_over_folds'] =  df[f'{kte}_scores'].apply(lambda x: np.mean(x) if x is not None else np.nan)
+    df[f'{kte}_scores_std_over_folds']  =  df[f'{kte}_scores'].apply(lambda x: np.std(x) if x is not None else np.nan)
 
 df.to_pickle( fname_df_full )
+print(f'df saved to {fname_df_full}')
+
+if exit_after == 'collect':
+    sys.exit(0)
 
 tl = list( set(df['time_locked']) )
 assert len(tl) == 1
-time_locked = tl[0]
+#time_locked = tl[0]
 
-for env in envs:
-    df_curenv = df[ df['env'] == env ]
-    df_curenv_srt = df_curenv.sort_values(by=['tmin'],
-                                          key=lambda x: list(map(float,x) ) )
 
+
+pertvals = df['perturbation'].unique()
+
+
+
+from figure.plot_behav2 import getSubjPertSeqCode
+df['pert_seq_code'] = df.apply(lambda x: getSubjPertSeqCode(x['subject']), 1 )
+pscvals = [ (0,), (1,), (0,1) ]
+
+for kte in ktes:
+    # plot mean across subj
+    nr = len(pertvals)
+    nc = len(pscvals)
+    if plot_diff:
+        raise ValueError('need to correct row numbers')
+        nr *= 2
+
+    if isinstance(env,list):
+        nc *= len(env)
+    ww = 5; hh = 3
+    fig, axs = plt.subplots(nr,nc,figsize=(nc*ww,nr*hh) , sharex='col',
+                            sharey='row' )
+    axs = axs.reshape((nr,nc))
+    for psci,psc in enumerate( pscvals ):
+        for envi,envc in enumerate(env):
+            if len(psc ) == 1:
+                df_curenv = df[ df['pert_seq_code'] == psc[0] ]
+            else:
+                df_curenv = df
+            assert len(df)
+            df_curenv = df_curenv[ df_curenv['env'] == envc ]
+            df_curenv_srt = df_curenv.sort_values(by=['tmin'],
+                            key=lambda x: list(map(float,x) ) )
+
+            for pvi,pertv in enumerate(pertvals):
+                #scores_all = []  # without mean across fold
+                scores = []
+                diffs = []
+                scores_std = []
+                diffs_std = []
+
+                if np.isnan(pertv):
+                    maskp = df_curenv_srt['perturbation'].isnull()
+                else:
+                    maskp = df_curenv_srt['perturbation'] == pertv
+                grp = df_curenv_srt[maskp].groupby( ['tmin'])
+
+                #display(grp.size(), grp.size())
+                gsz = grp.size()[0]
+                if len(psc) == 2:
+                    assert gsz == len(subject_inds), (gsz, len(subject_inds) )
+                me  = grp.mean()
+                std = grp.std()
+
+                me = me.reset_index().sort_values(by=['tmin'],
+                                                key=lambda x: list(map(float,x) ) )
+                std = std.reset_index().sort_values(by=['tmin'],
+                                                key=lambda x: list(map(float,x) ) )
+
+                #tmins_srt_f = list(map(float,tmins_srt) )
+                #tmins_srt_f = list(map(float,tmins_srt) )
+                #tmins_srt_f = list( map(float, me['tmin']) )
+                #tmins_srt_f = list( map(float, me['tmin']) )
+                tmins_srt_f =  me['tmin']
+
+                # these are scores_es from archive, which are spearmanr between y_preds and y
+                scores     = np.array(me [f'{kte}_scores_mean_over_folds'] )
+                scores_std = np.array(std[f'{kte}_scores_mean_over_folds'] )
+
+                print(scores)
+
+                ax =axs[pvi, psci * len(env) + envi]
+                ax.plot(tmins_srt_f  ,scores)
+                ax.plot(tmins_srt_f  ,scores - scores_std, ls=':')
+                ax.plot(tmins_srt_f  ,scores + scores_std, ls=':')
+                ttl   = f'{envc}, pert={pertv} psc={psc} N={gsz}:\n {kte} scores {regression_type}'
+                ax.set_title(ttl)
+
+                mask = ( ( scores - scores_std ) >  0 ) |  ( ( scores + scores_std ) < 0 )
+                ax.plot(tmins_srt_f,scores)
+                ax.fill_between(tmins_srt_f, scores, where=mask, color=colors[0], alpha=0.3)
+
+                ax.axhline(0, ls='--', c='brown')
+                ax.xaxis.set_major_locator(plt.MaxNLocator(6))
+
+                ax.set_ylabel('spearmanr')
+
+                if plot_diff:
+                    # these are diff from archive, which are abs diff y_preds and y
+                    ax =axs[pvi, envi]
+                    diffs = np.array(diffs)
+                    diffs_std = np.array(diffs_std)
+                    ax.plot(tmins_srt_f  ,diffs)
+                    ax.plot(tmins_srt_f  ,diffs - diffs_std, ls=':')
+                    ax.plot(tmins_srt_f  ,diffs + diffs_std, ls=':')
+                    ax.set_title(f'{envc}: diffs decoding {kte} {regression_type}')
+
+
+    fname_fig = op.join( path_fig, save_folder,
+        f'tmin_vs_scores_{kte}__{envstr}_{regression_type}_{freq_name}_{time_locked}.png' )
+    plt.suptitle( f'{kte} freq={freq_name} {time_locked}' )
+    plt.savefig(fname_fig, dpi=300)
+    print(f'Fig saved to {fname_fig}')
+    if not DEBUG:
+        plt.close()
+
+
+if plot_scores_per_subj:
     for kte in ktes:
-        #scores_all = []  # without mean across fold
-        scores = []
-        diffs = []
-        scores_std = []
-        diffs_std = []
+        axs = plotScoresPerSubj(df, subjects, env, kte = kte,
+                            ww =4 ,hh = 2, ylim=( -0.3,0.3) )
+
+
+        fname_fig = op.join( path_fig, save_folder,
+            f'tmin_vs_scoresPS_{kte}__{regression_type}_{freq_name}_{time_locked}.pdf' )
+        plt.savefig(fname_fig, dpi=300)
+        print(f'Fig saved to {fname_fig}')
+        plt.close()
+
+
+
+
+sys.exit(0)
+
+
+
+# TODO: needs overhaul
+for kte in ktes:
+    for pvi,pertv in enumerate(pertvals):
         for tmin in tmins_srt:
             # it's important that here tmin is a string (comparing floats is a pain)
             df_curwnd = df_curenv_srt[ df_curenv_srt['tmin'] == tmin ]
@@ -270,56 +408,3 @@ for env in envs:
                 plt.savefig(fname_fig, dpi=300)
                 print(f'Fig saved to {fname_fig}')
                 plt.close()
-
-
-        # plot mean across subj
-        nr = 2; nc =1
-        ww = 5; hh = 3
-        fig, axs = plt.subplots(nr,nc,figsize=(nc*ww,nr*hh) , sharex='col',
-                                sharey='row' )
-        tmins_srt_f = list(map(float,tmins_srt) )
-        # these are scores_es from archive, which are spearmanr between y_preds and y
-        scores = np.array(scores)
-        scores_std = np.array(scores_std)
-        ax =axs[0]
-        ax.plot(tmins_srt_f  ,scores)
-        ax.plot(tmins_srt_f  ,scores - scores_std, ls=':')
-        ax.plot(tmins_srt_f  ,scores + scores_std, ls=':')
-        ax.set_title(f'{env}: scores decoding erros sens {regression_type}')
-
-        mask = ( ( scores - scores_std ) >  0 ) |  ( ( scores + scores_std ) < 0 )
-        ax.plot(tmins_srt_f,scores)
-        ax.fill_between(tmins_srt_f, scores, where=mask, color=colors[0], alpha=0.3)
-
-        ax.axhline(0, ls='--', c='brown')
-
-        ax.set_ylabel('spearmanr')
-
-        if plot_diff:
-            # these are diff from archive, which are abs diff y_preds and y
-            ax =axs[1]
-            diffs = np.array(diffs)
-            diffs_std = np.array(diffs_std)
-            ax.plot(tmins_srt_f  ,diffs)
-            ax.plot(tmins_srt_f  ,diffs - diffs_std, ls=':')
-            ax.plot(tmins_srt_f  ,diffs + diffs_std, ls=':')
-            ax.set_title(f'{env}: diffs decoding erros sens {regression_type}')
-
-        fname_fig = op.join( path_fig, save_folder,
-            f'tmin_vs_scores_{kte}__{env}_{regression_type}_{freq_name}_{time_locked}.png' )
-        plt.savefig(fname_fig, dpi=300)
-        print(f'Fig saved to {fname_fig}')
-        plt.close()
-
-
-
-for kte in ktes:
-    axs = plotScoresPerSubj(df, subjects, envs, kte = kte,
-                        ww =4 ,hh = 2, ylim=( -0.3,0.3) )
-
-
-    fname_fig = op.join( path_fig, save_folder,
-        f'tmin_vs_scoresPS_{kte}__{regression_type}_{freq_name}_{time_locked}.pdf' )
-    plt.savefig(fname_fig, dpi=300)
-    print(f'Fig saved to {fname_fig}')
-    plt.close()

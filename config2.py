@@ -35,6 +35,13 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 env2envcode = dict(stable=0, random=1)
 env2subtr   = dict(stable=20, random=25)
 
+pert_seq = {0: (0,30,0,-30,0), 1: (0,-30,0,30,0)}
+block_names = ['stable1','random1','stable2','random2'] # order is important!
+pert_stages = np.arange(5, dtype = int)
+pertvals = [0, 30, -30]
+
+pert_seq_code_test_trial = 40
+
 a,b = list( zip( *list( env2envcode.items() ) ) )
 envcode2env = dict( zip( b,a ) )
 
@@ -200,7 +207,7 @@ def genArgParser():
     parser.add_argument('--time_bounds_slide_feedback')
     parser.add_argument('--tmin')
     parser.add_argument('--tmax')
-    parser.add_argument('--slide_windows_type')
+    parser.add_argument('--slide_windows_type', type=str)
     parser.add_argument('--slide_window_dur', type=float)
     parser.add_argument('--slide_window_shift', type=float)
     parser.add_argument('--debug',default = 0, type=int)
@@ -234,9 +241,17 @@ def genArgParser():
 
     parser.add_argument('--exit_after', default = 'end')
 
+    parser.add_argument('--nskip_trial', default = 1, type=int)
+
+    parser.add_argument('--decode_merge_pert', default = 1, type = int)
+    parser.add_argument('--decode_per_pert', default = 1 , type = int)
+
+    parser.add_argument('--save_result', default = 1 , type = int)
+
     return parser
 
 def cleanEvents(events):
+    import warnings
     t = -1
     bad_trials = list()
     bad_events = list()

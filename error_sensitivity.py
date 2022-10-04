@@ -55,12 +55,16 @@ target_coords = calc_target_coordinates_centered(target_angs)
 def enforceTargetTriggerConsistency(behav_df, epochs, environment,
                                     do_delete_trials=1,
                                     save_fname=None):
+    # WARNING: this will fail (give empty) if epochs are based of time_locked=feedback
     meg_targets = epochs.events[:, 2].copy()
     #targets = np.array( behav_df['target_codes'] )
     targets = np.array( behav_df['target_inds'] )
     assert len(targets)
     assert len(meg_targets)
     print(  len(targets) , len(meg_targets) )
+    if environment is None:
+        environment = behav_df['environment']
+
     for env,envcode in env2envcode.items():
         trial_inds = np.where(environment == envcode)[0]
         meg_targets[trial_inds] = meg_targets[trial_inds] - env2subtr[env]
@@ -105,6 +109,8 @@ def getErrSensVals(error,target,movement, time_locked='target',
                    ret_df=False):
     # here target should be indices of target
     # shift error by -1
+
+    assert len( set([ len(error), len(target), len(movement) ] ) ) == 1
 
     #getAnalysisData('all',time_locked,control_type,behad_df)
     varnames_def = ['target','prev_target', 'movement', 'prev_movement',
@@ -159,36 +165,45 @@ def getErrSensVals(error,target,movement, time_locked='target',
             varnames, varnames_def
 
 
-def computeErrSens2(behav_df, trial_inds, epochs=None, do_delete_trials=1,
-                    enforce_consistency=0, time_locked='target'):
-    from config2 import n_trials_in_block as N
-    # before enforcing consistencey
-    environment  = np.array(behav_df['environment'])
+def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
+                    enforce_consistency=0, time_locked='target', correct_hit = 'inf' ):
+    '''
+    computes error sensitiviy across dataset. So indexing is very important here.
+    '''
+    assert correct_hit in ['prev_valid', 'zero', 'inf' ]
     # modifies behav_df in place
     if enforce_consistency:
+        # before enforcing consistencey. VERY DANGEROUS HERE since it DOES NOT take
+        # only df_inds
+        environment  = np.array(behav_df['environment'])
+        assert epochs is not None
         behav_df = enforceTargetTriggerConsistency(behav_df, epochs, environment,
                                         do_delete_trials=do_delete_trials )
-    targets      = np.array(behav_df['target_inds'])
+
+    if df_inds is None:
+        df_inds = behav_df.index
+    targets_cur      = np.array(behav_df.loc[df_inds,'target_inds'])
     # after enforcing consistencey
-    environment  = np.array(behav_df['environment'])
-    errors       = np.array(behav_df['error'])
-    #feedback     = np.array(behav_df['feedback'])
-    feedbackX    = np.array(behav_df['feedbackX'])
-    feedbackY    = np.array(behav_df['feedbackY'])
-    movement = np.array(behav_df['org_feedback'])
+    environment_cur  = np.array(behav_df.loc[df_inds,'environment'])
+    errors_cur       = np.array(behav_df.loc[df_inds, 'error'])
+    #feedback     = np.array(behav_d.locf['feedback'])
+    feedbackX_cur    = np.array(behav_df.loc[df_inds, 'feedbackX'])
+    feedbackY_cur    = np.array(behav_df.loc[df_inds, 'feedbackY'])
+    movement_cur     = np.array(behav_df.loc[df_inds, 'org_feedback'])
 
-    # after deleting wrong triggers
-    targets_cur = targets[trial_inds]
-    # Feedback positions
-    #feedback_cur = feedback[trial_inds]
-    feedbackX_cur = feedbackX[trial_inds]
-    feedbackY_cur = feedbackY[trial_inds]
-    # Movement positions [after deleting wrong trials]
-    movement_cur = movement[trial_inds]
-    # Error positions
-    errors_cur = errors[trial_inds]
+    ## after deleting wrong triggers
+    #targets_cur = targets[df_inds]
+    ## Feedback positions
+    ##feedback_cur = feedback[df_inds]
+    #feedbackX_cur = feedbackX[df_inds]
+    #feedbackY_cur = feedbackY[df_inds]
+    ## Movement positions [after deleting wrong trials]
+    #movement_cur = movement[df_inds]
+    ## Error positions
+    #errors_cur = errors[df_inds]
 
-    # it is a mask of non_hit, not indices
+    # it is a _mask_ of non_hit, not indices
+    # mask is on df_inds only, not on entire behav_df
     non_hit_not_adj = point_in_circle(targets_cur, target_coords,
                                         feedbackX_cur, feedbackY_cur,
                                         radius_target + radius_cursor)
@@ -235,13 +250,28 @@ def computeErrSens2(behav_df, trial_inds, epochs=None, do_delete_trials=1,
 
     # this if for time_locked != 'target', for others it can be shifted
     correction = (target_angs_next - next_movement) - (target_angs - movement)
-    df_esv['err_sens'] = correction / errors
+    df_esv['non_hit_not_adj'] = non_hit_not_adj
+    df_esv.loc[df_esv['non_hit_not_adj'],'err_sens']  = correction / errors
+    if correct_hit == 'prev_valid':
+        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = np.inf
+        hit_inds = np.where(~df_esv['non_hit_not_adj'] )[0]
+        for hiti in hit_inds:
+            prev = df_esv.loc[ :hiti, 'err_sens' ]
+            good = np.where( ~ (np.isinf( prev ) | np.isnan(np.isinf) ) )[0]
+            if len(good):
+                lastgood = good[-1]
+                df_esv.loc[ hiti, 'err_sens' ] = df_esv.loc[ lastgood, 'err_sens' ]
+        #df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  =
+    elif correct_hit == 'zero':
+        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = 0
+    elif correct_hit == 'inf':
+        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = np.inf
     df_esv['correction'] = correction
 
-    df_esv['environment'] = behav_df['environment']
-    df_esv['perturbation'] = behav_df['perturbation']
+    df_esv['environment']  = np.array( behav_df.loc[df_inds, 'environment'] )
+    df_esv['perturbation'] = np.array( behav_df.loc[df_inds, 'perturbation'])
 
-    df_esv['non_hit'] = non_hit_not_adj
+    df_esv['trial_inds_glob'] = np.array( behav_df.loc[df_inds, 'trials'])
 
     #corr = (values_for_es[0]-values_for_es[2]) - \
     #    (values_for_es[1]-values_for_es[3])
@@ -410,7 +440,9 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     return env2err_sens, env2pre_err_sens,env2pre_dec_data, env2non_hit
 
 def adjustNonHitDf(df,env,time_locked):
+    raise ValueError('not finished implementation')
 
+    non_hit = df['non_hit']
     # return a mask
     # some adjustment of non_hit, based on time lock and whether we are in
     # stable or random environment

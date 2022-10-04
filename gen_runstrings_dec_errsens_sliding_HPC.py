@@ -32,8 +32,8 @@ shift = dur / 2
 #, decim=6)
 # decim=6)
 
-#envs = ['stable', 'random']
-envs = ['all']
+envs = ['stable', 'random']
+#envs = ['all']
 seed = 0
 
 #ipy = get_ipython()
@@ -48,7 +48,8 @@ run_test = 'ipython -i ' + os.path.join( path_code, script ) + ' -- '
 for hpass in hpasses:
 #    for control_type in ['movement']:
     #for time_locked in ['target', 'feedback']:
-    for time_locked in ['target']:
+    #for time_locked in ['target']:
+    for time_locked in ['target', 'feedback']:
         start, end = stage2time_bounds[time_locked]
         tmins = np.arange(start,end,shift)
         tmaxs = dur + tmins
@@ -73,7 +74,7 @@ for hpass in hpasses:
                     #s += f' --tmin ' + ','.join( map(str,tmins) )
                     #s += f' --tmax ' + ','.join( map(str,tmaxs) )
                     s += f' --subject {subject}'
-                    #s += f' --time_locked {time_locked}'
+                    s += f' --time_locked {time_locked}'
                     #s += f' --control_type {control_type}'
                     s += f' --regression_type ' + ','.join(rts)
                     s += f' --freq_name {freq_name}'

@@ -137,7 +137,13 @@ col_feedback_Y = 7
 col_org_feedback_X = 8
 col_org_feedback_Y = 9
 
-col_err = 10
+
+# This variable saves the unperturbed, unprojected feedback
+# self.org_feedbackX, self.org_feedbackY = self.joyX, self.joyY
+# self.error_distance = np.sqrt((self.feedbackX - self.target_types[self.target_to_show][0])**2 +
+#                                              (self.feedbackY - self.target_types[self.target_to_show][1])**2)
+
+col_err = 10            # err is saved during experiment
 col_env = 11
 spec_timeind = 10
 # Q: why alwasy 10th index?

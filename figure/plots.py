@@ -3,6 +3,8 @@ import numpy as np
 
 def plotScoresPerSubj(df, subjects, envs, kte = 'err_sens',
                       ww =4 ,hh = 2, ylim=( -0.3,0.3) ):
+    if isinstance(envs,str):
+        envs = [envs]
     nsubj = len(subjects)
     #nsubj = 2
     nr,nc = nsubj, len(envs)

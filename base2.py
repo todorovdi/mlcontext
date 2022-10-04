@@ -202,7 +202,7 @@ def create_bem_surf(subject, subjects_dir=None, overwrite=False):
 def read_hpi_mri(fname):
     landmark = dict()
     f = open(fname)
-    text = [l.strip('\n') for l in f.readlines()]
+    text = [ln.strip('\n') for ln in f.readlines()]
     f.close()
     idx = 0
     while idx < len(text):
@@ -234,6 +234,17 @@ def read_hpi_mri(fname):
         idx += 1
     return landmark
 
+
+def point_in_circle_single(target_ind, target_coords, feedbackX,
+                    feedbackY, circle_radius):
+    non_hit = list()
+    d = math.sqrt(math.pow(target_coords[target_ind][0]-feedbackX, 2) +
+                  math.pow(target_coords[target_ind][1]-feedbackY, 2))
+    if d > circle_radius:
+        non_hit = True
+    else:
+        non_hit = False
+    return non_hit
 
 # for each dim tell whether we hit target or not
 def point_in_circle(targets, target_coords, feedbackX,
@@ -300,7 +311,7 @@ class B2B(BaseEstimator):
 
         split = ensemble.split(X, Y)
         if self.each_fit_is_parallel:
-            print(f'B2B start NOT parllel (across splits)')
+            print('B2B start NOT parllel (across splits)')
             H_hats = list()
             for G_set, H_set in split:
                 H_hat = _b2b_fit_one_split2( X,Y,G_set,H_set,self.G,self.H  )
@@ -430,7 +441,7 @@ class B2B_SPoC(BaseEstimator):
         #G is a regressor, H too
         split = ensemble.split(X, Y)
         if self.parallel_type == 'no':
-            print(f'B2B_SPoC start NOT parllel (across splits)')
+            print('B2B_SPoC start NOT parllel (across splits)')
             H_hats = list()
             for G_set, H_set in split:
                 H_hat = _b2b_fit_one_split(X,Y,G_set,H_set,self.G,self.H)

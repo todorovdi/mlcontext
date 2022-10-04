@@ -159,7 +159,6 @@ for freq_name in freqs:
     cond = ['Stable'] * 4 * nb_sub + ['Random'] * 4 * nb_sub
     data = pd.DataFrame({'Decoding Performance': scores,
                         'Condition': cond, 'Type': type})
-    my_pal = {'Stable': colors[0], 'Random': colors[1]}
 
     prev_error_data = data[data['Type'] == 'Prev_errors']
     mean_preverror_stable = prev_error_data['Decoding Performance'][prev_error_data['Condition']=='Stable']
