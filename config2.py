@@ -35,6 +35,7 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 env2envcode = dict(stable=0, random=1)
 env2subtr   = dict(stable=20, random=25)
 
+# this is for stable1, for stable 2 it is inverse
 pert_seq = {0: (0,30,0,-30,0), 1: (0,-30,0,30,0)}
 block_names = ['stable1','random1','stable2','random2'] # order is important!
 pert_stages = np.arange(5, dtype = int)

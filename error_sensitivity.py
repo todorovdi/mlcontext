@@ -117,6 +117,7 @@ def getErrSensVals(error,target,movement, time_locked='target',
                 'prev_error']
 
     if time_locked == 'target':
+        # add zero in the beginning
         prev_errors   = np.insert(error,   0, 0)[:-1]
         prev_targets  = np.insert(target,  0, 0)[:-1]
         prev_movement = np.insert(movement, 0, 0)[:-1]
@@ -131,6 +132,7 @@ def getErrSensVals(error,target,movement, time_locked='target',
                         prev_errors]
         varnames = varnames_def
     else:
+        # add zero in the end
         next_errors    = np.insert(error,  len(error), 0)[1:]
         next_target    = np.insert(target, len(target), 0)[1:]
         next_movement  = np.insert(movement,  len(movement), 0)[1:]
@@ -166,11 +168,19 @@ def getErrSensVals(error,target,movement, time_locked='target',
 
 
 def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
-                    enforce_consistency=0, time_locked='target', correct_hit = 'inf' ):
+                    enforce_consistency=0, time_locked='target',
+                    correct_hit = 'inf', error_type = 'MPE',
+                    colname_nh = 'non_hit_not_adj' ):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
-    assert correct_hit in ['prev_valid', 'zero', 'inf' ]
+    #colname_nh = 'non_hit_shifted'
+
+    # in read_beahav we compute
+    # errors.append(feedback[trial] - target_locs[trial])
+    # target_locs being target angles
+
+    assert correct_hit in ['prev_valid', 'zero', 'inf', 'nan' ]
     # modifies behav_df in place
     if enforce_consistency:
         # before enforcing consistencey. VERY DANGEROUS HERE since it DOES NOT take
@@ -182,14 +192,29 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     if df_inds is None:
         df_inds = behav_df.index
+
+    dis = np.diff(behav_df.index.values)
+    np.max( dis ) == np.max( dis ) and np.max( dis ) == 1
+
     targets_cur      = np.array(behav_df.loc[df_inds,'target_inds'])
+    targets_locs_cur      = np.array(behav_df.loc[df_inds,'target_locs'])
+    org_feedback_cur      = np.array(behav_df.loc[df_inds,'org_feedback'])
+    feedback_cur      = np.array(behav_df.loc[df_inds,'feedback'])
     # after enforcing consistencey
     environment_cur  = np.array(behav_df.loc[df_inds,'environment'])
-    errors_cur       = np.array(behav_df.loc[df_inds, 'error'])
     #feedback     = np.array(behav_d.locf['feedback'])
     feedbackX_cur    = np.array(behav_df.loc[df_inds, 'feedbackX'])
     feedbackY_cur    = np.array(behav_df.loc[df_inds, 'feedbackY'])
     movement_cur     = np.array(behav_df.loc[df_inds, 'org_feedback'])
+
+    if error_type == 'MPE':
+        errors_cur       = np.array(behav_df.loc[df_inds, 'error'])
+    elif error_type == 'SPE_naive':
+        # observed - predicted
+        errors_cur       = feedback_cur - org_feedback_cur
+    elif error_type == 'EGE_naive':
+        errors_cur       = org_feedback_cur - targets_locs_cur
+        # prediceted - goal
 
     ## after deleting wrong triggers
     #targets_cur = targets[df_inds]
@@ -208,6 +233,15 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
                                         feedbackX_cur, feedbackY_cur,
                                         radius_target + radius_cursor)
     non_hit_not_adj = np.array(non_hit_not_adj)
+
+    # not that non-hit has different effect on error sens calc depending on
+    # which time_locked is used
+    if time_locked == 'feedback':
+        #valid = np.insert(non_hit_not_adj, 0 ,0)[:-1]
+        valid = np.insert(non_hit_not_adj, len(non_hit_not_adj), 0)[1:]
+    elif time_locked == 'target':
+        valid = np.insert(non_hit_not_adj, 0 ,0)[:-1]
+
     #non_hit = non_hit_cur
     #non_hit = np.array(non_hit)
     ## remove trials following hit (because no previous error)
@@ -219,10 +253,11 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     #non_hit = adjustNonHit(non_hit_not_adj,env,time_locked)
 
+    # returs database of shfited data (either forward of backward, depending on
+    # time_locked)
     df_esv,vndef2vn = \
         getErrSensVals(errors_cur,targets_cur, movement_cur,
-                                                  time_locked = time_locked,
-                       ret_df = True)
+            time_locked = time_locked, ret_df = True)
 
     #target_angs_next, target_angs, next_movement, movement, errors = values_for_es
 
@@ -251,22 +286,29 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
     # this if for time_locked != 'target', for others it can be shifted
     correction = (target_angs_next - next_movement) - (target_angs - movement)
     df_esv['non_hit_not_adj'] = non_hit_not_adj
-    df_esv.loc[df_esv['non_hit_not_adj'],'err_sens']  = correction / errors
+    df_esv['non_hit_shifted'] = valid
+    df_esv.loc[df_esv[colname_nh],'err_sens']  = correction / errors
+
+    #import pdb; pdb.set_trace()
+
     if correct_hit == 'prev_valid':
-        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = np.inf
-        hit_inds = np.where(~df_esv['non_hit_not_adj'] )[0]
+        df_esv.loc[~df_esv[colname_nh],'err_sens']  = np.inf
+        hit_inds = np.where(~df_esv[colname_nh] )[0]
         for hiti in hit_inds:
             prev = df_esv.loc[ :hiti, 'err_sens' ]
             good = np.where( ~ (np.isinf( prev ) | np.isnan(np.isinf) ) )[0]
             if len(good):
                 lastgood = good[-1]
                 df_esv.loc[ hiti, 'err_sens' ] = df_esv.loc[ lastgood, 'err_sens' ]
-        #df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  =
+        #df_esv.loc[~df_esv[colname_nh],'err_sens']  =
     elif correct_hit == 'zero':
-        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = 0
+        df_esv.loc[~df_esv[colname_nh],'err_sens']  = 0
     elif correct_hit == 'inf':
-        df_esv.loc[~df_esv['non_hit_not_adj'],'err_sens']  = np.inf
+        df_esv.loc[~df_esv[colname_nh],'err_sens']  = np.inf
+    elif correct_hit == 'nan':
+        df_esv.loc[~df_esv[colname_nh],'err_sens']  = np.nan
     df_esv['correction'] = correction
+    df_esv['error_type'] = error_type
 
     df_esv['environment']  = np.array( behav_df.loc[df_inds, 'environment'] )
     df_esv['perturbation'] = np.array( behav_df.loc[df_inds, 'perturbation'])
@@ -278,7 +320,6 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
     #es = corr / values_for_es[4]
 
     #values_for_es[4]  ==  df['feedback'] - df['target']
-
 
     #return non_hit_not_adj, corr, es, values_for_es, varnames, varnames_def
     return non_hit_not_adj, df_esv, vndef2vn
@@ -439,8 +480,58 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
 
     return env2err_sens, env2pre_err_sens,env2pre_dec_data, env2non_hit
 
-def adjustNonHitDf(df,env,time_locked):
+def adjustNonHitDf(df, env, time_locked, hits_to_use = ['current_trial']):
     raise ValueError('not finished implementation')
+    assert np.all( np.isin(hits_to_use, ['current_trial','shifted_trial'] ) )
+
+    non_hit = df['non_hit']
+    # return a mask
+    # some adjustment of non_hit, based on time lock and whether we are in
+    # stable or random environment
+    #non_hit = non_hit.copy()
+    from config2 import n_trials_in_block as N
+    # it is painful to do those inserts in case of pandas
+    raise ValueError('not implemented')
+    if 'current_trial' in hits_to_use:
+        nhr = non_hit
+    else:
+        nhr = np.ones(len(non_hit), dtype=bool )
+
+    if 'shifted_trial' in hits_to_use:
+        if env == 'all':
+            if time_locked == 'feedback':
+                # remove trials preceding hit (because no next error)
+                nhr &= np.insert(nhr, len(nhr), 1)[1:]
+                nhr[N*4 - 1] = False  # Removing last trial of each block
+            elif time_locked == 'target':
+                # remove trials following hit (because no previous error)
+                nhr &= np.insert(nhr, 0, 1)[:-1]
+                nhr[0] = False  # Removing first trial of each block
+        elif env == 'stable':
+            if time_locked == 'feedback':
+                # remove trials preceding hit (because no next error)
+                nhr &= np.insert(nhr, len(nhr), 1)[1:]
+                nhr[[N-1, N*2-1]] = False  # Removing last trial of each block
+            elif time_locked == 'target':
+                # remove trials following hit (because no previous error)
+                nhr &= np.insert(nhr, 0, 1)[:-1]
+                nhr[[0, N]] = False  # Removing first trial of each block
+        elif env == 'random':
+            if time_locked == 'feedback':
+                # remove trials preceding hit (because no next error)
+                nhr &= np.insert(nhr, len(nhr), 1)[1:]
+                nhr[[N-1, N*2-1]] = False  # Removing last trial of each block
+            elif time_locked == 'target':
+                # remove trials following hit (because no previous error)
+                nhr &= np.insert(nhr, 0, 1)[:-1]
+                nhr[[0, N]] = False  # Removing first trial of each block
+
+    df['non_hit_adj'] = nhr
+    return nhr
+
+def adjustNonHitDf_old(df, env, time_locked, hits_to_use = ['current_trial']):
+    raise ValueError('not finished implementation')
+    #hits_to_use
 
     non_hit = df['non_hit']
     # return a mask

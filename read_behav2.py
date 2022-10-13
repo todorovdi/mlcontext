@@ -163,8 +163,10 @@ for trial in range(nb_trials):
     feedbackX.append(  log_cur[timeinds_fb[spec_timeind], col_feedback_X] - width/2)
     feedbackY.append(-(log_cur[timeinds_fb[spec_timeind], col_feedback_Y] - height/2))
 
-    org_feedbackX.append(  log_cur[timeinds_fb[spec_timeind], col_org_feedback_X] - width/2)
-    org_feedbackY.append(-(log_cur[timeinds_fb[spec_timeind], col_org_feedback_Y] - height/2))
+    org_feedbackX.append(  log_cur[timeinds_fb[spec_timeind],
+        col_org_feedback_X] - width/2)
+    org_feedbackY.append(-(log_cur[timeinds_fb[spec_timeind],
+        col_org_feedback_Y] - height/2))
 
     envcode = int(log_cur[timeinds_fb[spec_timeind], col_env])
     env = envcode2env[envcode]
