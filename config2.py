@@ -43,6 +43,9 @@ pertvals = [0, 30, -30]
 
 pert_seq_code_test_trial = 40
 
+control_types_all = ['feedback', 'movement' , 'target', 'belief']
+time_lockeds_all = ['feedback', 'target']
+
 a,b = list( zip( *list( env2envcode.items() ) ) )
 envcode2env = dict( zip( b,a ) )
 
@@ -123,16 +126,20 @@ n_trials_in_block = 192
 DEBUG_ntrials       = 40
 DEBUG_nchannels     = 3
 
-stage2time_bounds = { 'feedback': (-2,5), 'target':(-5,2) }
+#stage2time_bounds = { 'feedback': (-2,5), 'target':(-5,2) }
+stage2time_bounds = { 'feedback': (-2,3), 'target':(-2,1.5) }
 
 analysis_name2var_ord = {'movement_errors_next_errors_belief':['movement', 'errors', 'next_errors', 'belief'],
 'prevmovement_preverrors_errors_prevbelief':['prevmovement', 'preverrors', 'errors', 'prevbelief'] }
 
 
 def genFnSliding(results_folder, env,regression_type,
-                 time_locked,analysis_name,freq_name,tmin_cur,tmax_cur):
-    fn_suffix = (f'{env}_{regression_type}_{time_locked}_'
-        f'{analysis_name}_{freq_name}_t={tmin_cur:.2f},{tmax_cur:.2f}')
+                 time_locked,suffix,freq_name,tmin_cur,tmax_cur,
+                 trial_group_col_calc):
+    #fn_suffix = (f'{env}_{regression_type}_{time_locked}_'
+    #    f'{suffix}_{freq_name}_t={tmin_cur:.2f},{tmax_cur:.2f}')
+    fn_suffix = (f'{env}_{trial_group_col_calc}_{regression_type}_{time_locked}_'
+        f'{suffix}_{freq_name}_t={tmin_cur:.2f},{tmax_cur:.2f}')
     fn = f'{fn_suffix}.npz'
     fname_full = pjoin(results_folder, fn)
     return fname_full
@@ -181,11 +188,32 @@ def paramFileRead(fname,recursive=True):
 
     return params
 
+
+class CustomAction(argparse.Action):
+    def __init__(self, check_func, *args, **kwargs):
+        """
+        argparse custom action.
+        :param check_func: callable to do the real check.
+        """
+        self._check_func = check_func
+        super(CustomAction, self).__init__(*args, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string):
+        if isinstance(values, list):
+            values = [self._check_func(parser, v) for v in values]
+        else:
+            values = self._check_func(parser, values)
+        setattr(namespace, self.dest, values)
+
+
+
+
 def genArgParser():
     parser = argparse.ArgumentParser()
     from config2 import n_jobs as n_jobs_def
 
     # choices
+    parser.add_argument('--each_SPoC_fit_is_parallel', default=1 )
     parser.add_argument('--n_jobs',  default = n_jobs_def, type=int )
     parser.add_argument('--subject', required = False)
     #parser.add_argument('--runpar_line_ind', default=None, type=int)
@@ -204,14 +232,39 @@ def genArgParser():
     parser.add_argument('--ICAstr', default='with_ICA')
     parser.add_argument('--time_locked', default='target')
     parser.add_argument('--control_type', default='movement')
-    parser.add_argument('--time_bounds_slide_target')
-    parser.add_argument('--time_bounds_slide_feedback')
+    parser.add_argument('--time_bounds_slide_target',   type=str )
+    parser.add_argument('--time_bounds_slide_feedback', type=str  )
     parser.add_argument('--tmin')
     parser.add_argument('--tmax')
     parser.add_argument('--slide_windows_type', type=str)
     parser.add_argument('--slide_window_dur', type=float)
     parser.add_argument('--slide_window_shift', type=float)
     parser.add_argument('--debug',default = 0, type=int)
+
+    def parse(parser, s):
+        vs = s.split(',')
+        for vi,v in enumerate(vs):
+            if v in ['all', 'None']:
+                vs[vi] = None
+        return vs
+    def parsei(parser, s):
+        vs = s.split(',')
+        for vi,v in enumerate(vs):
+            if v in ['all', 'None']:
+                vs[vi] = None
+            else:
+                vs[vi] = int(v)
+        return vs
+    parser.add_argument('--dists_trial_from_prevtgt',default = [None],
+                        action=CustomAction, check_func=parsei)
+    parser.add_argument('--dists_rad_from_prevtgt',  default = [None],
+                        action=CustomAction, check_func=parse)
+    parser.add_argument('--target_inds_to_use',default = [None],
+                        action=CustomAction, check_func=parsei)
+    parser.add_argument('--groupcols',default = ['environment'], action=CustomAction,
+                        check_func=parse)
+    parser.add_argument('--pertvals',default = [None], action=CustomAction,
+                        check_func=parse)
 
 
     parser.add_argument('--do_classic_dec', default = 1, type = int)
@@ -229,7 +282,9 @@ def genArgParser():
     parser.add_argument('--SPoC_n_components', default = 5, type = int)
     parser.add_argument('--safety_time_bound', default=0)
     parser.add_argument('--random_seed', default=0, type=int)
+    parser.add_argument('--trim_outliers', default=0, type=int)
     parser.add_argument('--crop')
+    parser.add_argument('--custom_suffix')
 
     parser.add_argument('--use_preloaded_raw', default = 0, type = int)
     parser.add_argument('--use_preloaded_flt_raw', default = 0, type = int)
@@ -240,12 +295,18 @@ def genArgParser():
     parser.add_argument('--load_flt_raw', default = 1, type = int)
     parser.add_argument('--save_flt_raw', default = 1, type = int)
 
+    parser.add_argument('--error_type', default = 'MPE', type = str)
+    parser.add_argument('--trial_group_col_calc',
+                        default = 'trialwe', type = str)
+    parser.add_argument('--block_names_to_use',
+                        default = 'all', type = str)
+
     parser.add_argument('--exit_after', default = 'end')
 
     parser.add_argument('--nskip_trial', default = 1, type=int)
 
-    parser.add_argument('--decode_merge_pert', default = 1, type = int)
-    parser.add_argument('--decode_per_pert', default = 1 , type = int)
+    #parser.add_argument('--decode_merge_pert', default = 1, type = int)
+    #parser.add_argument('--decode_per_pert', default = 1 , type = int)
 
     parser.add_argument('--save_result', default = 1 , type = int)
 

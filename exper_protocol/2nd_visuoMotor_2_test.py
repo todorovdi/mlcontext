@@ -1,6 +1,6 @@
 from __future__ import print_function
+# needed for joystick
 import pygame
-from psychopy import gui, core
 from pygame.locals import *
 import time
 import random
@@ -8,19 +8,14 @@ import math
 import logging
 import os
 #from win32api import GetSystemMetrics
+import sys
 if sys.platform.startswith('win32'):
     from ctypes import windll
 from random import shuffle
 import numpy as np
 import math
-import EyeLink
-# Create dictionnary info for gui
-info = {}
-info['participant'] = ''
-info['session'] = ''
-dlg = gui.DlgFromDict(info)
-if not dlg.OK:
-    core.quit()
+#import pylink
+#import EyeLink
 
 
 class VisuoMotor:
@@ -34,8 +29,9 @@ class VisuoMotor:
         self.paramfile.write(comment + '\n')
 
 
-    def initialize_parameters(self):
-        self.debug = False
+    def initialize_parameters(self, info):
+        #self.debug = False
+        self.debug = True # affects fullscreen or not
         self.params = {}
         self.task_id = 'visuomotor'
         self.subject_id = info['participant']
@@ -75,17 +71,21 @@ class VisuoMotor:
         self.paramfile.close()
 
 
-    def __init__(self, subject_name='', task_id='', session_id=''):
-        self.initialize_parameters()
+    def __init__(self, info, task_id='',
+                 use_triggers = 1, use_joystick=1):
+        self.initialize_parameters(info)
+        self.params['use_triggers'] = use_triggers
         self.use_triggers = self.params['use_triggers']
         if (self.use_triggers):
             print("Using triggers")
         else:
             print("NOT using triggers")
+
+        #self.eye_tracker = pylink.EyeLink(None)
         self.size = self.params['width'], self.params['height']
         self.trigger_port = 0x378
         self.trigger_countdown = -1
-        self.counter_trials = 0
+        self.trial_counter = 0
         self.num_trials_task = 80
         self.counter_inside = 0
         self.counter_feedback = 0
@@ -98,6 +98,13 @@ class VisuoMotor:
         self.BREAK_PHASE = 50
         self.STABLE_CONDITION_ID = 0
         self.RANDOM_CONDITION_ID = 1
+        self.current_phase = None
+
+        self.use_joystick = use_joystick
+        if use_joystick:
+            self.phase_shift_event_type = pygame.JOYBUTTONDOWN
+        else:
+            self.phase_shift_event_type = pygame.MOUSEBUTTONDOWN
         self.init_target_positions()
         pygame.init()
         self.myfont = pygame.font.SysFont('Calibri', 24)
@@ -120,8 +127,11 @@ class VisuoMotor:
         self.color_photodiode = [0, 0, 0]
         self.home_position = (int(round(self.params['width']/2.0)),
                               int(round(self.params['height']/2.0)))
-        self.my_joystick = pygame.joystick.Joystick(0)
-        self.my_joystick.init()
+        if use_joystick:
+            self.my_joystick = pygame.joystick.Joystick(0)
+            self.my_joystick.init()
+        else:
+            self.my_joystick = pygame.mouse
         self.joyX = 0
         self.joyY = 0
         self.feedbackX = 0
@@ -148,6 +158,7 @@ class VisuoMotor:
             #perturb_vector.append([0, 30, 0, -30, 0])
 
 
+        # NOTE! this assumes fixed number of trials
         for block in ['stable1', 'random', 'stable2', 'random']:
             for nbTrial, perturbation in zip(trials_vector, perturb_vector):
                 x = np.zeros(nbTrial)
@@ -206,12 +217,14 @@ class VisuoMotor:
     def on_event(self, event):
         if event.type == pygame.QUIT:
             self._running = False
-        if event.type == pygame.JOYBUTTONDOWN:
+        if event.type == self.phase_shift_event_type:
+            print(self.my_joystick.get_pos(), self.current_phase,
+                  self.trialsArray[self.trial_counter] )
             if self.start_task == 0:
                 self.current_phase = self.REST_PHASE
-                if self.trialsArray[self.counter_trials, 2] == 0:
+                if self.trialsArray[self.trial_counter, 2] == 0:
                     self.send_trigger(self.current_phase)
-                elif self.trialsArray[self.counter_trials, 2] == 1:
+                elif self.trialsArray[self.trial_counter, 2] == 1:
                     self.send_trigger(self.current_phase+5)
                 self.start_task = 1
             else:
@@ -228,9 +241,9 @@ class VisuoMotor:
                 self.params['radius_cursor'] = self.params['radius_cursor']-1
             if event.key == pygame.K_w:
                 self.params['radius_cursor'] = self.params['radius_cursor']+1
-            if event.key == pygame.K_c:
-                if (self.params['use_eye_tracker']):
-                    EyeLink.tracker(self.params['width'], self.params['height'])
+            #if event.key == pygame.K_c:
+            #    if (self.params['use_eye_tracker']):
+            #        EyeLink.tracker(self.params['width'], self.params['height'])
 
 
     def on_render(self):
@@ -278,6 +291,12 @@ class VisuoMotor:
                                      int(round(((self.params['height'] - self.length_text[1]) / 2.0)))))
 
 
+        if self.debug:
+            debugstr = f'on_render: X={self.joyX},Y={self.joyY},  Phase={self.current_phase}'
+            debugstr += f' ctrinside={self.counter_inside}'
+            debug_text = self.myfont.render(debugstr, True, (255, 255, 255))
+            ldt = self.myfont.size(debugstr)
+            self._display_surf.blit(debug_text, (5, self.params['height']-30))
 
 
         pygame.display.update()
@@ -305,57 +324,67 @@ class VisuoMotor:
         return cursorReachX, cursorReachY
 
 
-    def point_in_circle(self, circle_center, point, circle_radius):
+    def point_in_circle(self, circle_center, point, circle_radius, verbose=False):
         d = math.sqrt(math.pow(point[0]-circle_center[0], 2) +
                       math.pow(point[1]-circle_center[1], 2))
+        if verbose:
+            print(d, circle_radius)
         return d < circle_radius
 
 
+    # only if task is running (i.e. when task_start is True)
     def on_loop(self):
+        if self.use_joystick:
+            self.joyX = self.my_joystick.get_axis(0)
+            self.joyY = self.my_joystick.get_axis(1)
 
-        self.joyX = self.my_joystick.get_axis(0)
-        self.joyY = self.my_joystick.get_axis(1)
-        self.joyX = int(round(((self.joyX - -1) / (1 - -1)) *
-                              (self.params['width'] - 0) + 0))
-        self.joyY = int(round(((self.joyY - -1) / (1 - -1)) *
-                              (self.params['height'] - 0) + 0))
+            self.joyX = int(round(((self.joyX - -1) / (1 - -1)) *
+                                (self.params['width'] - 0) + 0))
+            self.joyY = int(round(((self.joyY - -1) / (1 - -1)) *
+                                (self.params['height'] - 0) + 0))
+        else:
+            self.joyX, self.joyY = self.my_joystick.get_pos()
+
+
+        #print('alall')
 
         if (self.current_phase == self.REST_PHASE):
             if self.point_in_circle(self.home_position, (self.joyX, self.joyY),
-                                    self.params['radius_cursor']):
+                                    self.params['radius_cursor'], verbose=0):
                 self.counter_inside = self.counter_inside+1
             else:
                 self.counter_inside = 0
             if (self.counter_inside == self.params['FPS']*self.params['time_inside']):
                 self.current_phase = self.TARGET_PHASE
+                print(self.counter_inside, self.params['FPS']*self.params['time_inside'])
 
-                if (self.trialsArray[self.counter_trials, 2] == self.STABLE_CONDITION_ID):
-                    self.target_to_show = int(self.trialsArray[self.counter_trials, 0])
-                elif (self.trialsArray[self.counter_trials, 2] == self.RANDOM_CONDITION_ID):
+                if (self.trialsArray[self.trial_counter, 2] == self.STABLE_CONDITION_ID):
+                    self.target_to_show = int(self.trialsArray[self.trial_counter, 0])
+                elif (self.trialsArray[self.trial_counter, 2] == self.RANDOM_CONDITION_ID):
                     self.target_to_show = self.block_stack[self.counter_random_block][2]
-                if self.trialsArray[self.counter_trials, 2] == 0:
+                if self.trialsArray[self.trial_counter, 2] == 0:
                     self.send_trigger(self.current_phase + self.target_to_show)
-                elif self.trialsArray[self.counter_trials, 2] == 1:
+                elif self.trialsArray[self.trial_counter, 2] == 1:
                     self.send_trigger(self.current_phase + self.target_to_show + 5)
                 self.color_photodiode = [255, 255, 255]
 
         elif (self.current_phase == self.TARGET_PHASE):
             if (self.radius_reached()):
-                if (self.trialsArray[self.counter_trials, 2] == self.STABLE_CONDITION_ID):
-                    self.feedbackX, self.feedbackY = self.project_coordinates((self.joyX, self.joyY), self.trialsArray[self.counter_trials, 1])
+                if (self.trialsArray[self.trial_counter, 2] == self.STABLE_CONDITION_ID):
+                    self.feedbackX, self.feedbackY = self.project_coordinates((self.joyX, self.joyY), self.trialsArray[self.trial_counter, 1])
                     self.block_stack.append([self.feedbackX, self.feedbackY, self.target_to_show])
 
-                    if ((self.counter_trials+1) != len(self.trialsArray)):
-                        if (self.trialsArray[self.counter_trials+1, 2] == self.RANDOM_CONDITION_ID):
+                    if ((self.trial_counter+1) != len(self.trialsArray)):
+                        if (self.trialsArray[self.trial_counter+1, 2] == self.RANDOM_CONDITION_ID):
                             self.block_stack = np.array(self.block_stack)
                             self.block_stack = np.random.permutation(self.block_stack)
                             self.counter_random_block = 0
 
-                elif (self.trialsArray[self.counter_trials, 2] == self.RANDOM_CONDITION_ID):
+                elif (self.trialsArray[self.trial_counter, 2] == self.RANDOM_CONDITION_ID):
                     self.feedbackX, self.feedbackY = self.block_stack[self.counter_random_block][0:2]
                     self.counter_random_block = self.counter_random_block+1
-                    if ((self.counter_trials+1) != len(self.trialsArray)):
-                        if (self.trialsArray[self.counter_trials+1, 2] == self.STABLE_CONDITION_ID):
+                    if ((self.trial_counter+1) != len(self.trialsArray)):
+                        if (self.trialsArray[self.trial_counter+1, 2] == self.STABLE_CONDITION_ID):
                             self.block_stack = []
 
                 else:
@@ -373,20 +402,20 @@ class VisuoMotor:
                     self.colorTarget = [255, 0, 0]
                     self.counter_hit_trials = self.counter_hit_trials+1
                 self.current_phase = self.FEEDBACK_PHASE
-                if self.trialsArray[self.counter_trials, 2] == 0:
+                if self.trialsArray[self.trial_counter, 2] == 0:
                     self.send_trigger(self.current_phase)
-                elif self.trialsArray[self.counter_trials, 2] == 1:
+                elif self.trialsArray[self.trial_counter, 2] == 1:
                     self.send_trigger(self.current_phase + 5)
                 self.color_photodiode = [0, 0, 0]
 
         elif (self.current_phase == self.FEEDBACK_PHASE):
             self.counter_feedback = self.counter_feedback+1
             if (self.counter_feedback == self.params['FPS'] * self.params['time_feedback']):
-                if ((self.counter_trials+1) != len(self.trialsArray)):
-                    if (((self.trialsArray[self.counter_trials+1, 2] == self.RANDOM_CONDITION_ID) &
-                       (self.trialsArray[self.counter_trials, 2] == self.STABLE_CONDITION_ID)) |
-                        ((self.trialsArray[self.counter_trials+1, 2] == self.STABLE_CONDITION_ID) &
-                       (self.trialsArray[self.counter_trials, 2] == self.RANDOM_CONDITION_ID))):
+                if ((self.trial_counter+1) != len(self.trialsArray)):
+                    if (((self.trialsArray[self.trial_counter+1, 2] == self.RANDOM_CONDITION_ID) &
+                       (self.trialsArray[self.trial_counter, 2] == self.STABLE_CONDITION_ID)) |
+                        ((self.trialsArray[self.trial_counter+1, 2] == self.STABLE_CONDITION_ID) &
+                       (self.trialsArray[self.trial_counter, 2] == self.RANDOM_CONDITION_ID))):
                         self.current_phase = self.BREAK_PHASE
                         self.free_from_break = 0
                     else:
@@ -397,11 +426,11 @@ class VisuoMotor:
 
 
                 self.ITI_jitter = self.params['time_ITI'] + self.params['jitter'] * np.random.random_sample()
-                if self.trialsArray[self.counter_trials, 2] == 0:
+                if self.trialsArray[self.trial_counter, 2] == 0:
                     self.send_trigger(self.current_phase)
-                elif self.trialsArray[self.counter_trials, 2] == 1:
+                elif self.trialsArray[self.trial_counter, 2] == 1:
                     self.send_trigger(self.current_phase + 5)
-                self.currentText = self.myfont.render('Hits: ' + str(self.counter_hit_trials) + '/' + str(self.counter_trials+1), True, (255,255,255))
+                self.currentText = self.myfont.render('Hits: ' + str(self.counter_hit_trials) + '/' + str(self.trial_counter+1), True, (255,255,255))
 
         elif (self.current_phase == self.BREAK_PHASE):
             if (self.free_from_break):
@@ -410,9 +439,9 @@ class VisuoMotor:
             self.counter_ITI = self.counter_ITI+1
             if (self.counter_ITI == int(self.params['FPS'] * self.ITI_jitter)):
                 self.current_phase = self.REST_PHASE
-                if self.trialsArray[self.counter_trials, 2] == 0:
+                if self.trialsArray[self.trial_counter, 2] == 0:
                     self.send_trigger(self.current_phase)
-                elif self.trialsArray[self.counter_trials, 2] == 1:
+                elif self.trialsArray[self.trial_counter, 2] == 1:
                     self.send_trigger(self.current_phase + 5)
                 self.counter_feedback = 0
                 self.counter_ITI = 0
@@ -423,8 +452,8 @@ class VisuoMotor:
                 self.org_feedbackY = 0
                 self.error_distance = 0
                 self.colorTarget = [0, 255, 0]
-                self.counter_trials = self.counter_trials + 1
-                print ('Trial: ' + str(self.counter_trials))
+                self.trial_counter = self.trial_counter + 1
+                print ('Trial: ' + str(self.trial_counter))
         else:
             print("Error")
             self.on_cleanup(-1)
@@ -432,11 +461,11 @@ class VisuoMotor:
 
     def update_log(self):
         self.current_log = []
-        self.current_log.append(self.counter_trials)
+        self.current_log.append(self.trial_counter)
         self.current_log.append(self.current_phase)
-        #self.current_log.append(self.trialsArray[self.counter_trials, 0]) #target number
+        #self.current_log.append(self.trialsArray[self.trial_counter, 0]) #target number
         self.current_log.append(self.target_to_show) #target number
-        self.current_log.append(self.trialsArray[self.counter_trials, 1]) #perturbation
+        self.current_log.append(self.trialsArray[self.trial_counter, 1]) #perturbation
         self.current_log.append(self.joyX)
         self.current_log.append(self.joyY)
         self.current_log.append(self.feedbackX)
@@ -444,7 +473,7 @@ class VisuoMotor:
         self.current_log.append(self.org_feedbackX)
         self.current_log.append(self.org_feedbackY)
         self.current_log.append(self.error_distance)
-        self.current_log.append(self.trialsArray[self.counter_trials, 2]) #stable (0) or random(1) block
+        self.current_log.append(self.trialsArray[self.trial_counter, 2]) #stable (0) or random(1) block
         self.current_log.append(self.current_time - self.initial_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
 
@@ -465,8 +494,8 @@ class VisuoMotor:
             self._running = False
         clock = pygame.time.Clock()
         self.initial_time = time.time()
-        if (self.params['use_eye_tracker']):
-            EyeLink.tracker(self.params['width'], self.params['height'])
+        #if (self.params['use_eye_tracker']):
+        #    EyeLink.tracker(self.params['width'], self.params['height'])
         self.initial_time = time.time()
         while(self._running):
             self.current_time = time.time()
@@ -479,10 +508,12 @@ class VisuoMotor:
                 elif (self.trigger_countdown == 0):
                     self.trigger_countdown = -1
                     self.send_trigger(0)
-                if self.counter_trials == len(self.trialsArray):
+                if self.trial_counter == len(self.trialsArray):
                     print("Success ! Experiment Done ")
                     break
                 self.update_log()
+
+            #print(clock)
 
 
             self.on_render()
@@ -492,5 +523,37 @@ class VisuoMotor:
         self.on_cleanup(0)
 
 if __name__ == "__main__":
-    app = VisuoMotor()
+    #app = VisuoMotor()
+
+    info = {}
+
+    #from psychopy import gui, core
+    #info['participant'] = ''
+    #info['session'] = ''
+    #dlg = gui.DlgFromDict(info)
+    #if not dlg.OK:
+    #    core.quit()
+    info['participant'] = 'dima'
+    info['session'] = 'session1'
+
+
+    app = VisuoMotor(info, use_triggers=0, use_joystick=0)
     app.on_execute()
+
+    # it starts a loop in which it check for events using pygame.event.get()
+    # then it executes on_event for all dected events
+    # after than if we are running a task it runs on_loop
+
+    # keys:   ESC -- exit, f -- fullscreen,  q,w -- change cursor radius
+    # pressing joystick button can change experiment phase if start_task == 0
+
+
+    #start_task is more like "task is running now"
+
+    # Q: what is trigger countdown? And how trigger sending works in general?
+    # Q: what is rest_phase + 5
+    # more generally, what does if event.type == pygame.JOYBUTTONDOWN in
+    #   on_event do?
+
+    # top left = (0,0), top right (max, right)
+    # so first is X (goes right), second is Y (goes down)

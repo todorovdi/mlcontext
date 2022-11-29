@@ -30,7 +30,7 @@ excludes_str = ' '.join(excludes)
 ######################
 DEBUG = 0
 
-p = d1
+p = d1  # p is parent dir path - like (except when is not pattern)
 starind = d1.find('*')
 bracind = d1.find('{')
 is_pattern = starind >= 0 or bracind >= 0
@@ -96,7 +96,15 @@ for change in changes:
     if 's' in code:
 
         #print(change)
-        tst1 = os.stat( os.path.join(p,fn) ).st_mtime
+        if is_pattern:
+            if not os.path.exists( os.path.join(p,fn) ) :
+                print('NOOOOOO')
+                print( change, 'p=', p, 'fn=',fn)
+                sys.exit(1)
+            tst1 = os.stat( os.path.join(p,fn) ).st_mtime
+        else:
+            assert '/' in p
+            tst1 = os.stat( p ).st_mtime
         tst2 = os.stat( os.path.join(d2,fn) ).st_mtime
 
         if tst2 > tst1:
@@ -121,9 +129,15 @@ print(f'Num changed contents dest {len(file_contents_changed_dest)}, '
 if len(time_changed):
     print(time_changed)
 
+sync_dest_change_fn = 'sync_dest_changes.log'
+
 if len(file_contents_changed_dest) > 0:
     print('Since we have nonzero changed_dest, we exit')
     print(file_contents_changed_dest)
+    with open(sync_dest_change_fn, "a") as sdcf:
+        sdcf.writelines(["\n  file_contents_changed_dest = \n"] +\
+                        [ os.path.join(p,fn) + '\n' for fn in file_contents_changed_dest] )
+
     sys.exit(1)
 elif (len(time_changed) + len(file_contents_changed_src) + len(file_added) ) > 0:
     s2 = f'rsync -rtvh --itemize-changes {include_str} {excludes_str} --exclude={__file__} {first_arg} {d2}'

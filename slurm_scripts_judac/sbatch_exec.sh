@@ -18,8 +18,9 @@
 #SBATCH --mem=15G                    # Memory in MB per default
 ##SBATCH --time=1-00:00:00             # 7 days by default on htc partition
 ##SBATCH --time=00:40:00             # 7 days by default on htc partition
-#SBATCH --time=05:40:00             # 7 days by default on htc partition
 ##SBATCH --time=00:20:00             # 7 days by default on htc partition
+##SBATCH --time=05:40:00             # 7 days by default on htc partition
+#SBATCH --time=10:40:00             # 7 days by default on htc partition
 
 # I get only 77 jobs running at the same time on hpc. At least when I as for 32 procs
 

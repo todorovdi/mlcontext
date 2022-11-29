@@ -118,11 +118,12 @@ for time_locked in time_lockeds:
             for subject in subjects:
                 #df_collect = collectResults(subject,hpass)
                 df_collect = collectResults(subject,output_folder,freq_name,
-                            regression_type=regression_type)
+                            time_start=time_start, time_end=time_end,
+                            regression_type=regression_type, inc_tgc=0)
                 sub_df = df_collect[ (df_collect['time_locked'] == time_locked) &\
                                     (df_collect['env'] == env) ]
                 tmins = sub_df['tmin']
-                tmaxs = sub_df['tmax']
+                #tmaxs = sub_df['tmax']
 
 
                 scores_cur_env_cur_subj = []
