@@ -142,10 +142,13 @@ def collectResults(subject,folder, freq_name='broad',
             #print( list(f.keys() ), fn_full)
 
 
-            cols = ['subject','mtime', 'fn', 'fn_full', 'env',
-                        'trial_group_col_calc',
-                        'rt','time_locked','custom_suffix',
-                        'freq_name','tmin','tmax',  ]
+            if inc_tgc:
+                tgc = ['trial_group_col_calc']
+            else:
+                tgc = []
+            cols = ['subject','mtime', 'fn', 'fn_full', 'env'] +\
+                tgc + ['rt','time_locked','custom_suffix',
+                        'freq_name','tmin','tmax'  ]
 
             colvals = [ subject, dt, fn, fn_full, *grps ]
             row = dict( zip(cols,colvals) )

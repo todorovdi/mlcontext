@@ -66,7 +66,7 @@ class ScoringAUC():
             return np.mean(_score, axis=0)
 
 
-def decod_stats(X):
+def decod_stats(X, n_jobs=None):
     from mne.stats import permutation_cluster_1samp_test
     """Statistical test applied across subjects"""
     # check input
@@ -76,8 +76,10 @@ def decod_stats(X):
     # null = np.repeat(chance, len(times))
     # Non-corrected t-test...
     # T_obs, p_values_ = ttest_1samp(X, null, axis=0)
+    if n_jobs is None:
+        from config2 import n_jobs
     T_obs_, clusters, p_values, _ = permutation_cluster_1samp_test(
-        X, out_type='mask', n_permutations=2**10, n_jobs=6,
+        X, out_type='mask', n_permutations=2**10, n_jobs=n_jobs,
         verbose=False)
 
     # format p_values to get same dimensionality as X

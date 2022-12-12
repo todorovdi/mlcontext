@@ -16,6 +16,7 @@ else
   exit 1
 fi
 
+echo '' > sync_dest_changes.log
 run="python3 _rsync_careful.py"
 LOCAL_DIR="/home/demitau/memerr_code"
 #FLAGS="-rtvh$DRY_RUN_FLAG --progress"
@@ -85,6 +86,20 @@ $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/*.sh"  $LOCAL_DIR
 echo "  REV sync params"
 subdir=params
 $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/$subdir/*HPC*.ini"  $LOCAL_DIR/$subdir
+
+
+# save current code version and make it transferable to HPC (we don't have git there)
+v=`git tag | tail -1` 
+h=`git rev-parse --short HEAD`
+echo "$v, hash=$h" > last_code_ver_synced_with_HPC.txt
+wait
+
+echo "  sync req and code ver"
+$run --mode:$RUNTYPE "$LOCAL_DIR/requirements.txt" "$JUSUF_CODE/"
+#$SLEEP
+$run --mode:$RUNTYPE "$LOCAL_DIR/last_code_ver_synced_with_HPC.txt" "$JUSUF_CODE/"
+
+
 #$SLEEP
 #sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/
 

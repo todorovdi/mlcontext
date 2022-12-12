@@ -73,12 +73,12 @@ if not op.exists( op.join(path_fig, save_folder) ):
     os.mkdir(op.join(path_fig, save_folder) )
 
 # Plot errors in each environment together
-decoding_types = ['classic', 'b2b']
+#decoding_types = ['classic', 'b2b']
 
 files_missing = []
 
-time_lockeds = ['target', 'feedback']
-envs = ['stable','random']
+#envs = ['stable','random']
+envs = ['stable']
 #envs = ['stable','random','all']  # so far I did not compute for 'all'
 env2color = dict( zip(envs,colors) )
 
@@ -96,6 +96,9 @@ fnames_failed = []
 #ss = []
 
 tpls = []
+
+if DEBUG:
+    subjects = subjects[:1]
 
 for time_locked in time_lockeds:
     #start, end = stage2time_bounds[time_locked]
@@ -144,8 +147,14 @@ for time_locked in time_lockeds:
                         print(f'INFO: loaded {fname_full}')
                         fnames_cur.append(fname_full)
                     if decoding_type == 'classic':
+                        if 'scores' not in f:
+                            print('skipping ' + fname_full)
+                            continue
                         sc = f['scores']
                     elif decoding_type == 'b2b':
+                        if 'partial_scores' not in f:
+                            print('skipping ' + fname_full)
+                            continue
                         sc = f['partial_scores']
 
                     sc_aug = np.empty( len(sc) + 1)
@@ -222,10 +231,13 @@ for time_locked in time_lockeds:
             sys.exit(1)
 
 
-        analysis_name = sub_df['analysis_name'].to_list()[0]
+    
+        analysis_name = getAnalysisName(time_locked,control_type)
+        #analysis_name = sub_df['analysis_name'].values[0]
         var_order = analysis_name2var_ord[analysis_name]
 
         for vari,varn in enumerate(var_order):
+            plt.figure()
             plt.title(f'{decoding_type} decoding {varn}', fontsize=14)
             for env,scs in env2all_scores.items():
                 scs_all = np.array(scs)
@@ -248,11 +260,13 @@ for time_locked in time_lockeds:
                 #sig = decod_stats(all_scores_random[1]) < 0.05
                 #plt.fill_between(times, all_scores_random[1].mean(0), where=sig, color=colors[1], alpha=0.3)
 
-            plt.legend()
+            if len(envs):
+                plt.legend()
             fname_fig = op.join(path_fig,save_folder,
                 f'Exp2_{regression_type}_{freq_name}_{time_locked}_{decoding_type}_{varn}' )
-            plt.savefig(fname_fig, dpi=400)
-            plt.close()
+            plt.savefig(fname_fig + '.pdf', dpi=400)
+            plt.savefig(fname_fig + '.svg', dpi=400)
+            #plt.close()
 
 print('First fig finsihed')
 ############################################################################
@@ -289,6 +303,9 @@ print('First fig finsihed')
 
 
 np.savez( pjoin(path_fig,save_folder, f'{regression_type}_{freq_name}_gathered.npz'), time_locked_decoding_type_env2scores=tpls)
+
+if len(envs) == 1:
+    sys.exit(0)
 
 for (time_locked,decoding_type,env2all_scores) in tpls:
 
