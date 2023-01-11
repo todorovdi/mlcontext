@@ -206,8 +206,16 @@ class VisuoMotor:
 
         self.first_phase_after_start = 'REST'
         # ITI, then RETURN then REST
+        w = 'JOYSTICK_CALIBRATION_'
+        sides = ['left','right','up','down']
+        self.calib_seq = [ w + side.upper() for side in sides ]
+        self.phase2dir = dict( zip( self.calib_seq, sides ) )
 
-        self.phase2trigger = {'REST':10, 'RETURN':15,
+        self.phase2trigger = {'JOYSTICK_CALIBRATION_LEFT':3,
+                             'JOYSTICK_CALIBRATION_RIGHT':4,
+                             'JOYSTICK_CALIBRATION_UP':5,
+                             'JOYSTICK_CALIBRATION_DOWN':6,
+                              'REST':10, 'RETURN':15,
                               'TARGET':20, 'FEEDBACK': 35,
                               'TARGET_AND_FEEDBACK':30,
                            'ITI':40, 'BREAK':50, 'PAUSE':60 }
@@ -241,7 +249,12 @@ class VisuoMotor:
         self.myfont_debug = pygame.font.SysFont(self.font_face, self.debug_font_size)
         self.myfont_popup = pygame.font.SysFont(self.font_face, self.foruser_center_font_size)
         #self.instuctions_str = 'We will start soon. Please wait for instructions'
-        self.instuctions_str = 'Click to start. Remember: you have to keep your hand steady after reaching. Return to home position at the end'
+        self.instuctions_str = ('Press any joystick button start the task.\n\n'
+        'Remember: you have to keep your hand steady\n'
+        'at the end to complete the reach.\n\nAfter the end, return to home position.')
+        self.instuctions_str += '\n\npress "c" to calibrate joystick'
+        self.instuctions_str += '\npress "q","w" to control cursor size'
+        self.instuctions_str += '\npress "ESCAPE" to exit'
 
         self.break_start_str = 'BREAK'
         # color to which target changes when it is touched by the feedback
@@ -260,6 +273,13 @@ class VisuoMotor:
                               int(round(self.params['height']/2.0)))
 
         ##################################
+        self.jaxlims_d = {}
+        # precalib on workstation
+        self.jaxlims_d = {'left': 0.788848876953125, 'right': 0.6519775390625,
+                          'up': 0.724334716796875, 'down': 0.618743896484375}
+        self.jaxcenter =  {'ax1':0, 'ax2':-0.06} #{'ax1' :0}
+
+        #self.jaxlims = -1,1
 
         self.tgti_to_show = 0
         self.cursorX = 0
@@ -283,10 +303,7 @@ class VisuoMotor:
 
         self.free_from_break = 0
         # trajectory starting from last target phase
-        self.trajX = []  # true traj
-        self.trajY = []
-        self.trajfbX = []
-        self.trajfbY = []
+        self.reset_traj()
 
         ###########################
 
@@ -313,7 +330,7 @@ class VisuoMotor:
             self.seed = seed
         np.random.seed(self.seed)
         ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
-        print('ct_inds',ct_inds)
+        #print('ct_inds',ct_inds)
         self.vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
         n_blocks = len(self.vfti_seq)
         ns_context_repeat = np.random.randint( self.params['block_len_min'], self.params['block_len_max'],
@@ -370,6 +387,14 @@ class VisuoMotor:
                     'trial_type': 'veridical',
                  'special_block_type': None }
             self.trial_infos += [d]
+
+
+        # debug
+        d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
+                'trial_type': 'perturbation',
+             'special_block_type': None }
+        self.trial_infos += [d] * 3
+        ###################
 
 
         # TODO: care about whether pauses and clamps are parts of the block or
@@ -515,7 +540,8 @@ class VisuoMotor:
         if event.type not in [pygame.MOUSEMOTION, pygame.JOYBALLMOTION,
                               pygame.JOYHATMOTION, pygame.JOYAXISMOTION,
                               pygame.WINDOWMOVED, pygame.AUDIODEVICEADDED,
-                              pygame.WINDOWSHOWN, pygame.WINDOWTAKEFOCUS]:
+                              pygame.WINDOWSHOWN, pygame.WINDOWTAKEFOCUS,
+                              pygame.KEYUP]:
             if pygame.mouse.get_focused():
                 print('on_event: ',event)
         if event.type == pygame.QUIT:
@@ -534,6 +560,8 @@ class VisuoMotor:
                 self.moveHome()
                 self.send_trigger_cur_trial_info()
                 pygame.mouse.set_visible(0)
+                self.reset_traj()
+
                 self.task_started = 1
 
             # if task was started and a button was pressed, release break
@@ -554,6 +582,13 @@ class VisuoMotor:
                 self.params['radius_cursor'] = self.params['radius_cursor']+1
             if event.key == pygame.K_r:
                 self.moveHome()
+            if (event.key == pygame.K_c) and (not self.task_started) and\
+                    (self.params['controller_type'] == 'joystick' ):
+                self.current_phase = self.calib_seq[0]
+                self.reset_traj()
+                pygame.mouse.set_visible(0)
+
+                print('Start calibration')
             #if event.key == pygame.K_c:
             #    if (self.params['use_eye_tracker']):
             #        EyeLink.tracker(self.params['width'], self.params['height'])
@@ -570,18 +605,35 @@ class VisuoMotor:
                            self.target_coords[self.tgti_to_show],
                            self.params['radius_target'], 0)
 
-    def drawTextMultiline(self, lines, pos_label = 'lower_left'):
-        if pos_label != 'lower_left':
+    def drawTextMultiline(self, lines, pos_label = 'lower_left', font = None):
+        if font is None:
+            font = self.myfont_debug
+        if pos_label == 'lower_left':
+            voffset = 0
+            for line in lines[::-1]:
+                text_render = font.render(line, True, (255, 255, 255))
+                ldt = font.size(line)
+                self._display_surf.blit(text_render, (5, self.params['height']-ldt[1] - voffset))
+                voffset += ldt[1]
+        elif pos_label == 'center':
+            voffset = 0
+            for line in lines[::-1]:
+                text_render = font.render(line, True, (255, 255, 255))
+                ldt = font.size(line)
+
+                pos = (int(round(((self.params['width'] - ldt[0]) / 2.0)) ),
+                    int(round(((self.params['height'] - ldt[1]) / 2.0)) +\
+                        - voffset ) )
+
+                self._display_surf.blit(text_render, pos)
+                voffset += ldt[1]
+
+        else:
             raise ValueError(f'not implemented {pos_label}')
-        voffset = 0
-        for line in lines[::-1]:
-            text_render = self.myfont_debug.render(line, True, (255, 255, 255))
-            ldt = self.myfont_debug.size(line)
-            self._display_surf.blit(text_render, (5, self.params['height']-ldt[1] - voffset))
-            voffset += ldt[1]
 
     def drawPopupText(self, text, pos = 'center', font_size = None,
                       length_info = None, text_render = None):
+        #print(f'drawing text : {text}')
         #, font_size=30
         if font_size is not None:
             font = pygame.font.SysFont(self.font_face, font_size)
@@ -685,7 +737,7 @@ class VisuoMotor:
         #print('drawTraj beg')
         if (not pert) and (len(self.trajX) < 2):
             return
-        if pert and (len(self.trajX) < 2):
+        if pert and (len(self.trajfbX) < 2):
             return
 
         if pert:
@@ -721,15 +773,16 @@ class VisuoMotor:
                                font_size = 30)
 
             if self.current_phase == 'ITI':
-                if self.last_reach_too_slow == 1:
-                    s = 'Reach was too slow'
-                    self.drawPopupText(s)
-                elif self.last_reach_too_slow == 2:
-                    s = 'Have not kept cursor at the target for enough time'
-                    self.drawPopupText(s)
                 if self.last_reach_not_full_rad:
                     s = 'Reach did not even arrive to target distance in required time'
                     self.drawPopupText(s)
+                else:
+                    if self.last_reach_too_slow == 1:
+                        s = 'Reach was too slow'
+                        self.drawPopupText(s)
+                    elif self.last_reach_too_slow == 2:
+                        s = 'Have not kept cursor at the target for enough time'
+                        self.drawPopupText(s)
                 #elif self.last_reach_stopped_away:
                 #    s = 'Reach stopped in some strange place'
                 #    self.drawPopupText(s)
@@ -800,8 +853,61 @@ class VisuoMotor:
         # if not task_started
         else:
             self._display_surf.fill([100, 100, 100])
-            self.drawPopupText(self.instuctions_str,
-                               font_size = self.foruser_font_size)
+
+            ax1 = self.HID_controller.get_axis(0)
+            ax2 = self.HID_controller.get_axis(1)
+            val = None
+            isgood = False
+            if self.current_phase == 'JOYSTICK_CALIBRATION_LEFT':
+                isgood = ax1 <= -0.3
+                val = ax1
+            elif self.current_phase == 'JOYSTICK_CALIBRATION_RIGHT':
+                isgood = ax1 >= 0.3
+                val = ax1
+            elif self.current_phase == 'JOYSTICK_CALIBRATION_UP':
+                isgood = ax2 <= -0.3
+                val = ax2
+            elif self.current_phase == 'JOYSTICK_CALIBRATION_DOWN':
+                isgood = ax2 >= 0.3
+                val = ax2
+            isbad = not isgood
+            if self.current_phase in self.phase2dir:
+                self.cursor_pos_update()
+                self.trajX += [ self.cursorX ]
+                self.trajY += [ self.cursorY ]
+                self.traj_jax1 += [ax1]
+                self.traj_jax2 += [ax2]
+
+                side = self.phase2dir[self.current_phase]
+                stopped = self.test_stopped_jax()
+                if stopped and isbad:
+                    self.drawPopupText(f'please move {side}')
+                else:
+                    self.drawPopupText(f'Calibrating joystick: please move maximum {side}')
+                    self.drawCursorOrig() # with diff color and size
+
+                if stopped and (not isbad):
+                    self.jaxlims_d[side] = abs( val )
+                    print(f'   {self.current_phase}   {isbad}  {ax1},{ax2}'  )
+                    print(f'joystick calibration: set max {side} = {val:.2f}')
+
+                    i = self.calib_seq.index(self.current_phase)
+                    if (i + 1) < len(self.calib_seq):
+                        self.current_phase = self.calib_seq[i+1]
+                        self.reset_traj()
+                    else:
+                        print('joystick caliration finished ',self.jaxlims_d)
+                        self.current_phase = None
+            else:
+                instr = self.instuctions_str.split('\n')
+                #self.drawPopupText(instr,
+                #                   font_size = self.foruser_font_size)
+                self.drawTextMultiline(instr, font = self.myfont_popup,
+                                       pos_label= 'center')
+
+                #ax2 = self.HID_controller.get_axis(1)
+                #max_ax1 = ax1
+                #max_ax2 = ax2
 
 
         if self.debug:
@@ -858,8 +964,8 @@ class VisuoMotor:
 
 
             self.drawCursorOrig(debug=1) # with diff color and size
-            self.drawTraj()
             self.drawTraj(pert=1)
+            self.drawTraj()
 
         pygame.display.update()
 
@@ -900,7 +1006,8 @@ class VisuoMotor:
         called from vars_update
         '''
         ntimebins = int( self.params['FPS'] * self.params['stopping_min_dur'] )
-        if (len(self.trajX) < ntimebins) or (self.get_dist_from_home() < self.params['radius_home'] ):
+        if (len(self.trajX) < ntimebins) or \
+                (self.get_dist_from_home() < self.params['radius_home'] ):
             return False
         #else:
         #    print('dist_from_home=' , self.get_dist_from_home() )
@@ -912,6 +1019,16 @@ class VisuoMotor:
         stdY = np.std( self.trajY[-ntimebins:] )
 
         return max(stdX , stdY) <= stop_rad_px
+
+    def test_stopped_jax(self, stop_rad_px = 0.05):
+        ntimebins = int( self.params['FPS'] * self.params['stopping_min_dur'] )
+        if (len(self.traj_jax1) < ntimebins) or \
+                (self.get_dist_from_home() < 0.3):
+            return False
+        std1 = np.std( self.traj_jax1[-ntimebins:] )
+        std2 = np.std( self.traj_jax2[-ntimebins:] )
+        #print(f'{std1:.3f},{std2:.3f}')
+        return max(std1 , std2) <= stop_rad_px
 
     def get_dist_from_home(self):
         centeredX = self.cursorX - self.home_position[0]
@@ -1029,28 +1146,42 @@ class VisuoMotor:
                 print('r = ',r,'timedif = ',timedif, '  strt=', self.phase_start_times[phase], 'thr=',thr)
         return r
 
-    def vars_update(self):
-        '''
-        is called if the task is running
-        it govers phase change
-        '''
-        prev_phase = self.current_phase
-        # only if task is running (i.e. when task_start is True)
+    def cursor_pos_update(self):
         if self.params['controller_type'] == 'joystick':
-            # from -1 to 1
-            jaxlims = -1,1
-            jaxrng = np.diff(jaxlims)[0]
+            # from -1 to 1 -- not really. But below 1 in mod
             ax1 = self.HID_controller.get_axis(0)
             ax2 = self.HID_controller.get_axis(1)
+            if len(self.jaxlims_d) < 4:
+                jaxlims_h = -1,1
+                jaxlims_v = -1,1
+            else:
+                #jaxlims_h = self.jaxlims_d['left'],  self.jaxlims_d.get['right']
+                #jaxlims_v = self.jaxlims_d['bottom'],self.jaxlims_d.get['top']
+                # joystick away -- neg, to me -- pos
 
-            #print(ax1,ax2)
+                ax1 -= self.jaxcenter['ax1']
+                ax2 -= self.jaxcenter['ax2']
+                if ax1 > 0:
+                    ax1 /= (self.jaxlims_d['right'] - self.jaxcenter['ax1'] )
+                else:
+                    ax1 /= (self.jaxlims_d['left'] + self.jaxcenter['ax1'] )
 
+                if ax2 < 0:
+                    ax2 /= (self.jaxlims_d['up']   + self.jaxcenter['ax2'] )
+                else:
+                    ax2 /= (self.jaxlims_d['down'] - self.jaxcenter['ax2'] )
+            #jaxrng_h = np.abs( np.diff(jaxlims_h)[0] )
+            #jaxrng_v = np.abs( np.diff(jaxlims_v)[0] )
+
+             #/ (jaxrng_h / 2)
+             #/ (jaxrng_v / 2)
+
+            # set cursor as a multiple of the total height/width
             self.cursorX = self.home_position[0] + ax1 * (self.params['width'] / 2)
             self.cursorY = self.home_position[1] + ax2 * (self.params['height'] / 2)
 
             self.cursorX = int(  self.cursorX  )
             self.cursorY = int(  self.cursorY  )
-            # set cursor as a multiple of the total height/width
             # old
             #self.cursorX = int(round(((ax1 - jaxlims[0]) / jaxrng) *
             #                    (self.params['width'] - 0) + 0))
@@ -1058,6 +1189,23 @@ class VisuoMotor:
             #                    (self.params['height'] - 0) + 0))
         else:
             self.cursorX, self.cursorY = self.HID_controller.get_pos()
+
+    def reset_traj(self):
+        self.trajX = [] # true traj
+        self.trajY = []
+        self.trajfbX = []
+        self.trajfbY = []
+        self.traj_jax1 = []  # joystick angles raw
+        self.traj_jax2 = []
+
+    def vars_update(self):
+        '''
+        is called if the task is running
+        it govers phase change
+        '''
+        prev_phase = self.current_phase
+        self.cursor_pos_update()
+        # only if task is running (i.e. when task_start is True)
 
 
         #print('alall')
@@ -1089,10 +1237,7 @@ class VisuoMotor:
                     else:
                         self.current_phase = 'TARGET'
 
-                    self.trajX = []
-                    self.trajY = []
-                    self.trajfbX = []
-                    self.trajfbY = []
+                    self.reset_traj()
                     #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
                     print(f'Start target and feedback display {trial_info}')
 
@@ -1479,6 +1624,7 @@ if __name__ == "__main__":
 
 
     app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=3)
+    #app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=3)
     app.on_execute()
 
     # it starts a loop in which it check for events using pygame.event.get()
