@@ -63,18 +63,19 @@ class VisuoMotor:
         self.add_param_comment('# Height of screen')
         #self.add_param('height', 800)
         self.add_param('height', 1000)
-        self.add_param_comment('# Frames per second for plotting')
-        self.add_param('FPS', 120)
+        #self.add_param_comment('# Frames per second for plotting')
+        #self.add_param('FPS', 120)
         self.add_param_comment('# Radius of the cursor')
         self.add_param('radius_cursor', 10)
 
-        self.add_param('radius_home', self.params['radius_cursor'] * 2)
+        self.add_param('radius_home', self.params['radius_cursor'] * 3.5)
+        self.add_param('radius_home_strict_inside', self.params['radius_home'] - self.params['radius_cursor'])
 
         self.add_param('radius_return', self.params['radius_cursor'] + \
                 self.params['radius_home'])
 
         self.add_param_comment('# Radius of the target')
-        self.add_param('radius_target', 14)
+        self.add_param('radius_target', 19)
         # distance from the start location to the target center
         self.add_param_comment('# Radius of the invisible boundary')
         self.add_param('dist_tgt_from_home',
@@ -88,14 +89,16 @@ class VisuoMotor:
         if self.debug:
             self.add_param('time_feedback', 2.)
         else:
-            self.add_param('time_feedback', 0.95)
+            #self.add_param('time_feedback', 0.95)
+            self.add_param('time_feedback', 1.15)
 
         if self.debug:
             self.add_param('return_duration', 60)
         else:
             self.add_param('return_duration', 10)
         self.add_param_comment('# Time for intertrial interval (seconds)')
-        self.add_param('ITI_duration', 1.5)
+        #self.add_param('ITI_duration', 1.5)
+        self.add_param('ITI_duration', 2)
         self.add_param_comment('# Max jitter during ITI (seconds)')
         self.add_param('ITI_jitter', 0.1)
         self.add_param_comment('# Show text?')
@@ -110,19 +113,24 @@ class VisuoMotor:
         self.add_param('pause_duration', 60)
         if self.debug:
             self.add_param('pause_duration', 10)
+        self.add_param('motor_prep_duration', 1)
 
+        self.add_param('max_EUR_reward', 20)
 
         # in milliseconds
-        self.add_param('trigger_duration', 50)
+        self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
+        self.add_param('MEG_trigger_duration', 1000 / 1000)
 
-        ##  Categorical params
+        ######################  Categorical params
         # whether feedback is shown always on circle with fixed radius or
         # normally
         self.add_param('feedback_fixed_distance', 0)
+        self.add_param('send_startstop_MEG_triggers', 0)
 
         # enables or disable return phase
         #self.add_param('rest_after_return',1)
         self.add_param('rest_after_return',0)
+        self.add_param('prep_after_rest',1)
 
         self.add_param('return_home_after_pause',1)
         self.add_param('return_home_after_ITI',1)
@@ -185,22 +193,25 @@ class VisuoMotor:
 
         #self.eye_tracker = pylink.EyeLink(None)
         self.size = self.params['width'], self.params['height']
-        self.trigger_port = 0x378
-        self.trigger_countdown = -1
+        #self.trigger_countdown = -1
+        self.trigger_value = 0
+        self.MEG_rec_started = 0
         # inc in the end of 'PAUSE' and 'ITI'
         self.trial_index = 0  # index of current trials
         self.counter_hit_trials = 0
         self.reward_accrued = 0
         self.reward = 0
+        self.last_trial_full_success = 0
 
         # currently not used
-        self.frame_counters = {'at_home':0, 'feedback_shown':0, 'pause':0,
-                               'return':0, 'ITI':0}
+        #self.frame_counters = {'at_home':0, 'feedback_shown':0, 'pause':0,
+        #                       'return':0, 'ITI':0}
 
 
         self.last_reach_too_slow = 0
         self.last_reach_stopped_away = 0
         self.last_reach_not_full_rad = 0
+        self.left_home_during_prep = 0
         self.current_phase_trigger = None
         self.current_phase = None
 
@@ -215,7 +226,9 @@ class VisuoMotor:
                              'JOYSTICK_CALIBRATION_RIGHT':4,
                              'JOYSTICK_CALIBRATION_UP':5,
                              'JOYSTICK_CALIBRATION_DOWN':6,
+                             'JOYSTICK_CALIBRATION_CENTER':7,
                               'REST':10, 'RETURN':15,
+                              'GO_CUE_WAIT_AND_SHOW':25,
                               'TARGET':20, 'FEEDBACK': 35,
                               'TARGET_AND_FEEDBACK':30,
                            'ITI':40, 'BREAK':50, 'PAUSE':60 }
@@ -223,6 +236,7 @@ class VisuoMotor:
         #ct = time.time()
         self.phase_start_times = dict( zip(self.phase2trigger.keys(), len(self.phase2trigger) * [-1.] ) )
         self.phase_start_times['at_home'] = 0.
+        self.phase_start_times['trigger'] = 0.
         self.init_target_positions()  # does not draw anything, only calc
 
         ########################  graphics-related
@@ -233,6 +247,7 @@ class VisuoMotor:
             self.phase_shift_event_type = pygame.MOUSEBUTTONDOWN
 
         pygame.init()
+        self.clock = pygame.time.Clock()
 
         if self.params['controller_type'] == 'joystick':
             self.HID_controller = pygame.joystick.Joystick(0)
@@ -250,8 +265,10 @@ class VisuoMotor:
         self.myfont_popup = pygame.font.SysFont(self.font_face, self.foruser_center_font_size)
         #self.instuctions_str = 'We will start soon. Please wait for instructions'
         self.instuctions_str = ('Press any joystick button start the task.\n\n'
+        'Start moving only after you see BOTH the target and the cursor.\n'
         'Remember: you have to keep your hand steady\n'
-        'at the end to complete the reach.\n\nAfter the end, return to home position.')
+        'at the end to complete the reach.\n\nAfter the end, return to home position.\n'
+        'After you finish you will receive Eur reward\n proportional to your performance :)')
         self.instuctions_str += '\n\npress "c" to calibrate joystick'
         self.instuctions_str += '\npress "q","w" to control cursor size'
         self.instuctions_str += '\npress "ESCAPE" to exit'
@@ -277,11 +294,11 @@ class VisuoMotor:
         # precalib on workstation
         self.jaxlims_d = {'left': 0.788848876953125, 'right': 0.6519775390625,
                           'up': 0.724334716796875, 'down': 0.618743896484375}
-        self.jaxcenter =  {'ax1':0, 'ax2':-0.06} #{'ax1' :0}
+        self.jaxcenter =  {'ax1':0.055, 'ax2':-0.06} #{'ax1' :0}
 
         #self.jaxlims = -1,1
 
-        self.tgti_to_show = 0
+        self.tgti_to_show = -1
         self.cursorX = 0
         self.cursorY = 0
         self.feedbackX = 0
@@ -389,12 +406,13 @@ class VisuoMotor:
             self.trial_infos += [d]
 
 
-        # debug
-        d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
-                'trial_type': 'perturbation',
-             'special_block_type': None }
-        self.trial_infos += [d] * 3
+        # debug scale-
+        #d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
+        #        'trial_type': 'perturbation',
+        #     'special_block_type': None }
+        #self.trial_infos += [d] * 3
         ###################
+
 
 
         # TODO: care about whether pauses and clamps are parts of the block or
@@ -447,6 +465,12 @@ class VisuoMotor:
                 error_clamp_pair_end, error_clamp_sandwich_end,d)
 
 
+        n_pauses = (num_context_repeats *  2/8)
+        expected_max_reward = len( self.trial_infos ) * 0.6
+        self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
+
+
+
         # I want list of tuples -- target id, visual feedback type, phase
         # (needed for trigger)
         self.CONTEXT_TRIGGER_DICT = {}
@@ -476,8 +500,28 @@ class VisuoMotor:
             ti = self.trial_infos[tc]
             print(tc, ti['trial_type'], ti['tgti'], ti['vis_feedback_type'] )
 
+
+        self.MEG_start_trigger = 252
+        self.MEG_stop_trigger = 253
+        ## Start MEG recordings
+        #port.setData(0)
+        #time.sleep(0.1)
+        #port.setData(252)
+        ## Stop MEG recordings
+        #time.sleep(1)
+        #port.setData(253)
+        #time.sleep(1)
+        #port.setData(0)
+
         if (self.use_true_triggers):
-            self.trigger = windll.inpout32
+            if self.params['trigger_device'] == 'inpout32':
+                self.trigger_port = 0x378
+                self.trigger = windll.inpout32
+            elif self.params['trigger_device'] == 'parallel':
+                self.trigger_port = '0x3FE8'
+                self.trigger = parallel.ParallelPort(address=self.trigger_port)
+
+
             self.send_trigger(0)
 
 
@@ -508,9 +552,14 @@ class VisuoMotor:
 
     def send_trigger(self, value, add_info = None):
         # We block it if it has sent something already
-        if (self.trigger_countdown == -1):
+        #if (self.trigger_countdown == -1):
+        if (self.trigger_value == 0):
             if (self.use_true_triggers):
-                self.trigger.Out32(self.trigger_port, value)
+                if self.params['trigger_device'] == 'inpout32':
+                    self.trigger.Out32(self.trigger_port, value)
+                elif self.params['trigger_device'] == 'parallel':
+                    self.trigger.setData(value)
+            self.trigger_value = value
 
             # always write to trigger logfile
             if add_info is not None:
@@ -523,7 +572,8 @@ class VisuoMotor:
         # For how long the trigger is gonna be raised? (in ms)
         if (value != 0):
             td = self.params['trigger_duration']
-            self.trigger_countdown = int(round(self.params['FPS']*(td/1000.0)))
+            #self.trigger_countdown = int(round(self.params['FPS']*(td/1000.0)))
+            self.phase_start_times['trigger'] = time.time()
 
 
     def on_init(self):
@@ -556,11 +606,15 @@ class VisuoMotor:
                 ct = time.time()
                 self.phase_start_times[self.current_phase] = ct
                 if self.current_phase == 'REST':
+                    # TODO: are you sure we need to set it here?
                     self.phase_start_times['at_home'] = ct
                 self.moveHome()
                 self.send_trigger_cur_trial_info()
                 pygame.mouse.set_visible(0)
                 self.reset_traj()
+
+                self.send_trigger(self.MEG_start_trigger)
+                self.MEG_rec_started = 1
 
                 self.task_started = 1
 
@@ -600,10 +654,10 @@ class VisuoMotor:
         else:
             self.HID_controller.set_pos(self.home_position)
 
-    def drawTgt(self):
+    def drawTgt(self, radmult = 1.):
         pygame.draw.circle(self._display_surf, self.color_target,
                            self.target_coords[self.tgti_to_show],
-                           self.params['radius_target'], 0)
+                           self.params['radius_target'] * radmult, 0)
 
     def drawTextMultiline(self, lines, pos_label = 'lower_left', font = None):
         if font is None:
@@ -624,6 +678,23 @@ class VisuoMotor:
                 pos = (int(round(((self.params['width'] - ldt[0]) / 2.0)) ),
                     int(round(((self.params['height'] - ldt[1]) / 2.0)) +\
                         - voffset ) )
+
+                self._display_surf.blit(text_render, pos)
+                voffset += ldt[1]
+        elif pos_label == 'upper_right':
+            #longest = 0
+            #for line in lines[::-1]:
+            #    text_render = font.render(line, True, (255, 255, 255))
+            #    ldt = font.size(line)
+            #    longest = max(ldt[0], longest)
+
+            voffset = 0
+            for line in lines[::-1]:
+                text_render = font.render(line, True, (255, 255, 255))
+                ldt = font.size(line)
+
+                pos = (int(round(((self.params['width'] - ldt[0]) )) ),
+                    int(round((( ldt[1]) / 2.0)) + voffset ) )
 
                 self._display_surf.blit(text_render, pos)
                 voffset += ldt[1]
@@ -752,6 +823,39 @@ class VisuoMotor:
         pygame.draw.lines(self._display_surf, c, False,
                           tpls, thickness )
 
+    def drawPerfInfo(self, reward_type = ['money', 'hit']):
+        monetary_value_last = self.reward * self.reward2EUR_coef
+        monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
+
+        #ldt = self.drawPopupText(
+        #    f'Trial N={self.trial_index}/{len(self.trial_infos)}',
+        #                   pos='upper_right', font_size = 30)
+        #ldt1 = self.drawPopupText( f'Nhits = {self.counter_hit_trials}',
+        #                   pos=('upper_right',(0,ldt[1]) ),
+        #                   font_size = 30)
+        #if self.debug:
+        #    ldt2 = self.drawPopupText( f'Reward total = {self.reward_accrued:.2f}',
+        #                       pos=('upper_right',(0,ldt[1]+ldt1[1]) ),
+        #                       font_size = 30)
+        #    ldt3 = self.drawPopupText( f'Last reward = {self.reward:.2f}',
+        #                       pos=('upper_right',(0,ldt[1]+ldt1[1] + ldt2[1]) ),
+        #                       font_size = 30)
+
+        perfinfo = []
+        perfinfo += [ f'Trial N={self.trial_index}/{len(self.trial_infos)}'  ]
+        if 'hit' in reward_type:
+            perfinfo += [ f'Nhits        = {self.counter_hit_trials}' ]
+            perfinfo += [ f'Reward total = {self.reward_accrued:.2f}' ]
+            perfinfo += [ f'Last reward  = {self.reward:.2f}' ]
+        if 'money' in reward_type:
+            perfinfo += [ f'Reward total = {monetary_value_tot:.2f} Eur' ]
+            perfinfo += [ f'Last reward  = {monetary_value_last:.2f} Eur' ]
+
+        return perfinfo
+
+
+
+
     def on_render(self):
         '''
         called from on_execute
@@ -759,20 +863,13 @@ class VisuoMotor:
         if (self.task_started):
             # Clear screen
             self._display_surf.fill([100, 100, 100])
-            ldt = self.drawPopupText(
-                f'Trial N={self.trial_index}/{len(self.trial_infos)}',
-                               pos='upper_right', font_size = 30)
-            ldt1 = self.drawPopupText( f'Nhits = {self.counter_hit_trials}',
-                               pos=('upper_right',(0,ldt[1]) ),
-                               font_size = 30)
-            ldt2 = self.drawPopupText( f'Reward total = {self.reward_accrued:.2f}',
-                               pos=('upper_right',(0,ldt[1]+ldt1[1]) ),
-                               font_size = 30)
-            ldt3 = self.drawPopupText( f'Last reward = {self.reward:.2f}',
-                               pos=('upper_right',(0,ldt[1]+ldt1[1] + ldt2[1]) ),
-                               font_size = 30)
+            if self.debug:
+                perfstrs = self.drawPerfInfo()
+                self.drawTextMultiline( perfstrs, font = self.myfont_popup,
+                                       pos_label = 'upper_right')
 
             if self.current_phase == 'ITI':
+                # draw nothing execpt maybe explosion of tgt
                 if self.last_reach_not_full_rad:
                     s = 'Reach did not even arrive to target distance in required time'
                     self.drawPopupText(s)
@@ -783,6 +880,11 @@ class VisuoMotor:
                     elif self.last_reach_too_slow == 2:
                         s = 'Have not kept cursor at the target for enough time'
                         self.drawPopupText(s)
+
+                if abs( self.reward - 1.) < 1e-6 and self.last_trial_full_success:
+                    self.color_target = self.color_hit
+                    tdif = time.time() - self.phase_start_times[self.current_phase]
+                    self.drawTgt( 1 + 1.2 * np.sin( (tdif/self.ITI_jittered) * np.pi  ) )
                 #elif self.last_reach_stopped_away:
                 #    s = 'Reach stopped in some strange place'
                 #    self.drawPopupText(s)
@@ -790,12 +892,14 @@ class VisuoMotor:
             if self.current_phase == 'REST':
                 # if not very far from home, draw cursor
 
-                at_home_ext = self.is_home('unpert_cursor', 'radius_return', 3)
-                at_home = self.is_home('unpert_cursor', 'radius_return', 1)
+                at_home_ext = self.is_home('unpert_cursor', 'radius_home_strict_inside', 2)
+                at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
                 if at_home_ext:
                     self.drawCursorOrig()
                 if not at_home:
                     s = 'Place cursor inside the black circle'
+                    if self.left_home_during_prep:
+                        s = 'You moved too early. ' + s
                     self.drawPopupText(s, pos = ('center', (0,-40) ) )
                 self.drawHome()
 
@@ -811,7 +915,10 @@ class VisuoMotor:
                 R = int(self.params['pause_duration'] - timedif)
 
                 pause_str = f'Pause, time left={R} seconds'
-                self.drawPopupText(pause_str)
+                #self.drawPopupText(pause_str)
+                perfstrs = self.drawPerfInfo(reward_type = ['money'], pos_label = 'center', addlines = ['','pause_str'])
+                self.drawTextMultiline( [pause_str] + [''] + perfstrs, font = self.myfont_popup,
+                                       pos_label= 'center')
 
             if self.params['feedback_type'] == 'offline':
                 if self.current_phase == 'TARGET':
@@ -828,6 +935,10 @@ class VisuoMotor:
                     self.drawHome()
                     self.drawCursorFeedback()
 
+            if self.current_phase == 'GO_CUE_WAIT_AND_SHOW':
+                self.drawTgt()
+                self.drawHome()
+
             if self.current_phase == 'RETURN':
                 self.drawReturnCircle()
 
@@ -842,6 +953,13 @@ class VisuoMotor:
             if show_diode:
                 pygame.draw.rect(self._display_surf, self.color_photodiode,
                                 (0, 0, diode_width, diode_height), 0)
+                #from psychopy import visual
+                #Pixel = visual.Rect(
+                #    win=win, name='topleftpixel', units='pix',
+                #    pos=(-window_size[1], window_size[1]/2),
+                #    size=(window_size[0]*2/5, 200),
+                #    fillColor=[-1, -1, -1],
+                #    lineColor=[-1, -1, -1])
 
             # maybe show info on participant hitting performance
             #if (self.params['show_text']):
@@ -927,6 +1045,7 @@ class VisuoMotor:
                     next_spec_trial_type = ti['trial_type']
                     break
             trd = next_spec_trial_ind - self.trial_index
+            fps = self.clock.get_fps()
 
             debugstrs = []
             if self.params['controller_type'] == 'joystick':
@@ -935,11 +1054,14 @@ class VisuoMotor:
                 axstr = f'({ax1:.3f},{ax2:.3f})'
             else:
                 axstr = ''
-            debugstr = (f'Phase={phase_str}; X,Y={self.feedbackX},{self.feedbackY} (Xt,Yt={self.cursorX},{self.cursorY}){axstr}, '
-                f'{list(trial_info.values())}')
+            debugstr = (f'Phase={phase_str:40}; X,Y={self.feedbackX},{self.feedbackY} (Xt,Yt={self.cursorX},{self.cursorY}){axstr}, '
+                        f'FPS={fps:4.0f}')
+            debugstrs += [debugstr]
 
+            debugstr = f'tgti_to_show={self.tgti_to_show};  {list(trial_info.values())};  '
             tdif = time.time() - self.phase_start_times["at_home"]
-            debugstr += f' counter_inside={tdif:.1f}'
+            if tdif < 1000:
+                debugstr += f' counter_inside={tdif:.1f}'
             debugstrs += [debugstr]
 
             debugstr = f'next special trial {next_spec_trial_type} in {trd} trials'
@@ -955,9 +1077,11 @@ class VisuoMotor:
 
             # show next trials
             m = min(self.trial_index + 4, len(self.trial_infos) )
-            for tc in range(self.trial_index + 1, m ):
+            for tc in range(self.trial_index, m ):
                 ti = self.trial_infos[tc]
                 debugstr = f'trial_infos[{tc}]={ti}'
+                if tc == self.trial_index:
+                    debugstr = '**' + debugstr
                 debugstrs += [debugstr]
             #
             self.drawTextMultiline(debugstrs)
@@ -972,7 +1096,7 @@ class VisuoMotor:
     def test_reach_finished(self, ret_ext = False):
         #at_home = self.point_in_circle(self.home_position, (self.cursorX, self.cursorY),
         #                        self.params['radius_cursor'], verbose=0)
-        at_home = self.is_home('unpert_cursor', 'radius_return')
+        at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
 
         stopped = self.test_stopped()
         radius_reached = self.test_radius_reached()
@@ -1005,7 +1129,8 @@ class VisuoMotor:
         '''
         called from vars_update
         '''
-        ntimebins = int( self.params['FPS'] * self.params['stopping_min_dur'] )
+        fps = self.clock.get_fps()
+        ntimebins = int( fps * self.params['stopping_min_dur'] )
         if (len(self.trajX) < ntimebins) or \
                 (self.get_dist_from_home() < self.params['radius_home'] ):
             return False
@@ -1157,16 +1282,22 @@ class VisuoMotor:
             else:
                 #jaxlims_h = self.jaxlims_d['left'],  self.jaxlims_d.get['right']
                 #jaxlims_v = self.jaxlims_d['bottom'],self.jaxlims_d.get['top']
-                # joystick away -- neg, to me -- pos
 
+                # joystick away -- neg, to me -- pos
                 ax1 -= self.jaxcenter['ax1']
                 ax2 -= self.jaxcenter['ax2']
+                # recall that jaxlims_d are all positive and jaxcenter is not
+                # jaxlims_d were computed without subtracting jaxcenter
                 if ax1 > 0:
                     ax1 /= (self.jaxlims_d['right'] - self.jaxcenter['ax1'] )
                 else:
                     ax1 /= (self.jaxlims_d['left'] + self.jaxcenter['ax1'] )
 
-                if ax2 < 0:
+                if ax2 < 0: # it we are above the center
+                    # if jaxcenter is positive so to go full up (which means
+                    # strongly negative ax2) we'd have to travel more, we have
+                    # to add something positive to scale
+                    # if it is negative then similartly we have to add negative
                     ax2 /= (self.jaxlims_d['up']   + self.jaxcenter['ax2'] )
                 else:
                     ax2 /= (self.jaxlims_d['down'] - self.jaxcenter['ax2'] )
@@ -1210,18 +1341,18 @@ class VisuoMotor:
 
         #print('alall')
 
+        prev_trial_index = self.trial_index
         trial_info = self.trial_infos[self.trial_index]
         ctxtpl = (trial_info['vis_feedback_type'], trial_info['tgti'] )
         vft, tgti = ctxtpl
 
+        #print ( self.trial_infos[0]['tgti'] )
+
         if (self.current_phase == 'REST'):
             # if at home, increase counter
-            at_home = self.is_home('unpert_cursor', 'radius_return')
-            if at_home:
-                self.frame_counters["at_home"] = self.frame_counters["at_home"]+1
-            else:
+            at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
+            if not at_home:
                 # if we leave center, reset to zero
-                self.frame_counters["at_home"] = 0
                 self.phase_start_times["at_home"] = time.time()
 
             # if we spent inside time at home than show target
@@ -1232,22 +1363,53 @@ class VisuoMotor:
                 if trial_info['trial_type'] == 'pause':
                     self.current_phase = 'PAUSE'
                 else:
+                    if self.params['prep_after_rest']:
+                        self.current_phase = 'GO_CUE_WAIT_AND_SHOW'
+                    else:
+                        if self.params['feedback_type'] == 'online':
+                            self.current_phase = 'TARGET_AND_FEEDBACK'
+                        else:
+                            self.current_phase = 'TARGET'
+
+                        print(f'at_home_enough so start {self.current_phase} display {trial_info}')
+
+                        self.reset_traj()
+                        #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
+
+                        # self.trial_infos[self.trial_index, 0]
+                        # depending on whether random or stable change target
+                        self.tgti_to_show = tgti
+                        # I don't need to put send trigger here because phase changes
+                        # so it will be detected below
+                        #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
+                        self.color_photodiode = [255, 255, 255]
+
+        elif (self.current_phase == 'GO_CUE_WAIT_AND_SHOW'):
+            self.tgti_to_show = tgti
+            wait_finished = self.timer_check(self.current_phase,
+                                    'motor_prep_duration')
+            if wait_finished:
+                at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
+                self.reset_traj()
+                if not at_home:
+                    self.left_home_during_prep = 1
+                    self.current_phase = 'REST'
+                else:
+                    self.left_home_during_prep = 0
                     if self.params['feedback_type'] == 'online':
                         self.current_phase = 'TARGET_AND_FEEDBACK'
                     else:
                         self.current_phase = 'TARGET'
-
-                    self.reset_traj()
                     #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
                     print(f'Start target and feedback display {trial_info}')
 
                     # self.trial_infos[self.trial_index, 0]
                     # depending on whether random or stable change target
                     self.tgti_to_show = tgti
-                # I don't need to put send trigger here because phase changes
-                # so it will be detected below
-                #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
-                self.color_photodiode = [255, 255, 255]
+                    # I don't need to put send trigger here because phase changes
+                    # so it will be detected below
+                    #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
+                    self.color_photodiode = [255, 255, 255]
 
         elif (self.current_phase == 'TARGET_AND_FEEDBACK'):
             self.trajX += [ self.cursorX ]
@@ -1278,6 +1440,7 @@ class VisuoMotor:
                 else:
                     full_success = 0
 
+                self.last_trial_full_success = full_success
                 if full_success:
                     self.last_reach_too_slow     = 0
                     self.last_reach_stopped_away = 0
@@ -1324,7 +1487,7 @@ class VisuoMotor:
                 self.reward_accrued += self.reward
             # else draw feedback and check hit
             else:
-                self.frame_counters["feedback_shown"] += 1
+                #self.frame_counters["feedback_shown"] += 1
 
                 #self.feedbackX, self.feedbackY = \
                 #        self.apply_visuomotor_pert((self.cursorX, self.cursorY), vft)
@@ -1396,9 +1559,9 @@ class VisuoMotor:
         elif (self.current_phase == 'FEEDBACK'):
             if self.params['feedback_type'] == 'online':
                 raise ValueError('nooo!')
-            self.frame_counters["feedback_shown"] += 1
-            if (self.frame_counters["feedback_shown"] == \
-                    self.params['FPS'] * self.params['time_feedback']):
+            #self.frame_counters["feedback_shown"] += 1
+            tdb = time.time() - self.phase_start_times['FEEDBACK'] > self.params['time_feedback']
+            if tdb:
                 if ((self.trial_index+1) != len(self.trial_infos)):
                     # if change between RANDOM and STABLE, give a break
                     break_condition_met = False
@@ -1420,15 +1583,15 @@ class VisuoMotor:
 
 
         elif (self.current_phase == 'PAUSE'):
-            self.frame_counters["pause"] = self.frame_counters["pause"] + 1
+            #self.frame_counters["pause"] = self.frame_counters["pause"] + 1
             #pause_finished = self.frame_counters["pause"] == int(self.params['FPS'] *\
             #                              self.params['pause_duration'] )
             pause_finished = self.timer_check(self.current_phase, "pause_duration")
             if pause_finished:
                 self.current_phase = 'REST'
 
-                for ctr in self.frame_counters:
-                    self.frame_counters[ctr] = 0
+                #for ctr in self.frame_counters:
+                #    self.frame_counters[ctr] = 0
 
                 self.feedbackX = 0
                 self.feedbackY = 0
@@ -1439,25 +1602,23 @@ class VisuoMotor:
                 self.error_distance = 0
                 self.color_target = self.color_target_def
                 self.trial_index += 1
+                print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
+
 
                 if self.params['return_home_after_pause']:
                     self.moveHome()
                 #print ('Start Trial: ' + str(self.trial_index))
 
         elif (self.current_phase == 'ITI'):
-            self.frame_counters["ITI"] += 1
+            #self.frame_counters["ITI"] += 1
             #ITI_finished =(self.frame_counters["ITI"] == \
             #        int(self.params['FPS'] * self.ITI_jittered))
             ITI_finished = self.timer_check(self.current_phase, parname=None,
                                             thr = self.ITI_jittered)
             if ITI_finished:
-                if self.params['rest_after_return']:
-                    self.current_phase = 'RETURN'
-                else:
-                    self.current_phase = 'REST'
 
-                for ctr in self.frame_counters:
-                    self.frame_counters[ctr] = 0
+                #for ctr in self.frame_counters:
+                #    self.frame_counters[ctr] = 0
                 self.feedbackX = 0
                 self.feedbackY = 0
                 self.unpert_feedbackX = 0
@@ -1467,6 +1628,12 @@ class VisuoMotor:
                 self.error_distance = 0
                 self.color_target = self.color_target_def
                 self.trial_index += 1
+                print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
+
+                if self.params['rest_after_return']:
+                    self.current_phase = 'RETURN'
+                else:
+                    self.current_phase = 'REST'
 
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
@@ -1480,14 +1647,14 @@ class VisuoMotor:
 
             if at_home or time_is_up:
                 self.current_phase = 'REST'
-                self.frame_counters["return"] = 0
+                #self.frame_counters["return"] = 0
                 # even if we have not returned in time, we forcibly put on
                 # there
                 # TODO: maybe here one needs to punish participant otherwise
                 # they won't return at all
                 self.moveHome()
-            else:
-                self.frame_counters["return"] += 1
+            #else:
+            #    self.frame_counters["return"] += 1
         else:
             print("Error")
             raise ValueError('wrong phase')
@@ -1498,7 +1665,16 @@ class VisuoMotor:
             self.phase_start_times[self.current_phase] = time.time()
             #self.send_trigger(self.current_phase_trigger)
             self.send_trigger_cur_trial_info()
-            print(f'Phase change {prev_phase} -> {self.current_phase}')
+            print(f'Phase change {prev_phase} -> {self.current_phase};  {prev_trial_index} -> {self.trial_index}')
+            print(f'   tgt = {self.tgti_to_show}')
+
+        if prev_trial_index != self.trial_index:
+            trial_info2 = self.trial_infos[self.trial_index]
+
+            print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
+            print(f'  prev trial = {trial_info}')
+            print(f'  new trial  = {trial_info2}')
+
 
 
     def update_log(self):
@@ -1552,6 +1728,10 @@ class VisuoMotor:
         '''
         at the end of on_execute
         '''
+        self.send_trigger(self.MEG_stop_trigger)
+        time.sleep(0.05)
+        self.MEG_rec_started = 0
+
         self.send_trigger(0)
         if (exit_type == 0):
             print("Yay")
@@ -1559,6 +1739,7 @@ class VisuoMotor:
             print("Ouch")
         self.logfile.close()
         self.trigger_logfile.close()
+
         pygame.quit()
         exit()
 
@@ -1566,7 +1747,7 @@ class VisuoMotor:
     def on_execute(self):
         if self.on_init() is False:
             self._running = False
-        clock = pygame.time.Clock()
+        #clock = pygame.time.Clock()
         self.initial_time = time.time()
         #if (self.params['use_eye_tracker']):
         #    EyeLink.tracker(self.params['width'], self.params['height'])
@@ -1574,6 +1755,7 @@ class VisuoMotor:
 
         # MAIN LOOP
         while(self._running):
+            self.clock.tick()
             self.current_time = time.time()
             # process events
             for event in pygame.event.get():
@@ -1585,12 +1767,19 @@ class VisuoMotor:
 
                 # count time since last trigger (to send trigger reset signal
                 # later)
-                if (self.trigger_countdown > 0):
-                    self.trigger_countdown -= 1
-                elif (self.trigger_countdown == 0):
-                    self.trigger_countdown = -1
-                    # trigger reset
-                    self.send_trigger(0)
+                if self.trigger_value in [self.MEG_start_trigger, self.MEG_stop_trigger]:
+                    td = self.params['MEG_trigger_duration']
+                else:
+                    td = self.params['trigger_duration']
+                if self.trigger_value > 0 and (time.time() - self.phase_start_times['trigger']) > td:
+                    self.trigger_value = 0
+                    self.send_trigger(self.trigger_value)
+                #if (self.trigger_countdown > 0):
+                #    self.trigger_countdown -= 1
+                #elif (self.trigger_countdown == 0):
+                #    self.trigger_countdown = -1
+                #    # trigger reset
+                #    self.send_trigger(0)
 
                 if self.trial_index == len(self.trial_infos):
                     print("Success ! Experiment finished ")
@@ -1602,7 +1791,7 @@ class VisuoMotor:
 
             self.on_render()
             # print(time.time()-self.current_time)
-            msElapsed = clock.tick_busy_loop(self.params['FPS'])
+            #msElapsed = clock.tick_busy_loop(self.params['FPS'])
 
         self.on_cleanup(0)
 
