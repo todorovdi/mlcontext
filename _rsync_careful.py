@@ -98,7 +98,7 @@ for change in changes:
         #print(change)
         if is_pattern:
             if not os.path.exists( os.path.join(p,fn) ) :
-                print('NOOOOOO')
+                print(f'!!! does not exist:  {os.path.join(p,fn) }')
                 print( change, 'p=', p, 'fn=',fn)
                 sys.exit(1)
             tst1 = os.stat( os.path.join(p,fn) ).st_mtime

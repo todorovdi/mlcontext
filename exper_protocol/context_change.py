@@ -3,6 +3,7 @@ from __future__ import print_function
 import pygame
 # from pygame.locals import *
 import time
+import os, parallel
 # import logging
 # from win32api import GetSystemMetrics
 import sys
@@ -12,6 +13,17 @@ import numpy as np
 import math
 # import pylink
 # import EyeLink
+
+def fnuniquify(path):
+    filename, extension = os.path.splitext(path)
+    counter = 1
+
+    while os.path.exists(path):
+        path = filename + " (" + str(counter) + ")" + extension
+        counter += 1
+    return path
+
+
 
 def trial_info2trgtpl(ti, phase):
     tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
@@ -177,8 +189,6 @@ class VisuoMotor:
 
         self.add_param('randomize_tgt_initial_veridical', 1)
 
-
-
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, seed= 1):
         self.debug = debug # affects fullscreen or not and other things
@@ -295,6 +305,12 @@ class VisuoMotor:
         self.jaxlims_d = {'left': 0.788848876953125, 'right': 0.6519775390625,
                           'up': 0.724334716796875, 'down': 0.618743896484375}
         self.jaxcenter =  {'ax1':0.055, 'ax2':-0.06} #{'ax1' :0}
+        self.jaxcenter =  {'ax1':-0.04, 'ax2':-0.013} #{'ax1' :0}
+
+        # when set to true, we take as center the axes values
+        # at the start of the app. So at the start the joystick has to be
+        # untouched
+        self.joystick_center_autocalib = True
 
         #self.jaxlims = -1,1
 
@@ -575,7 +591,6 @@ class VisuoMotor:
             #self.trigger_countdown = int(round(self.params['FPS']*(td/1000.0)))
             self.phase_start_times['trigger'] = time.time()
 
-
     def on_init(self):
         pygame.init()
         if self.debug:
@@ -585,6 +600,18 @@ class VisuoMotor:
             self._display_surf = pygame.display.set_mode(self.size)
         self._running = True
 
+    def save_scr(self, trial_info = None):
+        dir_scr = './screenshots'
+        if trial_info is None:
+            vft = None
+        else:
+            vft = trial_info['vis_feedback_type']
+        if not os.path.exists(dir_scr):
+            os.makedirs(dir_scr)
+        fn_scr0 = f"{dir_scr}/end_{self.current_phase}_tind={self.trial_index}_vft={vft}.jpg"
+        fn_scr = fnuniquify(fn_scr0)
+        pygame.image.save(pygame.display.get_surface(),fn_scr)
+        print('Screenshot saved to ',fn_scr)
 
     def on_event(self, event):
         if event.type not in [pygame.MOUSEMOTION, pygame.JOYBALLMOTION,
@@ -636,6 +663,8 @@ class VisuoMotor:
                 self.params['radius_cursor'] = self.params['radius_cursor']+1
             if event.key == pygame.K_r:
                 self.moveHome()
+            if event.key == pygame.K_s:
+                self.save_scr()
             if (event.key == pygame.K_c) and (not self.task_started) and\
                     (self.params['controller_type'] == 'joystick' ):
                 self.current_phase = self.calib_seq[0]
@@ -748,7 +777,6 @@ class VisuoMotor:
         self._display_surf.blit(text_render, pos)
         return ldt
 
-
     def drawReturnCircle(self):
         dist = np.sqrt((self.cursorX - self.home_position[0])**2  +
                     (self.cursorY - self.home_position[0])**2)
@@ -853,9 +881,6 @@ class VisuoMotor:
 
         return perfinfo
 
-
-
-
     def on_render(self):
         '''
         called from on_execute
@@ -916,7 +941,7 @@ class VisuoMotor:
 
                 pause_str = f'Pause, time left={R} seconds'
                 #self.drawPopupText(pause_str)
-                perfstrs = self.drawPerfInfo(reward_type = ['money'], pos_label = 'center', addlines = ['','pause_str'])
+                perfstrs = self.drawPerfInfo(reward_type = ['money'] )
                 self.drawTextMultiline( [pause_str] + [''] + perfstrs, font = self.myfont_popup,
                                        pos_label= 'center')
 
@@ -938,6 +963,7 @@ class VisuoMotor:
             if self.current_phase == 'GO_CUE_WAIT_AND_SHOW':
                 self.drawTgt()
                 self.drawHome()
+                self.drawPopupText('WAIT', 'center')
 
             if self.current_phase == 'RETURN':
                 self.drawReturnCircle()
@@ -972,8 +998,11 @@ class VisuoMotor:
         else:
             self._display_surf.fill([100, 100, 100])
 
-            ax1 = self.HID_controller.get_axis(0)
-            ax2 = self.HID_controller.get_axis(1)
+            if self.params['controller_type'] == 'joystick':
+                ax1 = self.HID_controller.get_axis(0)
+                ax2 = self.HID_controller.get_axis(1)
+            else:
+                ax1,ax2 = None,None
             val = None
             isgood = False
             if self.current_phase == 'JOYSTICK_CALIBRATION_LEFT':
@@ -1426,7 +1455,7 @@ class VisuoMotor:
             reach_time_finished = self.timer_check(self.current_phase,
                                     'time_feedback')
             if reach_time_finished:
-                 self.timer_check(self.current_phase,
+                self.timer_check(self.current_phase,
                                     'time_feedback', verbose=1)
             # if time is up we switch to ITI, else
             reach_finished, extinfo = self.test_reach_finished(ret_ext = 1)
@@ -1435,6 +1464,9 @@ class VisuoMotor:
                 print(f'reach_time_finished={reach_time_finished}, '
                       f'at_home={at_home}, stopped={stopped}, '
                       f'radius_reached={radius_reached}, hit_cond={hit_cond}')
+
+                self.save_scr(trial_info)
+
                 if reach_finished and hit_cond:
                     full_success = 1
                 else:
@@ -1752,6 +1784,14 @@ class VisuoMotor:
         #if (self.params['use_eye_tracker']):
         #    EyeLink.tracker(self.params['width'], self.params['height'])
         self.initial_time = time.time()
+
+        if self.joystick_center_autocalib:
+            ax1 = self.HID_controller.get_axis(0)
+            ax2 = self.HID_controller.get_axis(1)
+            if max(abs(ax1),abs(ax2) ) > 0.15:
+                raise ValueError(('You have to start the app with joystick'
+                    ' in the center position'))
+            self.jaxcenter =  {'ax1':ax1, 'ax2':ax2} #{'ax1' :0}
 
         # MAIN LOOP
         while(self._running):
