@@ -2,8 +2,9 @@ from __future__ import print_function
 # needed for joystick
 import pygame
 # from pygame.locals import *
+from psychopy import gui, core
 import time
-import os, parallel
+import os
 # import logging
 # from win32api import GetSystemMetrics
 import sys
@@ -11,6 +12,7 @@ if sys.platform.startswith('win32'):
     from ctypes import windll
 import numpy as np
 import math
+from os.path import join as pjoin
 # import pylink
 # import EyeLink
 
@@ -59,10 +61,14 @@ class VisuoMotor:
         self.subject_id = info['participant']
         self.session_id = info['session']
         self.timestr = time.strftime("%Y%m%d_%H%M%S")
+
+        subdir = 'data'
+        if not os.path.exists(subdir):
+            os.makedirs(subdir)
         if self.debug:
-            self.filename = ('data/' + self.subject_id + '_' + self.task_id)
+            self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id)
         else:
-            self.filename = ('data/' + self.subject_id + '_' + self.task_id +
+            self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id +
                              '_' + self.timestr)
         self.paramfile = open(self.filename + '.param', 'w')
         self.logfile = open(self.filename + '.log', 'w')
@@ -75,8 +81,11 @@ class VisuoMotor:
         self.add_param_comment('# Height of screen')
         #self.add_param('height', 800)
         self.add_param('height', 1000)
-        #self.add_param_comment('# Frames per second for plotting')
+        self.add_param_comment('# DESIRED Frames per second for plotting')
+        # obesrved FPS can be slighlty different
         #self.add_param('FPS', 120)
+        #self.add_param('FPS', 120)
+        self.add_param('FPS', 60)
         self.add_param_comment('# Radius of the cursor')
         self.add_param('radius_cursor', 10)
 
@@ -119,8 +128,6 @@ class VisuoMotor:
         self.add_param('use_eye_tracker', 1)
         #self.add_param_comment('# Use triggers?')
         #self.add_param('use_true_triggers', 1)
-        self.add_param_comment('# How long should we stay at one point before the movement is judged finished?')
-        self.add_param('stopping_min_dur', 0.13)
 
         self.add_param('pause_duration', 60)
         if self.debug:
@@ -156,9 +163,13 @@ class VisuoMotor:
         #self.reach_end_event = 'target_reached'
         #self.reach_end_event = 'distance_reached'
         self.add_param('reach_end_event', 'stopped')
+        self.add_param_comment('# How long should we stay at one point before the movement is judged finished?')
+        self.add_param('stopping_min_dur', 0.13)
+        self.add_param('stop_rad_px', 3)
 
-        self.add_param('controller_type', 'joystick')
-        #self.add_param('controller_type', 'mouse')
+
+        #self.add_param('controller_type', 'joystick')
+        self.add_param('controller_type', 'mouse')
 
         ######## Task seq params
         self.add_param('scale_pos',1.25)
@@ -257,7 +268,7 @@ class VisuoMotor:
             self.phase_shift_event_type = pygame.MOUSEBUTTONDOWN
 
         pygame.init()
-        self.clock = pygame.time.Clock()
+        self.clock = None
 
         if self.params['controller_type'] == 'joystick':
             self.HID_controller = pygame.joystick.Joystick(0)
@@ -285,12 +296,18 @@ class VisuoMotor:
 
         self.break_start_str = 'BREAK'
         # color to which target changes when it is touched by the feedback
+        self.color_bg = [100, 100, 100]
         self.color_hit = [255, 0, 0]   # red
-        self.color_feedback = [255, 255, 255]
+        self.color_miss = [0, 0, 255]   # blue
+        self.color_feedback_def = [255, 255, 255]
         self.color_cursor_orig = [255, 255, 255]
         self.color_cursor_orig_debug = [200, 100, 100] # reddish
         self.color_traj_orig_debug = [100, 50, 60] # reddish
         self.color_traj_feedback_debug = [200, 200, 200]  #whitish
+
+        self.color_feedback = self.color_feedback_def
+
+        self.fail_notif == 'cursor_explode'
 
         # it changes value to 1 only once, when we start the experiment
         self.task_started = 0
@@ -427,6 +444,13 @@ class VisuoMotor:
         #        'trial_type': 'perturbation',
         #     'special_block_type': None }
         #self.trial_infos += [d] * 3
+
+
+        ## debug reverse
+        d = {'vis_feedback_type':'reverse_x', 'tgti':tgti_cur,
+                'trial_type': 'perturbation',
+             'special_block_type': None }
+        self.trial_infos += [d] * 3
         ###################
 
 
@@ -534,6 +558,7 @@ class VisuoMotor:
                 self.trigger_port = 0x378
                 self.trigger = windll.inpout32
             elif self.params['trigger_device'] == 'parallel':
+                import parallel
                 self.trigger_port = '0x3FE8'
                 self.trigger = parallel.ParallelPort(address=self.trigger_port)
 
@@ -600,7 +625,7 @@ class VisuoMotor:
             self._display_surf = pygame.display.set_mode(self.size)
         self._running = True
 
-    def save_scr(self, trial_info = None):
+    def save_scr(self, trial_info = None, prefix=None):
         dir_scr = './screenshots'
         if trial_info is None:
             vft = None
@@ -608,7 +633,10 @@ class VisuoMotor:
             vft = trial_info['vis_feedback_type']
         if not os.path.exists(dir_scr):
             os.makedirs(dir_scr)
-        fn_scr0 = f"{dir_scr}/end_{self.current_phase}_tind={self.trial_index}_vft={vft}.jpg"
+        if prefix is None:
+            prefix = f'end_{self.current_phase}'
+
+        fn_scr0 = f"{dir_scr}/{prefix}_tind={self.trial_index}_vft={vft}.jpg"
         fn_scr = fnuniquify(fn_scr0)
         pygame.image.save(pygame.display.get_surface(),fn_scr)
         print('Screenshot saved to ',fn_scr)
@@ -800,7 +828,7 @@ class VisuoMotor:
                            self.home_position,
                            int(self.params['radius_home']), 2)
 
-    def drawCursorFeedback(self):
+    def drawCursorFeedback(self, radmult = 1.):
         #trial_info = self.trial_infos[self.trial_index]
         #ttype = trial_info['trial_type']
         #if ttype == 'error_clamp':
@@ -818,9 +846,11 @@ class VisuoMotor:
         #                   (vec[0],vec[1]),
         #                   self.params['radius_cursor'], 0)
         #else:
+        radius = self.params['radius_cursor']
+        radius *= radmult
         pygame.draw.circle(self._display_surf, self.color_feedback,
                         (self.feedbackX, self.feedbackY),
-                        self.params['radius_cursor'], 0)
+                        radius, 0)
 
     def drawCursorOrig(self, debug=0):
         r = self.params['radius_cursor']
@@ -887,7 +917,7 @@ class VisuoMotor:
         '''
         if (self.task_started):
             # Clear screen
-            self._display_surf.fill([100, 100, 100])
+            self._display_surf.fill(self.color_bg)
             if self.debug:
                 perfstrs = self.drawPerfInfo()
                 self.drawTextMultiline( perfstrs, font = self.myfont_popup,
@@ -895,16 +925,25 @@ class VisuoMotor:
 
             if self.current_phase == 'ITI':
                 # draw nothing execpt maybe explosion of tgt
-                if self.last_reach_not_full_rad:
-                    s = 'Reach did not even arrive to target distance in required time'
-                    self.drawPopupText(s)
-                else:
-                    if self.last_reach_too_slow == 1:
-                        s = 'Reach was too slow'
-                        self.drawPopupText(s)
-                    elif self.last_reach_too_slow == 2:
-                        s = 'Have not kept cursor at the target for enough time'
-                        self.drawPopupText(s)
+                if self.reward < (1. - 1e-2):
+                    if self.fail_notif == 'text':
+                        if self.last_reach_not_full_rad:
+                            s = 'Reach did not even arrive to target distance in required time'
+                            self.drawPopupText(s)
+                        else:
+                            if self.last_reach_too_slow == 1:
+                                s = 'Reach was too slow'
+                                self.drawPopupText(s)
+                            elif self.last_reach_too_slow == 2:
+                                s = 'Have not kept cursor at the target for enough time'
+                                self.drawPopupText(s)
+                    elif self.fail_notif == 'cursor_explode':
+                        self.color_feedback = self.color_miss
+                        tdif = time.time() - \
+                            self.phase_start_times[self.current_phase]
+                        self.drawCursorFeedback( 1 + 1.2 * np.sin( (tdif/self.ITI_jittered) * np.pi  ) )
+                    else:
+                        raise ValueError(f'wrong failnotif {self.fail_notif}')
 
                 if abs( self.reward - 1.) < 1e-6 and self.last_trial_full_success:
                     self.color_target = self.color_hit
@@ -1074,7 +1113,10 @@ class VisuoMotor:
                     next_spec_trial_type = ti['trial_type']
                     break
             trd = next_spec_trial_ind - self.trial_index
-            fps = self.clock.get_fps()
+            if self.clock is not None:
+                fps = self.clock.get_fps()
+            else:
+                fps = None
 
             debugstrs = []
             if self.params['controller_type'] == 'joystick':
@@ -1127,7 +1169,8 @@ class VisuoMotor:
         #                        self.params['radius_cursor'], verbose=0)
         at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
 
-        stopped = self.test_stopped()
+        stop_rad_px = self.params['stop_rad_px']
+        stopped = self.test_stopped(stop_rad_px = stop_rad_px)
         radius_reached = self.test_radius_reached()
         r = at_home,stopped,radius_reached
         if self.params['reach_end_event'] == 'stopped':
@@ -1159,6 +1202,11 @@ class VisuoMotor:
         called from vars_update
         '''
         fps = self.clock.get_fps()
+        if self.clock is not None:
+            fps = self.clock.get_fps()
+        else:
+            return None
+
         ntimebins = int( fps * self.params['stopping_min_dur'] )
         if (len(self.trajX) < ntimebins) or \
                 (self.get_dist_from_home() < self.params['radius_home'] ):
@@ -1465,7 +1513,7 @@ class VisuoMotor:
                       f'at_home={at_home}, stopped={stopped}, '
                       f'radius_reached={radius_reached}, hit_cond={hit_cond}')
 
-                self.save_scr(trial_info)
+                self.save_scr(trial_info, prefix='keypress')
 
                 if reach_finished and hit_cond:
                     full_success = 1
@@ -1497,8 +1545,11 @@ class VisuoMotor:
                         self.last_reach_not_full_rad = 0
 
                 # for the coming ITI update its duration
+                ITI_jitter_low = 0.
+                ITI_jitter_high = 1.
                 self.ITI_jittered = self.params['ITI_duration'] +\
-                        self.params['ITI_jitter'] * np.random.random_sample()
+                        self.params['ITI_jitter'] * \
+                        np.random.uniform(ITI_jitter_low, ITI_jitter_high)
                 print(f'Trial {self.trial_index}: {self.current_phase} finish condition met')
 
                 if self.get_dist_from_home() < self.params['radius_target']:
@@ -1666,6 +1717,7 @@ class VisuoMotor:
                     self.current_phase = 'RETURN'
                 else:
                     self.current_phase = 'REST'
+                    self.color_feedback = self.color_feedback_def
 
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
@@ -1779,13 +1831,14 @@ class VisuoMotor:
     def on_execute(self):
         if self.on_init() is False:
             self._running = False
+        self.clock = pygame.time.Clock()
         #clock = pygame.time.Clock()
         self.initial_time = time.time()
         #if (self.params['use_eye_tracker']):
         #    EyeLink.tracker(self.params['width'], self.params['height'])
         self.initial_time = time.time()
 
-        if self.joystick_center_autocalib:
+        if self.joystick_center_autocalib and self.params['controller_type'] == 'joystick':
             ax1 = self.HID_controller.get_axis(0)
             ax2 = self.HID_controller.get_axis(1)
             if max(abs(ax1),abs(ax2) ) > 0.15:
@@ -1795,7 +1848,7 @@ class VisuoMotor:
 
         # MAIN LOOP
         while(self._running):
-            self.clock.tick()
+            #self.clock.tick()
             self.current_time = time.time()
             # process events
             for event in pygame.event.get():
@@ -1831,7 +1884,7 @@ class VisuoMotor:
 
             self.on_render()
             # print(time.time()-self.current_time)
-            #msElapsed = clock.tick_busy_loop(self.params['FPS'])
+            msElapsed = self.clock.tick_busy_loop(self.params['FPS'])
 
         self.on_cleanup(0)
 
@@ -1842,12 +1895,12 @@ if __name__ == "__main__":
 
     info = {}
 
-    #from psychopy import gui, core
-    #info['participant'] = ''
-    #info['session'] = ''
+    info['participant'] = ''
+    info['session'] = ''
     #dlg = gui.DlgFromDict(info)
     #if not dlg.OK:
     #    core.quit()
+
     info['participant'] = 'Dmitrii'
     info['session'] = 'session1'
 
@@ -1892,3 +1945,4 @@ if __name__ == "__main__":
     # switch to TARGET_PHASE
 
     # show feedback only in FEEDBACK_PHASE
+
