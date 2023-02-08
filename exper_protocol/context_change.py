@@ -166,6 +166,10 @@ class VisuoMotor:
         self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
         self.add_param('MEG_trigger_duration', 1000 / 1000)
 
+
+        self.add_param('training_text_show_duration', 3)
+
+
         # not used for now
         if self.debug:
             self.add_param('return_duration', 60)
@@ -305,6 +309,8 @@ class VisuoMotor:
                              'JOYSTICK_CALIBRATION_UP':5,
                              'JOYSTICK_CALIBRATION_DOWN':6,
                              'JOYSTICK_CALIBRATION_CENTER':7,
+                             'TRAINING_START':8,
+                             'TRAINING_END':9,
                               'REST':10, 'RETURN':15,
                               'GO_CUE_WAIT_AND_SHOW':25,
                               'TARGET':20, 'FEEDBACK': 35,
@@ -316,6 +322,12 @@ class VisuoMotor:
         self.phase_start_times['at_home'] = 0.
         self.phase_start_times['trigger'] = 0.
         self.init_target_positions()  # does not draw anything, only calc
+
+        self.phase2text = { 'TRAINING_START':
+            f'Training stage: make {"num_initial_veridical"} reaches, reward is not calculated',
+            'TRAINING_END':
+            'Main task starts'}
+
 
         ########################  graphics-related
 
@@ -420,6 +432,7 @@ class VisuoMotor:
         self.unpert_feedbackX = 0
         self.unpert_feedbackY = 0
         self.just_moved_home = 0
+        self.just_finished_pretraining = 0
 
         self.feedbackX_when_crossing = 0
         self.feedbackY_when_crossing = 0
@@ -512,7 +525,7 @@ class VisuoMotor:
 
             d = {'vis_feedback_type':'veridical', 'tgti':tgti_cur,
                     'trial_type': 'veridical',
-                 'special_block_type': None }
+                 'special_block_type': 'pretraining' }
             self.trial_infos += [d]
 
 
@@ -1055,6 +1068,9 @@ class VisuoMotor:
                 self.drawTextMultiline( perfstrs, font = self.myfont_popup,
                                        pos_label = 'upper_right')
 
+            if self.current_phase in ['TRAINING_START', 'TRAINING_END']:
+                txt = self.phase2text[self.current_phase]
+                self.drawPopupText(txt, pos = 'center' )
             if self.current_phase == 'ITI':
                 # draw nothing except maybe explosion of tgt
                 if self.reward < (1. - 1e-2):
@@ -1634,7 +1650,11 @@ class VisuoMotor:
                     #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
                     self.color_photodiode = self.color_diode
 
-        elif (self.current_phase == 'TARGET_AND_FEEDBACK'):
+        elif self.current_phase in ['TRAINING_START', 'TRAINING_END']:
+            text_show_finished = self.timer_check(self.current_phase,
+                                    'training_text_show_duration')
+
+        elif self.current_phase == 'TARGET_AND_FEEDBACK':
             self.trajX += [ self.cursorX ]
             self.trajY += [ self.cursorY ]
 
@@ -1706,21 +1726,32 @@ class VisuoMotor:
                 self.current_phase = 'ITI'
                 self.color_photodiode = self.color_diode_off
 
-                if full_success:
-                    self.counter_hit_trials += 1
-                    self.reward = 1
+                if trial_info['special_block_type'] == 'pretraining':
+                    self.reward = 0
                 else:
-                    # regarless whether we hit or not if to slow then no reward
-                    if self.last_reach_too_slow > 0:
-                        self.reward = 0
+                    if full_success:
+                        self.counter_hit_trials += 1
+                        self.reward = 1
                     else:
-                        #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
-                        d = self.error_distance / self.params['radius_target']
-                        d = max(d , 1.)
-                        # control decay of reward larger means stronger punishment
-                        # for errror
-                        self.reward = np.power( 1 / d, 1.2)
+                        # regarless whether we hit or not if to slow then no reward
+                        if self.last_reach_too_slow > 0:
+                            self.reward = 0
+                        else:
+                            #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
+                            d = self.error_distance / self.params['radius_target']
+                            d = max(d , 1.)
+                            # control decay of reward larger means stronger punishment
+                            # for errror
+                            self.reward = np.power( 1 / d, 1.2)
                 self.reward_accrued += self.reward
+
+                trial_info2 = self.trial_infos[self.trial_index]
+                if trial_info['special_block_type'] == 'pretraining' and \
+                    trial_info2['special_block_type'] != 'pretraining':
+                    self.just_finished_pretraining = 1
+                    print('Just finished pretraining')
+                    self.current_phase = 'TRAINING_END'
+
             # else draw feedback and check hit
             else:
                 #self.frame_counters["feedback_shown"] += 1
@@ -1921,6 +1952,7 @@ class VisuoMotor:
             print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
             print(f'  prev trial = {trial_info}')
             print(f'  new trial  = {trial_info2}')
+
 
 
 
