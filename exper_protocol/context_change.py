@@ -84,8 +84,8 @@ class VisuoMotor:
         self.trigger_logfile = open(self.filename + '_trigger.log', 'w')
 
 
-        self.add_param('controller_type', 'joystick')
-        #self.add_param('controller_type', 'mouse')
+        #self.add_param('controller_type', 'joystick')
+        self.add_param('controller_type', 'mouse')
 
 
         self.add_param_comment('# Width of screen')      # updates self.param dictionary
@@ -255,7 +255,8 @@ class VisuoMotor:
         if self.debug:
             self.add_param('num_initial_veridical',2)
         else:
-            self.add_param('num_initial_veridical',6)
+            #self.add_param('num_initial_veridical',6)
+            self.add_param('num_initial_veridical',20)
 
         # TODO: training session
 
@@ -297,7 +298,8 @@ class VisuoMotor:
         self.current_phase_trigger = None
         self.current_phase = None
 
-        self.first_phase_after_start = 'REST'
+        #self.first_phase_after_start = 'REST'
+        self.first_phase_after_start = 'TRAINING_START'
         # ITI, then RETURN then REST
         w = 'JOYSTICK_CALIBRATION_'
         sides = ['left','right','up','down']
@@ -324,9 +326,10 @@ class VisuoMotor:
         self.init_target_positions()  # does not draw anything, only calc
 
         self.phase2text = { 'TRAINING_START':
-            f'Training stage: make {"num_initial_veridical"} reaches, reward is not calculated',
+            f'Étape d\'entrenement: faites {self.params["num_initial_veridical"]} '
+            'mouvements,\n la récompense ne sera pas calculée',
             'TRAINING_END':
-            'Main task starts'}
+            'La tache principale commence'}
 
 
         ########################  graphics-related
@@ -340,7 +343,12 @@ class VisuoMotor:
         self.clock = None
 
         if self.params['controller_type'] == 'joystick':
-            self.HID_controller = pygame.joystick.Joystick(0)
+            from pygame import error as pygerr
+            try:
+                self.HID_controller = pygame.joystick.Joystick(0)
+            except pygerr as e:
+                print(e)
+                raise ValueError('Problem with joystick')
             self.HID_controller.init()
             print(self.HID_controller)
         else:
@@ -629,7 +637,8 @@ class VisuoMotor:
         print(f'In total we have {len(self.trial_infos)} trials ')
         for tc in range(30):
             ti = self.trial_infos[tc]
-            print(tc, ti['trial_type'], ti['tgti'], ti['vis_feedback_type'] )
+            print(tc, ti['trial_type'], ti['tgti'],
+                  ti['vis_feedback_type'], ti['special_block_type'] )
 
 
         # to debug end
@@ -765,8 +774,8 @@ class VisuoMotor:
                 if self.current_phase == 'REST':
                     # TODO: are you sure we need to set it here?
                     self.phase_start_times['at_home'] = ct
+                    self.send_trigger_cur_trial_info()
                 self.moveHome()
-                self.send_trigger_cur_trial_info()
                 pygame.mouse.set_visible(0)
                 self.reset_traj()
 
@@ -1040,7 +1049,7 @@ class VisuoMotor:
         '''
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
-            endstrs = [ f'Task finished, well done!' ]
+            endstrs = [ 'Task finished, well done!' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
             endstrs += [f'the window will close in {delay:.0f} seconds']
             #self.drawPopupText(pause_str)
@@ -1070,10 +1079,10 @@ class VisuoMotor:
 
             if self.current_phase in ['TRAINING_START', 'TRAINING_END']:
                 txt = self.phase2text[self.current_phase]
-                self.drawPopupText(txt, pos = 'center' )
+                self.drawTextMultiline(txt.split('\n'), pos_label = 'center', font = self.myfont_popup )
             if self.current_phase == 'ITI':
                 # draw nothing except maybe explosion of tgt
-                if self.reward < (1. - 1e-2):
+                if self.reward < (1. - 1e-6):
                     if self.params['fail_notif'] == 'text':
                         if self.last_reach_not_full_rad:
                             s = 'Reach did not even arrive to target distance in required time'
@@ -1568,6 +1577,16 @@ class VisuoMotor:
         self.traj_jax1 = []  # joystick angles raw
         self.traj_jax2 = []
 
+    def reset_main_vars(self):
+        self.feedbackX = 0
+        self.feedbackY = 0
+        self.unpert_feedbackX = 0
+        self.unpert_feedbackY = 0
+        self.feedbackX_when_crossing = 0
+        self.feedbackY_when_crossing = 0
+        self.error_distance = 0
+        self.color_target = self.color_target_def
+
     def vars_update(self):
         '''
         is called if the task is running
@@ -1653,6 +1672,23 @@ class VisuoMotor:
         elif self.current_phase in ['TRAINING_START', 'TRAINING_END']:
             text_show_finished = self.timer_check(self.current_phase,
                                     'training_text_show_duration')
+            if text_show_finished:
+
+                ct = time.time()
+                self.phase_start_times['at_home'] = ct
+                self.moveHome()
+                self.send_trigger_cur_trial_info()
+                self.reset_traj()
+                self.color_feedback = self.color_feedback_def
+
+                if self.params['return_home_after_ITI']:
+                    self.moveHome()
+
+                if self.current_phase != 'TRAINING_START':
+                    self.trial_index += 1
+                    print ('Start Trial: ' + str(self.trial_index))
+
+                self.current_phase = 'REST'
 
         elif self.current_phase == 'TARGET_AND_FEEDBACK':
             self.trajX += [ self.cursorX ]
@@ -1726,6 +1762,7 @@ class VisuoMotor:
                 self.current_phase = 'ITI'
                 self.color_photodiode = self.color_diode_off
 
+                # check pretraining
                 if trial_info['special_block_type'] == 'pretraining':
                     self.reward = 0
                 else:
@@ -1734,23 +1771,16 @@ class VisuoMotor:
                         self.reward = 1
                     else:
                         # regarless whether we hit or not if to slow then no reward
-                        if self.last_reach_too_slow > 0:
-                            self.reward = 0
-                        else:
-                            #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
-                            d = self.error_distance / self.params['radius_target']
-                            d = max(d , 1.)
-                            # control decay of reward larger means stronger punishment
-                            # for errror
-                            self.reward = np.power( 1 / d, 1.2)
+                        #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
+                        d = self.error_distance / self.params['radius_target']
+                        d = max(d , 1.)
+                        # control decay of reward larger means stronger punishment
+                        # for errror
+                        self.reward = np.power( 1 / d, 1.2)
                 self.reward_accrued += self.reward
 
-                trial_info2 = self.trial_infos[self.trial_index]
-                if trial_info['special_block_type'] == 'pretraining' and \
-                    trial_info2['special_block_type'] != 'pretraining':
-                    self.just_finished_pretraining = 1
-                    print('Just finished pretraining')
-                    self.current_phase = 'TRAINING_END'
+                print(f'Reward = {self.reward:.2f}, accrued = {self.reward_accrued:.2f}')
+
 
             # else draw feedback and check hit
             else:
@@ -1854,25 +1884,15 @@ class VisuoMotor:
             pause_finished = self.timer_check(self.current_phase, "pause_duration")
             if pause_finished:
                 self.current_phase = 'REST'
-
                 #for ctr in self.frame_counters:
                 #    self.frame_counters[ctr] = 0
-
-                self.feedbackX = 0
-                self.feedbackY = 0
-                self.unpert_feedbackX = 0
-                self.unpert_feedbackY = 0
-                self.feedbackX_when_crossing = 0
-                self.feedbackY_when_crossing = 0
-                self.error_distance = 0
-                self.color_target = self.color_target_def
+                self.reset_main_vars()
                 self.trial_index += 1
                 print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
 
-
                 if self.params['return_home_after_pause']:
                     self.moveHome()
-                #print ('Start Trial: ' + str(self.trial_index))
+                print ('Start Trial: ' + str(self.trial_index))
 
         elif (self.current_phase == 'ITI'):
             #self.frame_counters["ITI"] += 1
@@ -1882,17 +1902,9 @@ class VisuoMotor:
                                             parname=None,
                                             thr = self.ITI_jittered)
             if ITI_finished:
-
                 #for ctr in self.frame_counters:
                 #    self.frame_counters[ctr] = 0
-                self.feedbackX = 0
-                self.feedbackY = 0
-                self.unpert_feedbackX = 0
-                self.unpert_feedbackY = 0
-                self.feedbackX_when_crossing = 0
-                self.feedbackY_when_crossing = 0
-                self.error_distance = 0
-                self.color_target = self.color_target_def
+                self.reset_main_vars()
                 self.trial_index += 1
                 print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
 
@@ -1905,6 +1917,15 @@ class VisuoMotor:
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
                 print ('Start trial # ' + str(self.trial_index))
+
+                if self.trial_index < len(self.trial_infos):
+                    trial_info2 = self.trial_infos[self.trial_index]
+                    if trial_info['special_block_type'] == 'pretraining' and \
+                        trial_info2['special_block_type'] != 'pretraining':
+                        self.just_finished_pretraining = 1
+                        print('Just finished pretraining')
+                        self.current_phase = 'TRAINING_END'
+                        self.reset_main_vars()
 
         elif (self.current_phase == 'RETURN'):
             at_home = self.is_home('unpert_cursor', 'radius_return')
@@ -1944,7 +1965,7 @@ class VisuoMotor:
 
             print(f'Phase change {prev_phase} -> {self.current_phase};  {prev_trial_index} -> {self.trial_index}')
             print(f"             {prev_phase} finished after {tdif:.3f} s")
-            print(f'   tgt = {self.tgti_to_show}')
+            #print(f'   tgt = {self.tgti_to_show}')
 
         if prev_trial_index != self.trial_index and self.trial_index < len(self.trial_infos):
             trial_info2 = self.trial_infos[self.trial_index]
