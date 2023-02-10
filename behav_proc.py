@@ -32,7 +32,8 @@ def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
 
     return pert_seq_code
 
-def addBehavCols(df_all, inplace=True):
+def addBehavCols(df_all, inplace=True, skip_existing = False,
+                 dset = 'Romain_Exp2_Cohen'):
     '''
     inplace, does not change database lengths (num of rows)
     '''
@@ -79,42 +80,46 @@ def addBehavCols(df_all, inplace=True):
                 df_all.loc[dfc.index, 'target_locs'].diff(periods=dt).abs().apply(lbd,1)
 
 
-    test_triali = pert_seq_code_test_trial
-    subj2pert_seq_code = {}
-    for subj in subjects:
-        mask = df_all['subject'] == subj
-        dfc = df_all[mask]
-        r = dfc.loc[dfc['trials'] == test_triali,'perturbation']
-        assert len(r) == 1
-        if r.values[0] > 5.:
-            pert_seq_code = 0
-        else:
-            pert_seq_code = 1
-        subj2pert_seq_code[subj] = pert_seq_code
+    if dset == 'Romain_Exp2_Cohen':
+        test_triali = pert_seq_code_test_trial
+        subj2pert_seq_code = {}
+        for subj in subjects:
+            mask = df_all['subject'] == subj
+            dfc = df_all[mask]
+            r = dfc.loc[dfc['trials'] == test_triali,'perturbation']
+            assert len(r) == 1
+            if r.values[0] > 5.:
+                pert_seq_code = 0
+            else:
+                pert_seq_code = 1
+            subj2pert_seq_code[subj] = pert_seq_code
 
-    def f(row):
-        return subj2pert_seq_code[row['subject']]
+        def f(row):
+            return subj2pert_seq_code[row['subject']]
 
-    df_all['pert_seq_code'] = df_all.apply(f,1)
+        df_all['pert_seq_code'] = df_all.apply(f,1)
 
-    #########################   index within block (second block same numbers)
+        #########################   index within block (second block same numbers)
 
-    def f(row):
-        env = envcode2env[ row['environment']]
-        triali = row['trials']
-        if env == 'stable' and triali < 200:
-            block_name = env + '1'
-        elif env == 'stable' and triali > 300:
-            block_name = env + '2'
-        elif env == 'random' and triali < 450:
-            block_name = env + '1'
-        elif env == 'random' and triali > 500:
-            block_name = env + '2'
-        else:
-            display(row)
-            raise ValueError(f'wrong combin {env}, {triali}')
-        return block_name
-    df_all['block_name'] = df_all.apply(f,1)
+        if skip_existing and ('block_name' not in df_all.columns):
+            def f(row):
+                env = envcode2env[ row['environment']]
+                triali = row['trials']
+                if env == 'stable' and triali < 200:
+                    block_name = env + '1'
+                elif env == 'stable' and triali > 300:
+                    block_name = env + '2'
+                elif env == 'random' and triali < 450:
+                    block_name = env + '1'
+                elif env == 'random' and triali > 500:
+                    block_name = env + '2'
+                else:
+                    display(row)
+                    raise ValueError(f'wrong combin {env}, {triali}')
+                return block_name
+            df_all['block_name'] = df_all.apply(f,1)
+    else:
+        block_names = list(sorted( df_all['block_name'].unique() ))
 
     #df_all['trialwb'] = None  # within respective block
     #df_all['trialwe'] = None  # within respective env (inc both blocks)
@@ -148,101 +153,102 @@ def addBehavCols(df_all, inplace=True):
     ########################   index within env (second block -- diff numbers)
 
     # within single subject
-    envchanges  = dfc.loc[dfc['environment'].diff() != 0,'trials'].values
-    envchanges = list(envchanges) + [len(dfc)]
+    if dset == 'Romain_Exp2_Cohen':
+        envchanges  = dfc.loc[dfc['environment'].diff() != 0,'trials'].values
+        envchanges = list(envchanges) + [len(dfc)]
 
-    envinterval = []
-    for envi,env in enumerate(block_names):
-        envinterval += [ (env, (envchanges[envi], envchanges[envi+1])) ]
-    block_trial_bounds = dict( ( envinterval ) )
+        envinterval = []
+        for envi,env in enumerate(block_names):
+            envinterval += [ (env, (envchanges[envi], envchanges[envi+1])) ]
+        block_trial_bounds = dict( ( envinterval ) )
 
-    #block_trial_bounds = {'stable1': [0,192],
-    #'random1': [192,384],
-    #'stable2': [384,576],
-    #'random2': [576,768]}
-    def f(row):
-        bn = row['block_name']
-        tbs = block_trial_bounds[bn]
-        start_cur = tbs[0]
-        bnbase = bn[:-1]
-        tbs0 = block_trial_bounds[bnbase + '1']
-        end_first_rel = tbs0[-1] - tbs0[0]
-        add = 0
-        if bn.endswith('2'):
-            add = end_first_rel
-        #return row['trials'] - start_cur + add
-        r = row['trials'] - start_cur + add
-    #     if bn == 'random2':
-    #         import pdb; pdb.set_trace()
-        return r
+        #block_trial_bounds = {'stable1': [0,192],
+        #'random1': [192,384],
+        #'stable2': [384,576],
+        #'random2': [576,768]}
+        def f(row):
+            bn = row['block_name']
+            tbs = block_trial_bounds[bn]
+            start_cur = tbs[0]
+            bnbase = bn[:-1]
+            tbs0 = block_trial_bounds[bnbase + '1']
+            end_first_rel = tbs0[-1] - tbs0[0]
+            add = 0
+            if bn.endswith('2'):
+                add = end_first_rel
+            #return row['trials'] - start_cur + add
+            r = row['trials'] - start_cur + add
+        #     if bn == 'random2':
+        #         import pdb; pdb.set_trace()
+            return r
 
-    df_all['trialwe'] = df_all.apply(f,1)
-    assert np.all( df_all['trialwe'] >= 0)
+        df_all['trialwe'] = df_all.apply(f,1)
+        assert np.all( df_all['trialwe'] >= 0)
 
 
-    ##########################   index within pertrubation (within block)
+        ##########################   index within pertrubation (within block)
 
-    bn2trial_st = {}  # block name 2 trial start
-    for bn in ['stable1', 'stable2']:
-        dfc_oneb = dfc[dfc['block_name'] == bn]
-        df_starts = dfc_oneb.loc[dfc_oneb['perturbation'].diff() != 0]
-        trial_st = df_starts['trials'].values
+        bn2trial_st = {}  # block name 2 trial start
+        for bn in ['stable1', 'stable2']:
+            dfc_oneb = dfc[dfc['block_name'] == bn]
+            df_starts = dfc_oneb.loc[dfc_oneb['perturbation'].diff() != 0]
+            trial_st = df_starts['trials'].values
 
-        last =  dfc_oneb.loc[dfc_oneb.last_valid_index(), 'trials']
-        trial_st = list(trial_st) +  [last + 1]
+            last =  dfc_oneb.loc[dfc_oneb.last_valid_index(), 'trials']
+            trial_st = list(trial_st) +  [last + 1]
 
-        bn2trial_st[bn] = trial_st
-        assert len(trial_st) == 6 # - 1
+            bn2trial_st[bn] = trial_st
+            assert len(trial_st) == 6 # - 1
 
-    def f(row):
-        t = row['trials']
-        bn = row['block_name']
-        if bn not in bn2trial_st:
-            return None
-        trial_st = bn2trial_st[bn]
-        for tsi,ts in enumerate(trial_st[:-1]):
-            ts_next = trial_st[tsi+1]
-            if t >= ts and t < ts_next:
-                r = tsi
-                break
-        return r
+        def f(row):
+            t = row['trials']
+            bn = row['block_name']
+            if bn not in bn2trial_st:
+                return None
+            trial_st = bn2trial_st[bn]
+            for tsi,ts in enumerate(trial_st[:-1]):
+                ts_next = trial_st[tsi+1]
+                if t >= ts and t < ts_next:
+                    r = tsi
+                    break
+            return r
 
-    df_all['pert_stage_wb'] = df_all.apply(f,1)
+        df_all['pert_stage_wb'] = df_all.apply(f,1)
 
-    ############################
+        ############################
 
-    def f(row):
-        bn = row['block_name']
-        ps = row['pert_stage_wb']
-        if bn not in bn2trial_st:
-            return None
-        start = bn2trial_st[bn][int(ps)]
-        return row['trials'] - start
+        def f(row):
+            bn = row['block_name']
+            ps = row['pert_stage_wb']
+            if bn not in bn2trial_st:
+                return None
+            start = bn2trial_st[bn][int(ps)]
+            return row['trials'] - start
 
-    df_all['trialwpert_wb'] = df_all.apply(f,1)
+        df_all['trialwpert_wb'] = df_all.apply(f,1)
 
-    ######################## index within pert within env
+        ######################## index within pert within env
 
-    # we use the same but add the end of last trial of stable1.
-    # note that this way we distinguish (kind of ) zero pert in the end of
-    # first part and zero pert in the beg of second part
-    def f(row):
-        bn = row['block_name']
-        ps = row['pert_stage_wb']
-        if bn not in bn2trial_st:
-            return None
-        start = bn2trial_st[bn][int(ps)]
-        add = 0
-        if bn == 'stable2':
-            add = bn2trial_st['stable1'][int(ps) + 1]
-        elif bn == 'random2':
-            add = bn2trial_st['random1'][int(ps) + 1]
-        #start0 = bn2trial_st[bn][int(ps)]
-        return row['trials'] - start + add
+        # we use the same but add the end of last trial of stable1.
+        # note that this way we distinguish (kind of ) zero pert in the end of
+        # first part and zero pert in the beg of second part
+        def f(row):
+            bn = row['block_name']
+            ps = row['pert_stage_wb']
+            if bn not in bn2trial_st:
+                return None
+            start = bn2trial_st[bn][int(ps)]
+            add = 0
+            if bn == 'stable2':
+                add = bn2trial_st['stable1'][int(ps) + 1]
+            elif bn == 'random2':
+                add = bn2trial_st['random1'][int(ps) + 1]
+            #start0 = bn2trial_st[bn][int(ps)]
+            return row['trials'] - start + add
 
-    df_all['trialwpert_we'] = df_all.apply(f,1)
+        df_all['trialwpert_we'] = df_all.apply(f,1)
 
-    ############################# index within target (assuming sorted over trials)
+        ############################# index within target (assuming sorted over trials)
 
     df_all['trialwtgt'] = -1
     for subj in subjects:
@@ -255,10 +261,11 @@ def addBehavCols(df_all, inplace=True):
 
     ########################### (assuming sorted over trials)
 
-    df_all['trialwtgt_wpert_wb'] = -1
-    df_all['trialwtgt_wpert_we'] = -1
-    df_all['trialwtgt_we'] = -1
-    df_all['trialwtgt_wb'] = -1
+    if dset == 'Romain_Exp2_Cohen':
+        df_all['trialwtgt_wpert_wb'] = -1
+        df_all['trialwtgt_wpert_we'] = -1
+        df_all['trialwtgt_we'] = -1
+        df_all['trialwtgt_wb'] = -1
     df_all['trialwpert']   = -1
     df_all['trialwtgt_wpert']   = -1
     for subj in subjects:
@@ -274,46 +281,56 @@ def addBehavCols(df_all, inplace=True):
                 mask_pert = mask & (df_all['perturbation'] == pertv)
                 df_all.loc[mask_pert, 'trialwtgt_wpert'] = np.arange(sum(mask_pert) )
 
+                if dset == 'Romain_Exp2_Cohen':
+                    for bn in block_names:
+                        mask_bn = mask_pert & (df_all['block_name'] == bn)
+                        trials = df_all.loc[mask_bn, 'trials']
+                        df_all.loc[mask_bn, 'trialwtgt_wpert_wb'] = np.arange(len(trials) )
+                    for envc in envcode2env:
+                        mask_env = mask_pert & (df_all['environment'] == envc)
+                        trials = df_all.loc[mask_env, 'trials']
+                        df_all.loc[mask_env, 'trialwtgt_wpert_we'] = np.arange(len(trials) )
+
+
+
+            if dset == 'Romain_Exp2_Cohen':
                 for bn in block_names:
-                    mask_bn = mask_pert & (df_all['block_name'] == bn)
+                    mask_bn = mask & (df_all['block_name'] == bn)
                     trials = df_all.loc[mask_bn, 'trials']
-                    df_all.loc[mask_bn, 'trialwtgt_wpert_wb'] = np.arange(len(trials) )
+                    df_all.loc[mask_bn, 'trialwtgt_wb'] = np.arange(len(trials) )
                 for envc in envcode2env:
-                    mask_env = mask_pert & (df_all['environment'] == envc)
+                    mask_env = mask & (df_all['environment'] == envc)
                     trials = df_all.loc[mask_env, 'trials']
-                    df_all.loc[mask_env, 'trialwtgt_wpert_we'] = np.arange(len(trials) )
-
-
-
-            for bn in block_names:
-                mask_bn = mask & (df_all['block_name'] == bn)
-                trials = df_all.loc[mask_bn, 'trials']
-                df_all.loc[mask_bn, 'trialwtgt_wb'] = np.arange(len(trials) )
-            for envc in envcode2env:
-                mask_env = mask & (df_all['environment'] == envc)
-                trials = df_all.loc[mask_env, 'trials']
-                df_all.loc[mask_env, 'trialwtgt_we'] = np.arange(len(trials) )
+                    df_all.loc[mask_env, 'trialwtgt_we'] = np.arange(len(trials) )
     #df_all['trialwtgt_wpert_wb'] = df_all['trialwtgt_wpert_wb'].astype(int)
 
     # trial_group_cols_all = [s for s in df_all.columns if s.find('trial') >= 0]
     tmax = df_all['trials'].max()
     for tcn in trial_group_cols_all:
-        assert df_all[tcn].max() <= tmax
-        assert df_all[tcn].max() >= 0
+        if dset == 'Romain_Exp2_Cohen':
+            assert df_all[tcn].max() <= tmax
+            assert df_all[tcn].max() >= 0
+        else:
+            if tcn not in df_all:
+                continue
+            if df_all[tcn].max() <= tmax or df_all[tcn].max() >= 0:
+                print(f'problem with {tcn}')
 
-    vars_to_pscadj = [ 'error']
-    # 'prev_error' ?
-    for varn in vars_to_pscadj:
-        df_all[f'{varn}_pscadj'] = df_all[varn]
-        df_all.loc[df_all['pert_seq_code'] == 1, f'{varn}_pscadj']= -df_all[varn]
+    if dset == 'Romain_Exp2_Cohen':
+        vars_to_pscadj = [ 'error']
+        # 'prev_error' ?
+        for varn in vars_to_pscadj:
+            df_all[f'{varn}_pscadj'] = df_all[varn]
+            df_all.loc[df_all['pert_seq_code'] == 1, f'{varn}_pscadj']= -df_all[varn]
 
-    vars_to_pscadj = [ 'org_feedback']
-    for varn in vars_to_pscadj:
-        df_all[f'{varn}_pscadj'] = df_all[varn] - np.pi
-        cond = df_all['pert_seq_code'] == 1
-        df_all.loc[cond, f'{varn}_pscadj']=  - ( df_all.loc[cond,varn]  -np.pi)
+        vars_to_pscadj = [ 'org_feedback']
+        for varn in vars_to_pscadj:
+            df_all[f'{varn}_pscadj'] = df_all[varn] - np.pi
+            cond = df_all['pert_seq_code'] == 1
+            df_all.loc[cond, f'{varn}_pscadj']=  - ( df_all.loc[cond,varn]  -np.pi)
 
-    addNonHitCol(df_all)
+        addNonHitCol(df_all)
+    return df_all
 
 def addNonHitCol(df):
     # in place
@@ -666,7 +683,8 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
     df_all2 = pd.concat(dfs)
     df_all2.reset_index(inplace=True, drop=True)
     df_all2.drop(['feedbackX','feedbackY'],axis=1,inplace=True)
-    df_all2.drop(['trajectoryX','trajectoryY'],axis=1,inplace=True)
+    if 'trajectoryX' in df_all2.columns:
+        df_all2.drop(['trajectoryX','trajectoryY'],axis=1,inplace=True)
 
 
     df_all2.loc[df_all2['trials'] == 0, 'non_hit_shifted'] = False

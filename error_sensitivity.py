@@ -13,7 +13,6 @@ from base2 import (int_to_unicode, point_in_circle,
 from config2 import path_data
 from config2 import event_ids_tgt,event_ids_feedback, env2envcode, env2subtr
 from config2 import target_angs, stage2evn2event_ids
-from Levenshtein import editops
 from config2 import delay_trig_photodi, min_event_duration
 
 target_coords = calc_target_coordinates_centered(target_angs)
@@ -55,6 +54,7 @@ target_coords = calc_target_coordinates_centered(target_angs)
 def enforceTargetTriggerConsistency(behav_df, epochs, environment,
                                     do_delete_trials=1,
                                     save_fname=None):
+    from Levenshtein import editops
     assert (np.diff( np.array(behav_df.index) ) > 0).all()
 
     # remove some of the behav inds
@@ -134,6 +134,7 @@ def checkTgtConsistency(behav_df, epochs):
 
 # legacy
 def getErrSensVals(error, target_inds, movement, time_locked='target',
+                   target_locs = None,
                    ret_df=False, shiftsz = 1):
     # here target should be indices of target
     # shift error by -1
@@ -149,14 +150,14 @@ def getErrSensVals(error, target_inds, movement, time_locked='target',
 
     if time_locked == 'target':
         # add zero in the beginning
-        prev_errors   = np.insert(error,    0, ins)[:-shiftsz]
-        prev_target   = np.insert(target_inds,   0, ins)[:-shiftsz]
-        prev_movement = np.insert(movement, 0, ins)[:-shiftsz]
-        analysis_value = [prev_target, prev_movement,
+        prev_errors   = np.insert(error,         0, ins)[:-shiftsz]
+        prev_target_ind   = np.insert(target_inds,   0, ins)[:-shiftsz]
+        prev_movement = np.insert(movement,      0, ins)[:-shiftsz]
+        analysis_value = [prev_target_ind, prev_movement,
                         error,
                         prev_errors]
 
-        tas = target_angs[prev_target]
+        tas = target_angs[prev_target_ind]
         tas[:shiftsz] = np.nan
         values_for_es = [target_angs[target_inds],
                         tas,
@@ -167,14 +168,14 @@ def getErrSensVals(error, target_inds, movement, time_locked='target',
     else:
         # add zero in the end
         next_errors    = np.insert(error,     len(error),    ins)[shiftsz:]
-        next_target    = np.insert(target_inds,    len(target_inds),   ins)[shiftsz:]
+        next_target_ind    = np.insert(target_inds,    len(target_inds),   ins)[shiftsz:]
         next_movement  = np.insert(movement,  len(movement), ins)[shiftsz:]
 
         analysis_value = [target_inds, movement,
                         next_errors,
                         error]
 
-        tas = target_angs[next_target]
+        tas = target_angs[next_target_ind]
         tas[-shiftsz:] = np.nan
         values_for_es = [tas,
                         target_angs[target_inds],
@@ -207,7 +208,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
                     correct_hit = 'inf', error_type = 'MPE',
                     colname_nh = 'non_hit_not_adj', shiftsz=1,
                     err_sens_coln = 'err_sens',
-                    addvars = []):
+                    addvars = [], recalc_non_hit = True):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -268,10 +269,13 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     # it is a _mask_ of non_hit, not indices
     # mask is on df_inds only, not on entire behav_df
-    non_hit_not_adj = point_in_circle(targets_cur, target_coords,
-                                        feedbackX_cur, feedbackY_cur,
-                                        radius_target + radius_cursor)
-    non_hit_not_adj = np.array(non_hit_not_adj)
+    if recalc_non_hit or 'non_hit_not_adj' not in behav_df.columns:
+        non_hit_not_adj = point_in_circle(targets_cur, target_coords,
+                                            feedbackX_cur, feedbackY_cur,
+                                            radius_target + radius_cursor)
+        non_hit_not_adj = np.array(non_hit_not_adj)
+    else:
+        non_hit_not_adj = behav_df['non_hit_not_adj']
 
     # not that non-hit has different effect on error sens calc depending on
     # which time_locked is used

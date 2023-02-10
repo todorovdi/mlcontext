@@ -1,4 +1,3 @@
-from __future__ import print_function
 # needed for joystick
 import pygame
 # from pygame.locals import *
@@ -323,6 +322,7 @@ class VisuoMotor:
         self.phase_start_times = dict( zip(self.phase2trigger.keys(), len(self.phase2trigger) * [-1.] ) )
         self.phase_start_times['at_home'] = 0.
         self.phase_start_times['trigger'] = 0.
+        self.phase_start_times['current_trial'] = time.time()
         self.init_target_positions()  # does not draw anything, only calc
 
         self.phase2text = { 'TRAINING_START':
@@ -1969,8 +1969,12 @@ class VisuoMotor:
 
         if prev_trial_index != self.trial_index and self.trial_index < len(self.trial_infos):
             trial_info2 = self.trial_infos[self.trial_index]
+            tc = time.time()
+            tdif = tc - self.phase_start_times['current_trial']
+            self.phase_start_times['current_trial'] = tc
 
             print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
+            print('TIME: trial completed in {tdif:.2f} sec')
             print(f'  prev trial = {trial_info}')
             print(f'  new trial  = {trial_info2}')
 
