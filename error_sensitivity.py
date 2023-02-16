@@ -140,7 +140,9 @@ def getErrSensVals(error, target_inds, movement, time_locked='target',
     # shift error by -1
 
     assert shiftsz >= 1
-    ins = [ 0 ] * shiftsz
+    #ins = [ 0 ] * shiftsz
+    ins = [ np.nan ] * shiftsz
+    ins_int = [ -10000 ] * shiftsz
 
     assert len( set([ len(error), len(target_inds), len(movement) ] ) ) == 1
 
@@ -148,37 +150,50 @@ def getErrSensVals(error, target_inds, movement, time_locked='target',
     varnames_def = ['target','prev_target', 'movement', 'prev_movement',
                 'prev_error']
 
+    if target_locs is None:
+        target_locs = target_angs[target_inds]
+    target_locs = target_locs.astype(float)
+
     if time_locked == 'target':
         # add zero in the beginning
         prev_errors   = np.insert(error,         0, ins)[:-shiftsz]
-        prev_target_ind   = np.insert(target_inds,   0, ins)[:-shiftsz]
+        prev_target_ind   = np.insert(target_inds,   0, ins_int)[:-shiftsz]
         prev_movement = np.insert(movement,      0, ins)[:-shiftsz]
         analysis_value = [prev_target_ind, prev_movement,
                         error,
                         prev_errors]
 
-        tas = target_angs[prev_target_ind]
-        tas[:shiftsz] = np.nan
-        values_for_es = [target_angs[target_inds],
-                        tas,
+        #tas = target_angs[prev_target_ind]
+        #tas[:shiftsz] = np.nan
+        prev_target_locs   = np.insert(target_locs,   0, ins)[:-shiftsz]
+        prev_target_locs[:shiftsz] = np.nan
+
+        values_for_es = [target_locs,
+                        prev_target_locs,
                         movement,
                         prev_movement,
                         prev_errors]
         varnames = varnames_def
     else:
         # add zero in the end
-        next_errors    = np.insert(error,     len(error),    ins)[shiftsz:]
-        next_target_ind    = np.insert(target_inds,    len(target_inds),   ins)[shiftsz:]
-        next_movement  = np.insert(movement,  len(movement), ins)[shiftsz:]
+        next_errors      = np.insert(error,     len(error),    ins)[shiftsz:]
+        next_target_ind  = np.insert(target_inds,
+                len(target_inds),   ins_int)[shiftsz:]
+        next_movement    = np.insert(movement,  len(movement), ins)[shiftsz:]
 
         analysis_value = [target_inds, movement,
                         next_errors,
                         error]
 
-        tas = target_angs[next_target_ind]
-        tas[-shiftsz:] = np.nan
-        values_for_es = [tas,
-                        target_angs[target_inds],
+        #tas = target_angs[next_target_ind]
+        #tas[-shiftsz:] = np.nan
+
+        next_target_locs   = np.insert(target_locs,
+                len(target_locs), ins) [shiftsz:]
+        next_target_locs[-shiftsz:] = np.nan
+
+        values_for_es = [next_target_locs,
+                        target_locs,
                         next_movement,
                         movement,
                         error]
@@ -208,7 +223,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
                     correct_hit = 'inf', error_type = 'MPE',
                     colname_nh = 'non_hit_not_adj', shiftsz=1,
                     err_sens_coln = 'err_sens',
-                    addvars = [], recalc_non_hit = True):
+                    addvars = [], recalc_non_hit = True, target_info_type = 'inds'):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -236,8 +251,8 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
     dis = np.diff(behav_df.index.values)
     np.max( dis ) == np.max( dis ) and np.max( dis ) == 1
 
-    targets_cur      = np.array(behav_df.loc[df_inds,'target_inds'])
     targets_locs_cur      = np.array(behav_df.loc[df_inds,'target_locs'])
+    target_inds      = np.array(behav_df.loc[df_inds,'target_inds'])
     org_feedback_cur      = np.array(behav_df.loc[df_inds,'org_feedback'])
     feedback_cur      = np.array(behav_df.loc[df_inds,'feedback'])
     # after enforcing consistencey
@@ -269,13 +284,15 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     # it is a _mask_ of non_hit, not indices
     # mask is on df_inds only, not on entire behav_df
-    if recalc_non_hit or 'non_hit_not_adj' not in behav_df.columns:
-        non_hit_not_adj = point_in_circle(targets_cur, target_coords,
+    if recalc_non_hit or ('non_hit_not_adj' not in behav_df.columns):
+        print('Creating new  "non_hit_not_adj"')
+        non_hit_not_adj = point_in_circle(target_inds, target_coords,
                                             feedbackX_cur, feedbackY_cur,
                                             radius_target + radius_cursor)
         non_hit_not_adj = np.array(non_hit_not_adj)
     else:
-        non_hit_not_adj = behav_df['non_hit_not_adj']
+        print('Using existing "non_hit_not_adj"')
+        non_hit_not_adj = behav_df['non_hit_not_adj'].to_numpy()
 
     # not that non-hit has different effect on error sens calc depending on
     # which time_locked is used
@@ -299,9 +316,16 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     # returs database of shfited data (either forward of backward, depending on
     # time_locked)
+    if target_info_type == 'inds':
+        target_locs = None
+    elif target_info_type == 'locs':
+        target_locs = targets_locs_cur
+    else:
+        raise ValueError('Wrong target info type')
     df_esv,vndef2vn = \
-        getErrSensVals(errors_cur,targets_cur, movement_cur,
-            time_locked = time_locked, ret_df = True, shiftsz = shiftsz)
+        getErrSensVals(errors_cur,target_inds, movement_cur,
+            time_locked = time_locked, ret_df = True, shiftsz = shiftsz,
+                       target_locs = target_locs)
 
     #target_angs_next, target_angs, next_movement, movement, errors = values_for_es
 
@@ -344,10 +368,16 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
     #Q: why we divide by prev_error instead of by (Y_es[1]-Y_es[3])
 
     # this if for time_locked != 'target', for others it can be shifted
+    # movement vs feedback is diff only when we have change of context between
+    # prev and current
     correction = (target_angs_next - next_movement) - (target_angs - movement)
     df_esv['non_hit_not_adj'] = non_hit_not_adj
     df_esv['non_hit_shifted'] = valid
     df_esv.loc[df_esv[colname_nh],err_sens_coln]  = correction / errors
+    # recal that in the experiment code what goes to "errors" columns is
+    # computed this way
+    # self.error_distance = np.sqrt((self.feedbackX - self.target_types[self.target_to_show][0])**2 +
+    #                               (self.feedbackY - self.target_types[self.target_to_show][1])**2)
 
     #import pdb; pdb.set_trace()
 

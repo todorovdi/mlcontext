@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # needed for joystick
 import pygame
 # from pygame.locals import *
@@ -41,10 +42,12 @@ def get_target_angles(num_targets, target_location_pattern):
         if target_location_pattern == 'diamond':
             mult = 90 # in deg
             targetAngs = np.arange(num_targets) * mult
-        else:
+        elif target_location_pattern == 'fan':
             mult = 15 # in deg
             m = num_targets * mult
             targetAngs = np.arange(num_targets) * mult -  m / 2
+        else:
+            raise ValueError(f'target_location_pattern = {target_location_pattern} not implemented')
     elif num_targets >= 4:
         mult = 15 # in deg
         m = num_targets * mult
@@ -83,9 +86,11 @@ class VisuoMotor:
         self.trigger_logfile = open(self.filename + '_trigger.log', 'w')
 
 
-        #self.add_param('controller_type', 'joystick')
-        self.add_param('controller_type', 'mouse')
+        self.add_param('controller_type', 'joystick')
+        #self.add_param('controller_type', 'mouse')
 
+        #self.add_param('joystick_angle2cursor_control_type', 'angle_scaling')
+        self.add_param('joystick_angle2cursor_control_type', 'velocity')
 
         self.add_param_comment('# Width of screen')      # updates self.param dictionary
         #self.add_param('width', 800)
@@ -125,8 +130,6 @@ class VisuoMotor:
         self.add_param('max_EUR_reward', 20)
 
 
-        #   'cursor_explode', 'text'
-        self.add_param('fail_notif', 'target_explode')
 
         #################  durations
         self.add_param_comment('# Time inside the home position'
@@ -147,8 +150,11 @@ class VisuoMotor:
 
         # see  Haith 2015 JNeuro (used 0.3s and 1.5s) and Bracco 2018 (used
         # 1.5s)
+        # but for behav task we'll make it shorter (though not destroy
+        # completely otherwise similarity will be less)
         self.add_param_comment('# time between the target appearance (w/o cursor visible) and the movement start (seconds)')
-        self.add_param('motor_prep_duration', 1.5)
+        #self.add_param('motor_prep_duration', 1.5)
+        self.add_param('motor_prep_duration', 0.5)
 
         self.add_param_comment('# Time for intertrial interval (seconds)')
         #self.add_param('ITI_duration', 1.5)
@@ -156,6 +162,7 @@ class VisuoMotor:
         self.add_param_comment('# Max jitter during ITI (seconds)')
         self.add_param('ITI_jitter', 0.1)
         self.add_param_comment('# Show text?')
+        self.add_param('explosion_duration', 0.7)
 
         self.add_param('pause_duration', 60)
         if self.debug:
@@ -203,6 +210,11 @@ class VisuoMotor:
         # can be also offline though less tested
         self.add_param('feedback_type', 'online')
 
+        # 'no' or 'explosion'
+        self.add_param('hit_notif', 'no')
+        #   'target_explode', 'cursor_explode', 'text', 'no'
+        self.add_param('fail_notif', 'no')
+
         # how we determine that the reach is finished before the time elapsed
         #self.reach_end_event = 'target_reached'
         #self.reach_end_event = 'distance_reached'
@@ -224,15 +236,18 @@ class VisuoMotor:
             self.add_param('pert_block_types',
                 'rot-15,rot15,rot30,rot60,rot90,scale-,scale+,reverse_x')
         else:
-            self.add_param('pert_block_types','rot-15,rot15,rot30,rot60')
+            #self.add_param('pert_block_types','rot-15,rot15,rot30,rot60')
+            self.add_param('pert_block_types','rot-15,rot15,rot30')
 
         self.add_param('spec_trial_modN',8)
+        self.add_param('allow_context_conseq_repetition', 0)
         # one can also use combinations of scale and rot
         # 'scale-&rot-15','scale-&rot30'
 
         #self.add_param('num_targets',3)
         self.add_param('num_targets',4)
-        self.add_param('target_location_pattern', 'diamond')
+        #self.add_param('target_location_pattern', 'diamond')
+        self.add_param('target_location_pattern', 'fan')
         targetAngs = get_target_angles(self.params['num_targets'],
                     self.params['target_location_pattern'])
         tas = map(lambda x: f'{x:.0f}', targetAngs)
@@ -243,9 +258,9 @@ class VisuoMotor:
         #self.add_param('block_len_max',9)
         #self.add_param('n_context_appearences',3)
 
-        self.add_param('block_len_min',7)
-        self.add_param('block_len_max',12)
-        self.add_param('n_context_appearences',5)
+        self.add_param('block_len_min',6)
+        self.add_param('block_len_max',10)
+        self.add_param('n_context_appearences',3)
 
         if self.debug:
             self.add_param('block_len_min',2)
@@ -256,8 +271,6 @@ class VisuoMotor:
         else:
             #self.add_param('num_initial_veridical',6)
             self.add_param('num_initial_veridical',20)
-
-        # TODO: training session
 
         self.add_param('randomize_tgt_initial_veridical', 1)
 
@@ -326,7 +339,7 @@ class VisuoMotor:
         self.init_target_positions()  # does not draw anything, only calc
 
         self.phase2text = { 'TRAINING_START':
-            f'Étape d\'entrenement: faites {self.params["num_initial_veridical"]} '
+            r"Étape d'entrenement: " f'faites {self.params["num_initial_veridical"]} '
             'mouvements,\n la récompense ne sera pas calculée',
             'TRAINING_END':
             'La tache principale commence'}
@@ -403,7 +416,8 @@ class VisuoMotor:
         self.color_target = self.color_target_def
 
         if self.params['rest_return_home_indication'] == 'return_circle':
-            self.color_return_circle = [240, 60, 60]  # reddish
+            #self.color_return_circle = [240, 60, 60]  # reddish
+            self.color_return_circle = [130, 90, 90]  # reddish
         else:
             self.color_return_circle = [240, 215, 40]  # greenish
 
@@ -477,7 +491,28 @@ class VisuoMotor:
         else:
             self.seed = seed
         np.random.seed(self.seed)
-        ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
+
+        was_repet = True
+        while was_repet:
+            ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
+            if self.params['allow_context_conseq_repetition']:
+                break
+            else:
+                # check for repetitions
+                was_repet = False
+                for i in range(len(ct_inds) - 1):
+                    vfti1 = vfti_seq_noperm[ct_inds[i] ]
+                    vfti2 = vfti_seq_noperm[ct_inds[i+1] ]
+                    if vfti1 == vfti2:
+                        was_repet = True
+                        # break from this and return to outer while
+                        print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2}')
+                        break
+                vfti0 = vfti_seq_noperm[ct_inds[0] ]
+                if self.params['num_initial_veridical'] > 1 and vfti0[0] == 'veridical':
+                    print('First was veridical')
+                    was_repet = True
+
         #print('ct_inds',ct_inds)
         self.vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
         n_blocks = len(self.vfti_seq)
@@ -523,6 +558,9 @@ class VisuoMotor:
                 trial_infos += [dspec]
             return trial_infos
 
+        ###############################
+        # Add pretraining
+        ###############################
         self.trial_infos = [] # this is the sequence of trial types
         for i in range(self.params['num_initial_veridical']  ):
             if self.params['randomize_tgt_initial_veridical']:
@@ -629,6 +667,18 @@ class VisuoMotor:
         self.paramfile.write( '# trial param and phase 2 trigger values \n' )
         self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
         self.paramfile.write( s + '\n' )
+
+        self.paramfile.write( '# trial_infos = \n' )
+        for tc in range( len(self.trial_infos) ):
+            ti = self.trial_infos[tc]
+            s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
+                  ti['vis_feedback_type'], ti['special_block_type'] )
+            print(s)
+            self.paramfile.write( f'# {s}\n' )
+        #s = json.dumps( {'trial_infos':list(enumerate(self.trial_infos) ) }
+        #               , indent=4)
+        #self.paramfile.write( s + '\n' )
+
         self.paramfile.close()
 
 
@@ -818,15 +868,17 @@ class VisuoMotor:
             #        EyeLink.tracker(self.params['width'], self.params['height'])
 
     def moveHome(self):
-        if self.params['controller_type'] == 'joystick':
+        ja2cct = self.params['joystick_angle2cursor_control_type']
+        if self.params['controller_type'] == 'joystick' and ja2cct == 'angle_scaling':
             #self.HID_controller.set_axis( [0,0]  )
-            print('moveHome: with joystick we cannot reset position')
+            print(f'moveHome: with joystick {ja2cct} we cannot reset position')
         else:
             # get_pos will not return new position until a MOUSEMOTION event is
             # executed
             # https://stackoverflow.com/questions/36995302/python-pygame-mouse-position-not-updating
             #print('before set', self.HID_controller.get_pos()  )
-            self.HID_controller.set_pos(self.home_position)
+            if self.params['controller_type'] == 'mouse':
+                self.HID_controller.set_pos(self.home_position)
             #print('after set',self.HID_controller.get_pos()  )
 
             self.cursorX,self.cursorY = self.home_position
@@ -931,7 +983,8 @@ class VisuoMotor:
     def drawReturnCircle(self):
         dist = np.sqrt((self.cursorX - self.home_position[0])**2  +
                     (self.cursorY - self.home_position[0])**2)
-        thickness = 3
+        #thickness = 3
+        thickness = 2
 
         # if the last was scale then we wante to scale return radius as well
         # we need to subtract 1 becasue RETURN goes after ITI, where it was
@@ -1098,19 +1151,25 @@ class VisuoMotor:
                         self.color_feedback = self.color_miss
                         tdif = time.time() - \
                             self.phase_start_times[self.current_phase]
-                        self.drawCursorFeedback( 1 + 1.2 * np.sin( (tdif/self.ITI_jittered) * np.pi  ) )
+                        self.drawCursorFeedback( 1 + 1.2 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
                     elif self.params['fail_notif'] == 'target_explode':
                         self.color_target = self.color_miss
                         tdif = time.time() - \
                             self.phase_start_times[self.current_phase]
-                        self.drawTgt( 1 + 1 * np.sin( (tdif/self.ITI_jittered) * np.pi  ) )
-                    else:
-                        raise ValueError(f'wrong failnotif {self.fail_notif}')
+                        self.drawTgt( 1 + 1 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
+                    # if 'no' then just do nothing
+                    elif self.params['fail_notif'] != 'no':
+                        raise ValueError(f'wrong fail notif {self.params["fail_notif"]}')
 
+                # we could have gotten good reward also when we hit but don't
+                # stay at target long enough
                 if abs( self.reward - 1.) < 1e-6 and self.last_trial_full_success:
-                    self.color_target = self.color_hit
-                    tdif = time.time() - self.phase_start_times[self.current_phase]
-                    self.drawTgt( 1 + 1.2 * np.sin( (tdif/self.ITI_jittered) * np.pi  ) )
+                    if self.params['hit_notif'] == 'explosion':
+                        self.color_target = self.color_hit
+                        tdif = time.time() - self.phase_start_times[self.current_phase]
+                        self.drawTgt( 1 + 1.2 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
+                    elif self.params['hit_notif'] != 'no':
+                        raise ValueError(f'wrong hit notif {self.params["hit_notif"]}')
                 #elif self.last_reach_stopped_away:
                 #    s = 'Reach stopped in some strange place'
                 #    self.drawPopupText(s)
@@ -1524,6 +1583,12 @@ class VisuoMotor:
             # from -1 to 1 -- not really. But below 1 in mod
             ax1 = self.HID_controller.get_axis(0)
             ax2 = self.HID_controller.get_axis(1)
+            ax1orig = ax1 + 0  # copy
+            ax2orig = ax2 + 0  # copy
+
+            noise1 = abs( self.jaxlims_d['right'] - self.jaxlims_d['left'] )
+            noise2 = abs( self.jaxlims_d['up'] - self.jaxlims_d['down'] )
+
             if len(self.jaxlims_d) < 4:
                 jaxlims_h = -1,1
                 jaxlims_v = -1,1
@@ -1534,6 +1599,10 @@ class VisuoMotor:
                 # joystick away -- neg, to me -- pos
                 ax1 -= self.jaxcenter['ax1']
                 ax2 -= self.jaxcenter['ax2']
+
+                ax1orig = ax1 + 0  # copy
+                ax2orig = ax2 + 0  # copy
+
                 # recall that jaxlims_d are all positive and jaxcenter is not
                 # jaxlims_d were computed without subtracting jaxcenter
                 if ax1 > 0:
@@ -1555,9 +1624,23 @@ class VisuoMotor:
              #/ (jaxrng_h / 2)
              #/ (jaxrng_v / 2)
 
-            # set cursor as a multiple of the total height/width
-            self.cursorX = self.home_position[0] + ax1 * (self.params['width'] / 2)
-            self.cursorY = self.home_position[1] + ax2 * (self.params['height'] / 2)
+            if self.params['joystick_angle2cursor_control_type'] == 'angle_scaling':
+                # set cursor as a multiple of the total height/width
+                self.cursorX = self.home_position[0] + ax1 * (self.params['width'] / 2)
+                self.cursorY = self.home_position[1] + ax2 * (self.params['height'] / 2)
+            elif self.params['joystick_angle2cursor_control_type'] == 'velocity':
+                coefX = 0.05
+                coefY = 0.05
+                ml = 10
+                #  self.current_phase == 'TARGET_AND_FEEDBACK'
+                noisesc_start = 1.1
+                noisesc_cont  = 0.5
+                if abs(ax1orig) > noise1 * noisesc_start or ( len(self.trajX) > ml and abs(ax1orig) > noise1 * noisesc_cont ) :
+                    self.cursorX += ax1 * (self.params['width'] / 2)   * coefX
+                if abs(ax2orig) > noise2 * noisesc_start or ( len(self.trajY) > ml and abs(ax1orig) > noise1 * noisesc_cont ):
+                    self.cursorY += ax2 * (self.params['height'] / 2)  * coefY
+            else:
+                raise ValueError(self.params['joystick_angle2cursor_control_type'])
 
             self.cursorX = int(  self.cursorX  )
             self.cursorY = int(  self.cursorY  )
@@ -1763,21 +1846,20 @@ class VisuoMotor:
                 self.color_photodiode = self.color_diode_off
 
                 # check pretraining
-                if trial_info['special_block_type'] == 'pretraining':
-                    self.reward = 0
+                if full_success:
+                    self.counter_hit_trials += 1
+                    self.reward = 1
                 else:
-                    if full_success:
-                        self.counter_hit_trials += 1
-                        self.reward = 1
-                    else:
-                        # regarless whether we hit or not if to slow then no reward
-                        #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
-                        d = self.error_distance / self.params['radius_target']
-                        d = max(d , 1.)
-                        # control decay of reward larger means stronger punishment
-                        # for errror
-                        self.reward = np.power( 1 / d, 1.2)
-                self.reward_accrued += self.reward
+                    # regarless whether we hit or not if to slow then no reward
+                    #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
+                    d = self.error_distance / self.params['radius_target']
+                    d = max(d , 1.)
+                    # control decay of reward larger means stronger punishment
+                    # for errror
+                    self.reward = np.power( 1 / d, 1.2)
+
+                if trial_info['special_block_type'] != 'pretraining':
+                    self.reward_accrued += self.reward
 
                 print(f'Reward = {self.reward:.2f}, accrued = {self.reward_accrued:.2f}')
 
@@ -1974,7 +2056,7 @@ class VisuoMotor:
             self.phase_start_times['current_trial'] = tc
 
             print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
-            print('TIME: trial completed in {tdif:.2f} sec')
+            print(f'TIME: trial completed in {tdif:.2f} sec')
             print(f'  prev trial = {trial_info}')
             print(f'  new trial  = {trial_info2}')
 
@@ -2132,17 +2214,20 @@ if __name__ == "__main__":
 
     info['participant'] = ''
     info['session'] = ''
-    #dlg = gui.DlgFromDict(info)
-    #if not dlg.OK:
-    #    core.quit()
 
-    info['participant'] = 'Dmitrii'
-    info['session'] = 'session1'
+    show_dialog = 1
+    if show_dialog:
+        dlg = gui.DlgFromDict(info)
+        if not dlg.OK:
+            core.quit()
+    else:
+        info['participant'] = 'Dmitrii'
+        info['session'] = 'session1'
 
 
-    seed = 7
-    #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed)
-    app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=seed)
+    seed = 8
+    app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed)
+    #app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=seed)
     app.on_execute()
 
     # it starts a loop in which it check for events using pygame.event.get()

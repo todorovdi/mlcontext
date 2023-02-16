@@ -546,7 +546,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                subj_list=None, error_type='MPE',
                colname_nh = 'non_hit_shifted', trial_shift_sizes = [1],
                DEBUG=0, allow_duplicating=True, time_locked = 'target',
-                          addvars = None ):
+                          addvars = None, target_info_type = 'inds' ):
     '''
         if allow_duplicating is False we don't allow creating copies
         of subsets of indices within subject (this can be useful for decoding)
@@ -630,7 +630,9 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                                     colname_nh = colname_nh,
                                     correct_hit = 'inf', shiftsz = tsz,
                                     err_sens_coln=escoln,
-                                    time_locked = time_locked, addvars=addvars)
+                                    time_locked = time_locked, addvars=addvars,
+                                    target_info_type = target_info_type,
+                                    recalc_non_hit = False)
                 nhna, df_esv, ndf2vn = r
 
                 # if I don't convert to array then there is an indexing problem
@@ -660,10 +662,14 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                     dfcur[avn] = np.array(df_esv[avn])
 
 
-                lbd = lambda x : f'{x:.2f}'
                 #lbd(0.5)
+                #print(dfcur['target_locs'].values, df_esv['prev_target'].values )
+                #raise ValueError('f')
                 dfcur['dist_rad_from_prevtgt2'] = dfcur['target_locs'].values -\
                     df_esv['prev_target'].values
+
+                # convert to string
+                lbd = lambda x : f'{x:.2f}'
                 dfcur['dist_rad_from_prevtgt2'] =\
                     dfcur['dist_rad_from_prevtgt2'].abs().apply(lbd, 1)
 

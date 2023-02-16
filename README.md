@@ -1,3 +1,5 @@
-# Memory of deterministic and stochastic errors
+# mlcontext
 
-something meaningful to be put here
+Data analysis and modelling of behavioral and MEG data from motor learning experiments
+
+Mixture of Python 3 and jupyter notebooks

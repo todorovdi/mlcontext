@@ -250,16 +250,32 @@ def point_in_circle_single(target_ind, target_coords, feedbackX,
 
 # for each dim tell whether we hit target or not
 def point_in_circle(targets, target_coords, feedbackX,
-                    feedbackY, circle_radius):
+                    feedbackY, circle_radius, target_info_type = 'inds'):
     non_hit = list()
     for ii in range(len(targets)):
-        d = math.sqrt(math.pow(target_coords[targets[ii]][0]-feedbackX[ii], 2) +
-                      math.pow(target_coords[targets[ii]][1]-feedbackY[ii], 2))
+        if target_info_type == 'inds':
+            tgtloc = target_coords[targets[ii]]
+        elif target_info_type == 'locs':
+            tgtloc = targets[ii]
+        else:
+            raise ValueError('Wrong target info type')
+        d = math.sqrt(math.pow(tgtloc[0]-feedbackX[ii], 2) +
+                      math.pow(tgtloc[1]-feedbackY[ii], 2))
         if d > circle_radius:
             non_hit.append(True)
         else:
             non_hit.append(False)
     return non_hit
+
+#def ishit(targets, feeback, radius):
+#    non_hit = list()
+#    for ii in range(len(targets)):
+#
+#        if d > circle_radius:
+#            non_hit.append(True)
+#        else:
+#            non_hit.append(False)
+#    return non_hit
 
 
 def init_target_positions():
