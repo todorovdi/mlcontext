@@ -89,20 +89,28 @@ class VisuoMotor:
         self.add_param('controller_type', 'joystick')
         #self.add_param('controller_type', 'mouse')
 
-        #self.add_param('joystick_angle2cursor_control_type', 'angle_scaling')
-        self.add_param('joystick_angle2cursor_control_type', 'velocity')
+        self.add_param('joystick_angle2cursor_control_type', 'angle_scaling')
+        #self.add_param('joystick_angle2cursor_control_type', 'velocity')
 
         self.add_param_comment('# Width of screen')      # updates self.param dictionary
         #self.add_param('width', 800)
-        self.add_param('width', 1000)
+        #self.add_param('width', 1000)
+        self.add_param('width', 1920)
         self.add_param_comment('# Height of screen')
         #self.add_param('height', 800)
-        self.add_param('height', 1000)
+        self.add_param('height', 1080)
         self.add_param_comment('# DESIRED Frames per second for plotting')
+
+
+        # for controller coords computation
+        # I want same accuracy in X and Y dir
+        self.add_param('width_for_cccomp',  1080)
+        self.add_param('height_for_cccomp', 1080)
+
         # obesrved FPS can be slighlty different
         #self.add_param('FPS', 120)
-        #self.add_param('FPS', 120)
-        self.add_param('FPS', 60)
+        self.add_param('FPS', 120)
+        #self.add_param('FPS', 60)
         self.add_param_comment('# Radius of the cursor')
         self.add_param('radius_cursor', 10)
 
@@ -126,12 +134,22 @@ class VisuoMotor:
         #self.add_param_comment('# Use triggers?')
         #self.add_param('use_true_triggers', 1)
 
+        self.add_param('motor_prep_show_target',1)
+        #self.add_param('motor_prep_show_cursor','no')
+        self.add_param('motor_prep_show_cursor','orig')
+        self.add_param('motor_prep_change_target_color',1)
+
+
+        # to minimize change of screen content
+        self.add_param('ITI_show_home',1)
+
         # TODO: discuss with Romain
         self.add_param('max_EUR_reward', 20)
 
-
-
+        ####################################################
         #################  durations
+        ####################################################
+
         self.add_param_comment('# Time inside the home position'
                                'before trial starts (seconds)')
         self.add_param('time_at_home', 0.5)
@@ -155,6 +173,7 @@ class VisuoMotor:
         self.add_param_comment('# time between the target appearance (w/o cursor visible) and the movement start (seconds)')
         #self.add_param('motor_prep_duration', 1.5)
         self.add_param('motor_prep_duration', 0.5)
+        #self.add_param('motor_prep_duration', 5.5) # DEBUG MOTOR PREP
 
         self.add_param_comment('# Time for intertrial interval (seconds)')
         #self.add_param('ITI_duration', 1.5)
@@ -173,7 +192,11 @@ class VisuoMotor:
         self.add_param('MEG_trigger_duration', 1000 / 1000)
 
 
-        self.add_param('training_text_show_duration', 3)
+        if self.debug:
+            self.add_param('training_text_show_duration', 0.4)
+        else:
+            self.add_param('training_text_show_duration', 3)
+            #self.add_param('training_text_show_duration', 0.3)
 
 
         # not used for now
@@ -275,8 +298,9 @@ class VisuoMotor:
         self.add_param('randomize_tgt_initial_veridical', 1)
 
     def __init__(self, info, task_id='',
-                 use_true_triggers = 1, debug=False, seed= 1):
+                 use_true_triggers = 1, debug=False, seed= 1, start_fullscreen = 0):
         self.debug = debug # affects fullscreen or not and other things
+        self.start_fullscreen = start_fullscreen
         self.initialize_parameters(info)
         #self.use_true_triggers = self.params['use_true_triggers']
         self.use_true_triggers = use_true_triggers
@@ -284,7 +308,6 @@ class VisuoMotor:
             print("We will try to send actual trigger")
         else:
             print("Triggers will be saved to logfile")
-
 
         #self.eye_tracker = pylink.EyeLink(None)
         self.size = self.params['width'], self.params['height']
@@ -409,11 +432,14 @@ class VisuoMotor:
         self.color_diode = [255, 255, 255]
         self.color_diode_off = [0,0,0]
         self.color_text = [255,255,255]
-        self.color_wait_for_go_cue = [120,120,0] # yellow
         self.color_feedback = self.color_feedback_def
         self.color_target_def = [0, 255, 0]  # green
         # current color of the target, this is not fixed in time
         self.color_target = self.color_target_def
+        if self.params['motor_prep_change_target_color']:
+            self.color_wait_for_go_cue = [120,120,0] # yellow
+        else:
+            self.color_wait_for_go_cue = self.color_target_def
 
         if self.params['rest_return_home_indication'] == 'return_circle':
             #self.color_return_circle = [240, 60, 60]  # reddish
@@ -624,7 +650,7 @@ class VisuoMotor:
                     pause_trial_end          = 1
                 elif bi % N == 2:
                     error_clamp_pair_end     = 1
-                elif bi % N == 6:
+                elif bi % N in [6,1,3,5]:
                     error_clamp_sandwich_end = 1
 
             hd = num_context_repeats // 2
@@ -775,11 +801,26 @@ class VisuoMotor:
 
     def on_init(self):
         pygame.init()
-        if self.debug:
-            self._display_surf = pygame.display.set_mode(self.size)
+
+        disp_sizes = pygame.display.get_desktop_sizes()
+        print(  f'disp_sizes = {disp_sizes}' )
+        if len(disp_sizes) > 1:
+            # take widest
+            srt = sorted( list( enumerate(disp_sizes) ), key = lambda x: x[1][0] )
+            srt = list(srt)
+            self.preferred_display = srt[-1][0]
+            print(' self.preferred_display = ',self.preferred_display)
+            display = self.preferred_display
         else:
-            #self._display_surf = pygame.display.set_mode(self.size, pygame.FULLSCREEN)
-            self._display_surf = pygame.display.set_mode(self.size)
+            display = 0
+
+        if self.debug:
+            self._display_surf = pygame.display.set_mode(self.size, display = display)
+        else:
+            if self.start_fullscreen:
+                self._display_surf = pygame.display.set_mode(self.size, pygame.FULLSCREEN,  display = display)
+            else:
+                self._display_surf = pygame.display.set_mode(self.size,  display = display)
         self._running = True
 
     def save_scr(self, trial_info = None, prefix=None):
@@ -843,11 +884,19 @@ class VisuoMotor:
             if event.key == pygame.K_ESCAPE:
                 self.on_cleanup(-1)
             if event.key == pygame.K_F11 and pygame.mouse.get_focused():
+                disp_sizes = pygame.display.get_desktop_sizes()
+                print(  f'disp_sizes = {disp_sizes}' )
+                if len(disp_sizes) > 1:
+                    display = self.preferred_display
+                else:
+                    display = 0
+
                 if (self._display_surf.get_flags() & pygame.FULLSCREEN):
-                    self._display_surf = pygame.display.set_mode(self.size)
+                    self._display_surf = pygame.display.set_mode(self.size, display = display)
                 else:
                     self._display_surf = pygame.display.set_mode(self.size,
-                        pygame.FULLSCREEN)
+                        pygame.FULLSCREEN, display = display)
+                    #self._display_surf = pygame.display.set_mode(0,0,
             if event.key == pygame.K_q:
                 self.params['radius_cursor'] = self.params['radius_cursor']-1
             if event.key == pygame.K_w:
@@ -983,8 +1032,8 @@ class VisuoMotor:
     def drawReturnCircle(self):
         dist = np.sqrt((self.cursorX - self.home_position[0])**2  +
                     (self.cursorY - self.home_position[0])**2)
-        #thickness = 3
-        thickness = 2
+        thickness = 3
+        #thickness = 2  # too thin
 
         # if the last was scale then we wante to scale return radius as well
         # we need to subtract 1 becasue RETURN goes after ITI, where it was
@@ -1005,6 +1054,9 @@ class VisuoMotor:
                            int(self.params['radius_home']), 2)
 
     def drawCursorFeedback(self, radmult = 1.):
+        '''
+        radmult is for explosions
+        '''
         #trial_info = self.trial_infos[self.trial_index]
         #ttype = trial_info['trial_type']
         #if ttype == 'error_clamp':
@@ -1034,7 +1086,6 @@ class VisuoMotor:
         if debug:
             c = self.color_cursor_orig_debug
             r /= 2
-
 
         if self.just_moved_home:
             #return True
@@ -1134,6 +1185,8 @@ class VisuoMotor:
                 txt = self.phase2text[self.current_phase]
                 self.drawTextMultiline(txt.split('\n'), pos_label = 'center', font = self.myfont_popup )
             if self.current_phase == 'ITI':
+                if self.params['ITI_show_home']:
+                    self.drawHome()
                 # draw nothing except maybe explosion of tgt
                 if self.reward < (1. - 1e-6):
                     if self.params['fail_notif'] == 'text':
@@ -1229,8 +1282,15 @@ class VisuoMotor:
 
             if self.current_phase == 'GO_CUE_WAIT_AND_SHOW':
                 self.color_target = self.color_wait_for_go_cue
-                self.drawTgt()
+                if self.params['motor_prep_show_target']:
+                    self.drawTgt()
                 self.drawHome()
+                if self.params['motor_prep_show_cursor'] == 'orig':
+                    self.drawCursorOrig()
+                elif self.params['motor_prep_show_cursor'] == 'feedback':
+                    self.drawCursorFeedback()
+                elif self.params['motor_prep_show_cursor'] != 'no':
+                    raise ValueError(f'Wrong param motor_prep_show_cursor == {motor_prep_show_cursor}')
                 #self.drawPopupText('WAIT', 'center')
 
             if self.current_phase == 'RETURN':
@@ -1626,8 +1686,8 @@ class VisuoMotor:
 
             if self.params['joystick_angle2cursor_control_type'] == 'angle_scaling':
                 # set cursor as a multiple of the total height/width
-                self.cursorX = self.home_position[0] + ax1 * (self.params['width'] / 2)
-                self.cursorY = self.home_position[1] + ax2 * (self.params['height'] / 2)
+                self.cursorX = self.home_position[0] + ax1 * (self.params['width_for_cccomp'] / 2)
+                self.cursorY = self.home_position[1] + ax2 * (self.params['height_for_cccomp'] / 2)
             elif self.params['joystick_angle2cursor_control_type'] == 'velocity':
                 coefX = 0.05
                 coefY = 0.05
@@ -1636,9 +1696,9 @@ class VisuoMotor:
                 noisesc_start = 1.1
                 noisesc_cont  = 0.5
                 if abs(ax1orig) > noise1 * noisesc_start or ( len(self.trajX) > ml and abs(ax1orig) > noise1 * noisesc_cont ) :
-                    self.cursorX += ax1 * (self.params['width'] / 2)   * coefX
+                    self.cursorX += ax1 * (self.params['width_for_cccomp'] / 2)   * coefX
                 if abs(ax2orig) > noise2 * noisesc_start or ( len(self.trajY) > ml and abs(ax1orig) > noise1 * noisesc_cont ):
-                    self.cursorY += ax2 * (self.params['height'] / 2)  * coefY
+                    self.cursorY += ax2 * (self.params['height_for_cccomp'] / 2)  * coefY
             else:
                 raise ValueError(self.params['joystick_angle2cursor_control_type'])
 
@@ -1725,32 +1785,33 @@ class VisuoMotor:
                         #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
                         self.color_photodiode = self.color_diode
 
+        # motor preparation
         elif (self.current_phase == 'GO_CUE_WAIT_AND_SHOW'):
             self.tgti_to_show = tgti
             wait_finished = self.timer_check(self.current_phase,
                                     'motor_prep_duration')
-            if wait_finished:
-                at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
-                self.reset_traj()
-                if not at_home:
-                    self.left_home_during_prep = 1
-                    self.current_phase = 'REST'
-                else:
-                    self.left_home_during_prep = 0
-                    if self.params['feedback_type'] == 'online':
-                        self.current_phase = 'TARGET_AND_FEEDBACK'
-                    else:
-                        self.current_phase = 'TARGET'
-                    #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
-                    print(f'Start target and feedback display {trial_info}')
 
-                    # self.trial_infos[self.trial_index, 0]
-                    # depending on whether random or stable change target
-                    self.tgti_to_show = tgti
-                    # I don't need to put send trigger here because phase changes
-                    # so it will be detected below
-                    #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
-                    self.color_photodiode = self.color_diode
+            at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
+            self.reset_traj()
+            if not at_home:
+                self.left_home_during_prep = 1
+                # we return to rest (NOT to ITI, so don't update trial counter)
+                self.current_phase = 'REST'
+            elif wait_finished:
+                self.left_home_during_prep = 0
+                if self.params['feedback_type'] == 'online':
+                    self.current_phase = 'TARGET_AND_FEEDBACK'
+                else:
+                    self.current_phase = 'TARGET'
+                #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
+                print(f'Start target and feedback display {trial_info}')
+
+                # self.trial_infos[self.trial_index, 0]
+                #self.tgti_to_show = tgti
+                # I don't need to put send trigger here because phase changes
+                # so it will be detected below
+                #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
+                self.color_photodiode = self.color_diode
 
         elif self.current_phase in ['TRAINING_START', 'TRAINING_END']:
             text_show_finished = self.timer_check(self.current_phase,
@@ -1996,6 +2057,14 @@ class VisuoMotor:
                     self.current_phase = 'REST'
                     self.color_feedback = self.color_feedback_def
 
+
+                    # to avoid jump of the target when we start running REST
+                    # for the first time (because during ITI it is hidden and
+                    # then we show first the wrong one until vars update is ran
+                    # for the first time)
+                    trial_info2 = self.trial_infos[self.trial_index]
+                    self.tgti_to_show = trial_info2['tgti']
+
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
                 print ('Start trial # ' + str(self.trial_index))
@@ -2226,8 +2295,9 @@ if __name__ == "__main__":
 
 
     seed = 8
-    app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed)
-    #app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=seed)
+    start_fullscreen = 0
+    #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed)
+    app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=seed, start_fullscreen=start_fullscreen)
     app.on_execute()
 
     # it starts a loop in which it check for events using pygame.event.get()
