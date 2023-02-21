@@ -399,24 +399,49 @@ class VisuoMotor:
         self.myfont_popup = pygame.font.SysFont(self.font_face, self.foruser_center_font_size)
 
         if self.params['controller_type'] == 'joystick':
-            retpos_str = '\nAfter the end, return to home position.\n'
+            retpos_str = "\nAprès la fin (l'arrêt complét) de chaque movement et disparition du curseur,\n ramenez le joystick vers la position centrale.\n"
         else:
             retpos_str = ''
-        #self.instuctions_str = 'We will start soon. Please wait for instructions'
-        self.instuctions_str = (f'You will see targets that you have to reach using {self.params["controller_type"]}\n\n'
-        'Start moving only after you see BOTH the bright green target and the cursor.\n'
-        'If you leave too early, you will see a red circle helping you to return back.\n'
-        'Remember: you have to keep your hand steady at the end to complete the reach.\n'
+
+        instr_calib = False
+        instr_cursor_size = False
+
+        #French ver by Maelys
+        #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
+        self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant le {self.params['controller_type']}\n\n"
+        "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
+        "Si vous partez trop tôt, vous verrez un cercle rouge apparaître qui vous aidera à revenir en arrière.\n"
+        "N'oubliez pas : vous devez garder votre main stable à la fin pour terminer le mouvement.\n"
         f'{retpos_str}\n'
-        'After you finish you will receive Eur reward\n proportional to your performance :)')
-        self.instuctions_str += '\n\npress "c" to calibrate joystick'
-        self.instuctions_str += '\npress "q","w" to control cursor size'
-        self.instuctions_str += '\npress "ESCAPE" to exit'
+        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
+        if instr_calib:
+            self.instuctions_str += '\n\nAppuyez sur "c" pour calibrer le joystick'
+        if instr_cursor_size:
+            self.instuctions_str += '\nAppuyez sur "q", "w" pour contrôler la taille du curseur'
+        self.instuctions_str += '\nAppuyez sur "echape" pour quitter'
 
         if self.params['controller_type'] == 'mouse':
-            self.instuctions_str += '\n\nClicking mouse button returns you to center (only to be used in emergency)'
+            self.instuctions_str += "\n\nCliquer sur le bouton de la souris vous ramène au centre (à n'utiliser qu'en cas d'urgence)"
 
-        self.instuctions_str += f'\n\nNow press any {self.params["controller_type"]} button start the task.\n\n'
+        self.instuctions_str += f"\n\nMaintenant, appuyez sur n'importe quel boutton de {self.params['controller_type']} pour commencer la tâche.\n\n"
+
+
+        # English ver
+        ##self.instuctions_str = 'We will start soon. Please wait for instructions'
+        #self.instuctions_str = (f'You will see targets that you have to reach using {self.params["controller_type"]}\n\n'
+        #'Start moving only after you see BOTH the bright green target and the cursor.\n'
+        #'If you leave too early, you will see a red circle helping you to return back.\n'
+        #'Remember: you have to keep your hand steady at the end to complete the reach.\n'
+        #f'{retpos_str}\n'
+        #'After you finish you will receive Eur reward\n proportional to your performance :)')
+        #self.instuctions_str += '\n\npress "c" to calibrate joystick'
+        #self.instuctions_str += '\npress "q","w" to control cursor size'
+        #self.instuctions_str += '\npress "ESCAPE" to exit'
+
+        #if self.params['controller_type'] == 'mouse':
+        #    self.instuctions_str += '\n\nClicking mouse button returns you to center (only to be used in emergency)'
+
+        #self.instuctions_str += f'\n\nNow press any {self.params["controller_type"]} button start the task.\n\n'
 
         self.break_start_str = 'BREAK'
         # color to which target changes when it is touched by the feedback
