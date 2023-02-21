@@ -399,7 +399,8 @@ class VisuoMotor:
         self.myfont_popup = pygame.font.SysFont(self.font_face, self.foruser_center_font_size)
 
         if self.params['controller_type'] == 'joystick':
-            retpos_str = "\nAprès la fin (l'arrêt complét) de chaque movement et disparition du curseur,\n ramenez le joystick vers la position centrale.\n"
+            retpos_str = ("\nAprès la fin (l'arrêt complét) de chaque movement et disparition du curseur,\n ramenez le joystick vers la position centrale.\n"
+            "Normalement ça se fait automatiquement, juste laissez le joystick revenir verticale par soi même\n")
         else:
             retpos_str = ''
 
@@ -1310,12 +1311,13 @@ class VisuoMotor:
                 if self.params['motor_prep_show_target']:
                     self.drawTgt()
                 self.drawHome()
-                if self.params['motor_prep_show_cursor'] == 'orig':
+                mpsc = self.params['motor_prep_show_cursor']
+                if mpsc == 'orig':
                     self.drawCursorOrig()
-                elif self.params['motor_prep_show_cursor'] == 'feedback':
+                elif mpsc == 'feedback':
                     self.drawCursorFeedback()
-                elif self.params['motor_prep_show_cursor'] != 'no':
-                    raise ValueError(f'Wrong param motor_prep_show_cursor == {motor_prep_show_cursor}')
+                elif mpsc != 'no':
+                    raise ValueError(f'Wrong param motor_prep_show_cursor == {mpsc}')
                 #self.drawPopupText('WAIT', 'center')
 
             if self.current_phase == 'RETURN':
@@ -2298,6 +2300,7 @@ class VisuoMotor:
             msElapsed = self.clock.tick_busy_loop(self.params['FPS'])
 
         self.on_cleanup(0)
+
 
 
 if __name__ == "__main__":
