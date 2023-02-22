@@ -11,7 +11,7 @@ import sys
 import numpy as np
 import math
 from os.path import join as pjoin
-from itertools import product,repeat
+from itertools import product  # ,repeat
 # import pylink
 # import EyeLink
 
@@ -409,10 +409,11 @@ class VisuoMotor:
 
         #French ver by Maelys
         #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
-        self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant le {self.params['controller_type']}\n\n"
+        self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant le {self.params['controller_type']},\n"
+                    "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse\n\n"
         "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
-        "Si vous partez trop tôt, vous verrez un cercle rouge apparaître qui vous aidera à revenir en arrière.\n"
-        "N'oubliez pas : vous devez garder votre main stable à la fin pour terminer le mouvement.\n"
+        "Si vous partez trop tôt, vous verrez un cercle jaune apparaître qui vous aidera à revenir en arrière.\n"
+        #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
         "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
         if instr_calib:
@@ -469,7 +470,7 @@ class VisuoMotor:
 
         if self.params['rest_return_home_indication'] == 'return_circle':
             #self.color_return_circle = [240, 60, 60]  # reddish
-            self.color_return_circle = [130, 90, 90]  # reddish
+            self.color_return_circle = [130, 130, 90]  # reddish
         else:
             self.color_return_circle = [240, 215, 40]  # greenish
 
@@ -627,6 +628,8 @@ class VisuoMotor:
             self.trial_infos += [d]
 
 
+
+
         # debug scale-
         #d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
         #        'trial_type': 'perturbation',
@@ -696,6 +699,17 @@ class VisuoMotor:
         n_pauses = (num_context_repeats *  2/8)
         expected_max_reward = len( self.trial_infos ) * 0.6
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
+
+
+
+        # DEBUG TEST EC
+        #dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+        #        'trial_type': 'error_clamp',
+        #        'special_block_type': 'error_clamp_sandwich' }
+        #self.trial_infos = self.trial_infos[:4] + [dspec] +\
+        #    self.trial_infos[4:]
+
+
 
 
 
@@ -1413,6 +1427,7 @@ class VisuoMotor:
                 #max_ax2 = ax2
 
 
+        # debug print
         if self.debug:
             trial_info = self.trial_infos[self.trial_index]
             if self.current_phase is None:
@@ -1575,7 +1590,7 @@ class VisuoMotor:
             lvf = np.linalg.norm(vec_feedback)
             lvi = np.linalg.norm(vec_ideal)
             vec = (float(lvf) / float(lvi)) * vec_ideal
-            vec = vec.astype(np.int) + np.array(self.home_position)
+            vec = vec.astype(int) + np.array(self.home_position)
             #print('EC ',coordinates, vec)
             return tuple(vec)
         else:
@@ -2324,8 +2339,10 @@ if __name__ == "__main__":
 
     seed = 8
     start_fullscreen = 0
-    #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed)
-    app = VisuoMotor(info, use_true_triggers=0, debug=0, seed=seed, start_fullscreen=start_fullscreen)
+    #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
+    #                 start_fullscreen = 0)
+    app = VisuoMotor(info, use_true_triggers=0, debug=0,
+                     seed=seed, start_fullscreen=start_fullscreen)
     app.on_execute()
 
     # it starts a loop in which it check for events using pygame.event.get()
