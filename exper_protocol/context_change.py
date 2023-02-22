@@ -12,6 +12,7 @@ import numpy as np
 import math
 from os.path import join as pjoin
 from itertools import product  # ,repeat
+import argparse
 # import pylink
 # import EyeLink
 
@@ -86,27 +87,52 @@ class VisuoMotor:
         self.trigger_logfile = open(self.filename + '_trigger.log', 'w')
 
 
-        self.add_param('controller_type', 'joystick')
-        #self.add_param('controller_type', 'mouse')
+        ij = info.get('joystick',None)
+        if ij is None:
+            self.add_param('controller_type', 'joystick')
+            #self.add_param('controller_type', 'mouse')
+        else:
+            if ij:
+                self.add_param('controller_type', 'joystick')
+            else:
+                self.add_param('controller_type', 'mouse')
 
         self.add_param('joystick_angle2cursor_control_type', 'angle_scaling')
         #self.add_param('joystick_angle2cursor_control_type', 'velocity')
 
-        self.add_param_comment('# Width of screen')      # updates self.param dictionary
         #self.add_param('width', 800)
         #self.add_param('width', 1000)
-        self.add_param('width', 1920)
-        self.add_param_comment('# Height of screen')
-        #self.add_param('height', 800)
-        self.add_param('height', 1080)
+
+        ssz = info['screen_size']
+        if ssz == 'fixed':
+            self.add_param_comment('# Width of screen')      # updates self.param dictionary
+            self.add_param('width', 1920)
+            self.add_param_comment('# Height of screen')
+            #self.add_param('height', 800)
+            self.add_param('height', 1080)
+
+            # for controller coords computation
+            # I want same accuracy in X and Y dir
+            self.add_param('width_for_cccomp',  1080)
+            self.add_param('height_for_cccomp', 1080)
+        elif ssz == 'auto':
+            raise ValueError('not implemented')
+        elif ssz.find('x') >= 0:
+            xi = ssz.find('x')
+            w = int(ssz[:xi])
+            h = int(ssz[xi+1:])
+            self.add_param_comment('# Width of screen')      # updates self.param dictionary
+            self.add_param('width', w)
+            self.add_param_comment('# Height of screen')
+            #self.add_param('height', 800)
+            self.add_param('height', h)
+
+            # for controller coords computation
+            # I want same accuracy in X and Y dir
+            self.add_param('width_for_cccomp',  w)
+            self.add_param('height_for_cccomp', h)
+
         self.add_param_comment('# DESIRED Frames per second for plotting')
-
-
-        # for controller coords computation
-        # I want same accuracy in X and Y dir
-        self.add_param('width_for_cccomp',  1080)
-        self.add_param('height_for_cccomp', 1080)
-
         # obesrved FPS can be slighlty different
         #self.add_param('FPS', 120)
         self.add_param('FPS', 120)
@@ -299,7 +325,9 @@ class VisuoMotor:
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, seed= 1, start_fullscreen = 0):
-        self.debug = debug # affects fullscreen or not and other things
+        self.debug = (debug != 'no') # affects fullscreen or not and other things
+        self.debug_type = debug
+
         self.start_fullscreen = start_fullscreen
         self.initialize_parameters(info)
         #self.use_true_triggers = self.params['use_true_triggers']
@@ -988,7 +1016,8 @@ class VisuoMotor:
             for line in lines[::-1]:
                 text_render = font.render(line, True, self.color_text)
                 ldt = font.size(line)
-                self._display_surf.blit(text_render, (5, self.params['height']-ldt[1] - voffset))
+                self._display_surf.blit(text_render,
+                    (5, self.params['height'] - ldt[1] - voffset))
                 voffset += ldt[1]
         elif pos_label == 'center':
             voffset = voffset_glob
@@ -996,9 +1025,9 @@ class VisuoMotor:
                 text_render = font.render(line, True, self.color_text)
                 ldt = font.size(line)
 
-                pos = (int(round(((self.params['width'] - ldt[0]) / 2.0)) ),
-                    int(round(((self.params['height'] - ldt[1]) / 2.0)) +\
-                        - voffset ) )
+                y = int(round(((self.params['height'] - ldt[1]) / 2.0)) +\
+                        - voffset )
+                pos = (int(round(((self.params['width'] - ldt[0]) / 2.0)) ), y )
 
                 self._display_surf.blit(text_render, pos)
                 voffset += ldt[1]
@@ -1185,7 +1214,7 @@ class VisuoMotor:
 
 
         if 'money' in reward_type:
-            perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f}  Eur' ]
+            perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f} Eur' ]
             perfinfo += [ f'Récompense pour le dernièr mouvement  =  {monetary_value_last:.2f} Eur' ]
 
         return perfinfo
@@ -1431,7 +1460,7 @@ class VisuoMotor:
 
 
         # debug print
-        if self.debug:
+        if self.debug and self.debug_type == 'render_extra_info':
             trial_info = self.trial_infos[self.trial_index]
             if self.current_phase is None:
                 phase_str = 'None'
@@ -2322,15 +2351,31 @@ class VisuoMotor:
 
 
 if __name__ == "__main__":
-
     #app = VisuoMotor()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--debug', default='no' )
+    parser.add_argument('--fullscreen', default=0, type=int )
+    parser.add_argument('--joystick',   default=1, type=int )
+    parser.add_argument('--participant', default='debug' )
+    parser.add_argument('--session', default='debugsession' )
+    parser.add_argument('--show_dialog', default=1, type=int )
+    # can be  <int width>x<int hegiht>
+    parser.add_argument('--screen_size', default='fixed', type=str )
+    args = parser.parse_args()
+    par = vars(args)
+
+    assert par['debug'] in ['no', 'render_extra_info', 'render_final']
+    assert ( par['screen_size'] in ['fixed', 'auto']) | ( par['screen_size'].find('x') > 0 )
+
 
     info = {}
 
-    info['participant'] = ''
-    info['session'] = ''
+    info['participant'] = par['participant']
+    info['session']     = par['session']
+    info['joystick'] = par['joystick']
+    info['screen_size'] = par['screen_size']
 
-    show_dialog = 1
+    show_dialog = par['show_dialog']
     if show_dialog:
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
@@ -2344,8 +2389,8 @@ if __name__ == "__main__":
     start_fullscreen = 0
     #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
     #                 start_fullscreen = 0)
-    app = VisuoMotor(info, use_true_triggers=0, debug=0,
-                     seed=seed, start_fullscreen=start_fullscreen)
+    app = VisuoMotor(info, use_true_triggers=0, debug=par['debug'],
+                     seed=seed, start_fullscreen=par['fullscreen'])
     app.on_execute()
 
     # it starts a loop in which it check for events using pygame.event.get()

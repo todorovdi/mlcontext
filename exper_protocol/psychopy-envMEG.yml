@@ -5,6 +5,7 @@ dependencies:
 - python=3.8.15
 - psychopy=2022.1.4
 - pip
+- argparse
 - pip:
   - psychtoolbox
   - pygame

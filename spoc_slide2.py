@@ -33,7 +33,7 @@ from joblib import Parallel, delayed
 from error_sensitivity import getAnalysisData
 import argparse
 
-parser = argparse.ArgumentParser()
+#parser = argparse.ArgumentParser()
 
 #parser.add_argument('-a','--address', help='URL to be indexed', required=True)
 #parser.add_argument("-j","--jsonauth",
