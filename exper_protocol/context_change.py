@@ -1176,14 +1176,17 @@ class VisuoMotor:
         #                       font_size = 30)
 
         perfinfo = []
-        perfinfo += [ f'Trial N={self.trial_index}/{len(self.trial_infos)}'  ]
+        #perfinfo += [ f'Trial N={self.trial_index}/{len(self.trial_infos)}'  ]
+        perfinfo += [ f'Mouvement numéro {self.trial_index}/{len(self.trial_infos)}'  ]
         if 'hit' in reward_type:
-            perfinfo += [ f'Nhits        = {self.counter_hit_trials}' ]
-            perfinfo += [ f'Reward total = {self.reward_accrued:.2f}' ]
-            perfinfo += [ f'Last reward  = {self.reward:.2f}' ]
+            perfinfo += [ f'# hits                                = {self.counter_hit_trials}' ]
+            perfinfo += [ f'Récompense totale                     = {self.reward_accrued:.2f}' ]
+            perfinfo += [ f'Récompense pour le dernièr mouvement  = {self.reward:.2f}' ]
+
+
         if 'money' in reward_type:
-            perfinfo += [ f'Reward total = {monetary_value_tot:.2f} Eur' ]
-            perfinfo += [ f'Last reward  = {monetary_value_last:.2f} Eur' ]
+            perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f}  Eur' ]
+            perfinfo += [ f'Récompense pour le dernièr mouvement  =  {monetary_value_last:.2f} Eur' ]
 
         return perfinfo
 
@@ -1193,13 +1196,13 @@ class VisuoMotor:
         '''
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
-            endstrs = [ 'Task finished, well done!' ]
+            endstrs = [ 'La tache est finie, vous etês super!' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
-            endstrs += [f'the window will close in {delay:.0f} seconds']
+            endstrs += [f'la fenêtre va se fermer dans {delay:.0f} seconds']
             #self.drawPopupText(pause_str)
             perfstrs = self.drawPerfInfo(reward_type = ['money'] )
             if self.ctr_endmessage_show == self.ctr_endmessage_show_def:
-                print('Participant results ',perfstrs)
+                print('Vos résultats ',perfstrs)
                 #subdir = 'data'
                 #fnf = pjoin(subdir,
                 #    f'final_perf_subj={self.subject_id}_sess={self.session_id}.txt')
