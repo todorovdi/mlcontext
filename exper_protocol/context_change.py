@@ -148,7 +148,8 @@ class VisuoMotor:
                 self.params['radius_home'])
 
         self.add_param_comment('# Radius of the target')
-        self.add_param('radius_target', 19)
+        #self.add_param('radius_target', 19)
+        self.add_param('radius_target', 25)
         # distance from the start location to the target center
         self.add_param_comment('# Radius of the invisible boundary')
         self.add_param('dist_tgt_from_home',
@@ -2372,8 +2373,6 @@ if __name__ == "__main__":
 
     info['participant'] = par['participant']
     info['session']     = par['session']
-    info['joystick'] = par['joystick']
-    info['screen_size'] = par['screen_size']
 
     show_dialog = par['show_dialog']
     if show_dialog:
@@ -2383,6 +2382,9 @@ if __name__ == "__main__":
     else:
         info['participant'] = 'Dmitrii'
         info['session'] = 'session1'
+
+    info['joystick'] = par['joystick']
+    info['screen_size'] = par['screen_size']
 
 
     seed = 8
