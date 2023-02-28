@@ -14,7 +14,10 @@ trial_group_cols_all = ['trialwb',
  'trialwtgt_we',
  'trialwtgt_wb',
  'trialwtgt_wpert_wb',
- 'trialwtgt_wpert_we']
+ 'trialwtgt_wpert_we',
+ 'trialwpertstage_wb',
+ 'trialwtgt_wpertstage_wb',
+ 'trialwtgt_wpertstage_we' ]
 
 def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
     fname = op.join(path_data, subj, 'behavdata',
@@ -101,7 +104,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
         #########################   index within block (second block same numbers)
 
-        if skip_existing and ('block_name' not in df_all.columns):
+        if not (skip_existing and ('block_name' not in df_all.columns) ):
             def f(row):
                 env = envcode2env[ row['environment']]
                 triali = row['trials']
@@ -118,8 +121,14 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                     raise ValueError(f'wrong combin {env}, {triali}')
                 return block_name
             df_all['block_name'] = df_all.apply(f,1)
-    else:
-        block_names = list(sorted( df_all['block_name'].unique() ))
+
+
+    from collections import OrderedDict
+    dfc = df_all[df_all['subject'] == subj]
+    block_names = list(OrderedDict.fromkeys(dfc['block_name'] ))
+
+    #block_names = list(sorted( df_all['block_name'].unique() ))
+
 
     #df_all['trialwb'] = None  # within respective block
     #df_all['trialwe'] = None  # within respective env (inc both blocks)
@@ -178,6 +187,8 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                 add = end_first_rel
             #return row['trials'] - start_cur + add
             r = row['trials'] - start_cur + add
+            if r < 0:
+                raise ValueError('r < 0 ')
         #     if bn == 'random2':
         #         import pdb; pdb.set_trace()
             return r
@@ -225,6 +236,28 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             start = bn2trial_st[bn][int(ps)]
             return row['trials'] - start
 
+        df_all['trialwpertstage_wb'] = df_all.apply(f,1)
+
+        #############################################
+
+        def f(row):
+            bn = row['block_name']
+            ps = row['pert_stage_wb']
+            if bn not in bn2trial_st:
+                return None
+            ps = int(ps)
+            start = bn2trial_st[bn][ps]
+            #2,4
+            r =  row['trials'] - start
+
+            bnrebase = bn[:-1] + '1'
+            if ps == 2:
+                r += bn2trial_st[bnrebase][0]
+            elif ps == 4:
+                r += bn2trial_st[bnrebase][0] + bn2trial_st[bnrebase][2]
+
+            return r
+
         df_all['trialwpert_wb'] = df_all.apply(f,1)
 
         ######################## index within pert within env
@@ -263,6 +296,8 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
     if dset == 'Romain_Exp2_Cohen':
         df_all['trialwtgt_wpert_wb'] = -1
+        df_all['trialwtgt_wpertstage_wb'] = -1
+        df_all['trialwtgt_wpertstage_we'] = -1
         df_all['trialwtgt_wpert_we'] = -1
         df_all['trialwtgt_we'] = -1
         df_all['trialwtgt_wb'] = -1
@@ -291,6 +326,18 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                         trials = df_all.loc[mask_env, 'trials']
                         df_all.loc[mask_env, 'trialwtgt_wpert_we'] = np.arange(len(trials) )
 
+            for pert_stage in range(5):
+                for bn in block_names:
+                    mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
+                            ( df_all['block_name'] == bn )
+                    trials = df_all.loc[mask_ps, 'trials']
+                    df_all.loc[mask_ps, 'trialwtgt_wpertstage_wb'] = np.arange( len(trials) )
+                for envc in envcode2env:
+                    mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
+                            (df_all['environment'] == envc)
+                    trials = df_all.loc[mask_ps, 'trials']
+                    df_all.loc[mask_ps, 'trialwtgt_wpertstage_we'] = np.arange( len(trials) )
+
 
 
             if dset == 'Romain_Exp2_Cohen':
@@ -308,8 +355,8 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     tmax = df_all['trials'].max()
     for tcn in trial_group_cols_all:
         if dset == 'Romain_Exp2_Cohen':
-            assert df_all[tcn].max() <= tmax
-            assert df_all[tcn].max() >= 0
+            assert df_all[tcn].max() <= tmax, tcn
+            assert df_all[tcn].max() >= 0,    tcn
         else:
             if tcn not in df_all:
                 continue
@@ -447,6 +494,7 @@ def getSubDf(df, subj, pertv, tgti, env, block_name=None, pert_seq_code=None,
             print('after block_name len = ',len(df ))
 
     if dist_rad_from_prevtgt is not None:
+        assert type(df['dist_rad_from_prevtgt']._values[0]) == type(dist_rad_from_prevtgt)
         df = df[df['dist_rad_from_prevtgt'] == dist_rad_from_prevtgt]
     if verbose:
         if len(df) == 0 and verbose:
@@ -467,48 +515,132 @@ def getSubDf(df, subj, pertv, tgti, env, block_name=None, pert_seq_code=None,
     return df
 
 #df = getSubDf(df_all, subj, pertv,tgti,env)
-def calcQuantilesPerSubj(df_all, coln, q = 0.05 ):
-    subj2qts = {}
-    subjects     = df_all['subject'].unique()
-    for subj in subjects:
-        mask_subj = df_all['subject'] == subj
-        dat = df_all.loc[mask_subj,coln]
-        dat = dat[~np.isinf(dat)]
-        qts = np.nanquantile(dat,[q,1-q])
-        subj2qts[subj] = qts
-    return subj2qts
+def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc' ):
+    #dfs = []
+    res = {}
+    for gk,ginds in grp.groups:
+        df = df_all.loc[ginds]
+        assert len(df) <= ntrials_per_subject, len(df)
+        if infnan_handle in ['skip_calc', 'discard']:
+            # mask of good
+            mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+            df_calc = df[mask]
+        else:
+            mask = np.ones(len(df), dtype=bool)
+            df_calc = df
 
-def truncateDf(df, coln, q=0.05, verbose=0, clean_infnan=False, inplace=False,
-               return_mask = False):
+        q_low = df_calc[coln].quantile(q)
+        q_hi  = df_calc[coln].quantile(1-q)
+        res[gk] = q_low, q_hi
+    return res
+
+   #     mask_comp = (df[coln] < q_hi) & (df[coln] > q_low)
+   #     # we don't want save comparisons with inf
+   #     df_flt = df[mask & mask_comp]
+   #     dfs += [df_flt]
+
+   # if infnan_handle == 'discard':
+   #     res = pd.concat(dfs, ignore_index=True)
+
+    ## per err sens calc instance, within subject
+    #subj2qts = {}
+    #subjects     = df_all['subject'].unique()
+    #for subj in subjects:
+    #    mask_subj = df_all['subject'] == subj
+    #    dat = df_all.loc[mask_subj,coln]
+    #    dat = dat[~np.isinf(dat)]
+    #    qts = np.nanquantile(dat,[q,1-q])
+    #    subj2qts[subj] = qts
+    #return subj2qts
+
+
+def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=False,
+               return_mask = False, trialcol = 'trials',
+               cols_uniqify = ['trial_shift_size',
+                  'trial_group_col_calc'] ):
     if not inplace:
         df = df.copy()
 
-    mask = np.ones(len(df), dtype=bool)
-    if clean_infnan:
-        # mask of good
-        mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
-        df =  df[ mask ]
-        mask = np.array(mask)
+    ntrials_per_subject = df[trialcol].nunique()
+
+    grp0 = df.groupby([trialcol] + cols_uniqify)
+    mx=  max(grp0.size() )
+    assert mx <= df['subject'].nunique()
+
+    #mask = np.ones(len(df), dtype=bool)
+
+    # good
+    mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+
+    #print('fff')
+    #if clean_infnan:
+    #    # mask of good
+    #    mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+    #    df =  df[ mask ]
+    #    mask = np.array(mask)
 
     if (q is not None) and (q > 1e-10):
-        subj2qts = calcQuantilesPerSubj(df, coln, q=q)
-        #df = df.copy()
-        for subj,qts in subj2qts.items():
-            mask_cur = (df['subject'] == subj) & \
-                ( ( df[coln] < qts[0]) | (df[coln] > qts[1]) )
-            df.loc[mask_cur,coln] = np.nan
-            if verbose:
-                print(f'Setting {sum(mask_cur)} / {len(mask_cur)} points to NaN')
-        assert np.any( ~(np.isnan(df[coln]) | np.isinf(df[coln]))  )
+        #gk2qts = calcQuantilesPerESCI(df, coln, q=q)
+        df.loc[~mask, coln] = np.nan
+        grp = df.groupby(['subject'] + cols_uniqify)
 
-    if clean_infnan:
-        mask2 = ~ ( df[coln].isna() | np.isinf( df[coln] ) )
-        df =  df[ mask2]
-        mask2 = np.array(mask2)
-        indsgood = np.where(mask)[0]
-        mask[ indsgood[~mask2] ] = False
-        #mask[ indsgood[mask2] ] = True
-        #mask[~mask2] = False
+        assert np.max(grp.size() ) <= ntrials_per_subject
+
+        low = grp[coln].quantile(q=q)
+        hi  = grp[coln].quantile(q=1-q)
+        assert not hi.reset_index()[coln].isna().any(), hi
+
+        dfs = []
+        for gk,ginds in grp.groups.items():
+            dftmp = df.loc[ginds]
+            #print(len(ginds) )
+            # DEBUG
+            # if len(dftmp) > ntrials_per_subject:
+            #    return gk, ginds, dftmp, grp
+            assert len(dftmp) <= ntrials_per_subject,(len(dftmp), ntrials_per_subject)
+
+            lowc = low[gk]
+            hic  = hi[gk]
+
+            mask_good  =  ~ ( dftmp[coln].isna() | np.isinf( dftmp[coln] ) )
+            mask_trunc = (dftmp[coln] < hic)  & (dftmp[coln] > lowc)
+            if infnan_handling in ['keepnan', 'discard']:
+                mask_bad = (~mask_good) | (~mask_trunc)
+            elif infnan_handling == 'do_nothing':
+                mask_bad = (~mask_trunc)
+            dftmp.loc[mask_bad  , coln ] = np.nan
+
+            if np.all( (np.isnan(dftmp[coln]) | np.isinf(dftmp[coln]))  ):
+                display(dftmp[ ['subject','trials'] + cols_uniqify + ['err_sens']] )
+                print(gk,len(ginds), sum(mask_bad), sum(mask_good), sum(mask_trunc) )
+                raise ValueError(gk)
+
+            if infnan_handling == 'discard':
+                dftmp = dftmp[~mask_bad]
+
+            dfs += [dftmp]
+        df = pd.concat(dfs, ignore_index = 1)
+    elif infnan_handling == 'discard':
+        df = df[mask]
+
+        #subj2qts = calcQuantilesPerESCI(df, coln, q=q)
+        ##df = df.copy()
+        #for subj,qts in subj2qts.items():
+        #    mask_cur = (df['subject'] == subj) & \
+        #        ( ( df[coln] < qts[0]) | (df[coln] > qts[1]) )
+        #    df.loc[mask_cur,coln] = np.nan
+        #    if verbose:
+        #        print(f'Setting {sum(mask_cur)} / {len(mask_cur)} points to NaN')
+        # assert np.any( ~(np.isnan(dftmp[coln]) | np.isinf(dftmp[coln]))  ), len(ginds)
+
+    #if clean_infnan:
+    #    mask2 = ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+    #    df =  df[ mask2]
+    #    mask2 = np.array(mask2)
+    #    indsgood = np.where(mask)[0]
+    #    mask[ indsgood[~mask2] ] = False
+    #    #mask[ indsgood[mask2] ] = True
+    #    #mask[~mask2] = False
 
     r = df
     if return_mask:
@@ -577,7 +709,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                dists_rad_from_prevtgt_cur,dists_trial_from_prevtgt_cur)
     p = list(p)
     print('len(prod ) = ',len(p))
-    print(p)
+    print('prod = ',p)
 
     if subj_list is None:
         subj_list = df_all['subject'].unique()
@@ -590,12 +722,11 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
             #print(len(tpl), tpl)
             (env,block_name,pertv,gseqc,tgti,drptgt,dtptgt) = tpl
 
+            #print(tpl)
             tpl = env,block_name,pertv,gseqc,tgti,\
                 drptgt,dtptgt,\
                 None,None
-            print( sprintf_tpl_statcalc(tpl) )
-
-            print(env,block_name,pertv,gseqc,tgti,drptgt,dtptgt)
+            print(f'subj = {subj}, prod tuple contents = ', sprintf_tpl_statcalc(tpl) )
             #df = df_all
             # if we take only non-hit then, since we'll compute err sens sequentially
             # we'll get wrong
@@ -607,6 +738,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
             #df_inds += [db_inds]
 
             tgn = getTrialGroupName(pertv, tgti, env, block_name)
+            print(f'  selected {len(df)} inds out of {len(df_all) }; tgn = {tgn}')
             #coln = getColn(pertv, tgti, env, block_name, None) #, trial_group_col)
             #print('  ',tgn, coln,len(df))
             if (len(df) == 0) or (len(db_inds) == 0):
@@ -640,6 +772,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 # (or does not assigne at all)
                 es_vals = np.array( df_esv[escoln] )
                 assert np.any(~np.isnan(es_vals)), tgn  # at least one is not None
+                assert np.any(~np.isinf(es_vals)), tgn  # at least one is not None
 
                 #colns_set += [coln]
 

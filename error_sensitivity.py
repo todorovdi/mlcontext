@@ -223,7 +223,8 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
                     correct_hit = 'inf', error_type = 'MPE',
                     colname_nh = 'non_hit_not_adj', shiftsz=1,
                     err_sens_coln = 'err_sens',
-                    addvars = [], recalc_non_hit = True, target_info_type = 'inds'):
+                    addvars = [], recalc_non_hit = True, target_info_type = 'inds',
+                    verbose = 0):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -285,13 +286,15 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
     # it is a _mask_ of non_hit, not indices
     # mask is on df_inds only, not on entire behav_df
     if recalc_non_hit or ('non_hit_not_adj' not in behav_df.columns):
-        print('Creating new  "non_hit_not_adj"')
+        if verbose:
+            print('Creating new  "non_hit_not_adj"')
         non_hit_not_adj = point_in_circle(target_inds, target_coords,
                                             feedbackX_cur, feedbackY_cur,
                                             radius_target + radius_cursor)
         non_hit_not_adj = np.array(non_hit_not_adj)
     else:
-        print('Using existing "non_hit_not_adj"')
+        if verbose:
+            print('Using existing "non_hit_not_adj"')
         non_hit_not_adj = behav_df['non_hit_not_adj'].to_numpy()
 
     # not that non-hit has different effect on error sens calc depending on
@@ -381,6 +384,8 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 
     #import pdb; pdb.set_trace()
 
+
+    nh = np.sum( ~df_esv[colname_nh] )
     if correct_hit == 'prev_valid':
         df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.inf
         hit_inds = np.where(~df_esv[colname_nh] )[0]
@@ -392,11 +397,19 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
                 df_esv.loc[ hiti, err_sens_coln ] = df_esv.loc[ lastgood, err_sens_coln ]
         #df_esv.loc[~df_esv[colname_nh],err_sens_coln]  =
     elif correct_hit == 'zero':
+        if verbose:
+            print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
         df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = 0
     elif correct_hit == 'inf':
+        if verbose:
+            print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
         df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.inf
     elif correct_hit == 'nan':
+        if verbose:
+            print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
         df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.nan
+
+
     df_esv['correction'] = correction
     df_esv['error_type'] = error_type
 
