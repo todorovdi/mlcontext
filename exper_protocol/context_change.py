@@ -772,8 +772,9 @@ class VisuoMotor:
 
         # DEBUG TEST EC
         test_trial_ind = info.get('test_trial_ind',3)
-        assert test_trial_ind > self.params['num_initial_veridical']
-        if info['test_err_clamp']:
+        if test_trial_ind >= 0:
+            assert test_trial_ind > self.params['num_initial_veridical']
+        if info['test_err_clamp'] and test_trial_ind >= 0:
             dspec = {'vis_feedback_type':'veridical', 'tgti':0,
                     'trial_type': 'error_clamp',
                     'special_block_type': 'error_clamp_sandwich' }
@@ -781,13 +782,13 @@ class VisuoMotor:
                 self.trial_infos[test_trial_ind:]
 
         # DEBUG TEST PAUSE
-        if info['test_pause']:
+        if info['test_pause'] and test_trial_ind >= 0:
             dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                          'trial_type': 'pause', 'special_block_type': None }
             self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
                 self.trial_infos[test_trial_ind:]
 
-        if info['test_end_task']:
+        if info['test_end_task'] and test_trial_ind >= 0:
             self.trial_infos = self.trial_infos[:test_trial_ind]
 
 
@@ -2444,7 +2445,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_pause',    default=0,  type=int)
     parser.add_argument('--test_end_task',    default=0,  type=int)
     parser.add_argument('--num_initial_veridical',       type=int)
-    parser.add_argument('--test_trial_ind', default =3,   type=int)
+    parser.add_argument('--test_trial_ind', default =-1,   type=int)
 
 
     args = parser.parse_args()
