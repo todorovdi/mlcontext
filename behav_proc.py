@@ -326,17 +326,18 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                         trials = df_all.loc[mask_env, 'trials']
                         df_all.loc[mask_env, 'trialwtgt_wpert_we'] = np.arange(len(trials) )
 
-            for pert_stage in range(5):
-                for bn in block_names:
-                    mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
-                            ( df_all['block_name'] == bn )
-                    trials = df_all.loc[mask_ps, 'trials']
-                    df_all.loc[mask_ps, 'trialwtgt_wpertstage_wb'] = np.arange( len(trials) )
-                for envc in envcode2env:
-                    mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
-                            (df_all['environment'] == envc)
-                    trials = df_all.loc[mask_ps, 'trials']
-                    df_all.loc[mask_ps, 'trialwtgt_wpertstage_we'] = np.arange( len(trials) )
+            if dset == 'Romain_Exp2_Cohen':
+                for pert_stage in range(5):
+                    for bn in block_names:
+                        mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
+                                ( df_all['block_name'] == bn )
+                        trials = df_all.loc[mask_ps, 'trials']
+                        df_all.loc[mask_ps, 'trialwtgt_wpertstage_wb'] = np.arange( len(trials) )
+                    for envc in envcode2env:
+                        mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
+                                (df_all['environment'] == envc)
+                        trials = df_all.loc[mask_ps, 'trials']
+                        df_all.loc[mask_ps, 'trialwtgt_wpertstage_we'] = np.arange( len(trials) )
 
 
 

@@ -105,6 +105,9 @@ class VisuoMotor:
 
         ssz = info['screen_size']
         if ssz == 'fixed':
+            #w = 1920
+            #h = 1080
+
             self.add_param_comment('# Width of screen')      # updates self.param dictionary
             self.add_param('width', 1920)
             self.add_param_comment('# Height of screen')
@@ -147,24 +150,19 @@ class VisuoMotor:
         self.add_param('radius_return', self.params['radius_cursor'] + \
                 self.params['radius_home'])
 
-        self.add_param_comment('# Radius of the target')
-        #self.add_param('radius_target', 19)
-        self.add_param('radius_target', 25)
         # distance from the start location to the target center
         self.add_param_comment('# Radius of the invisible boundary')
         self.add_param('dist_tgt_from_home',
                 int(round(self.params['height']*0.5*0.7)))
 
-        self.add_param('show_text', 0)
         self.add_param_comment('# Use eye tracker?')
         self.add_param('use_eye_tracker', 1)
         #self.add_param_comment('# Use triggers?')
         #self.add_param('use_true_triggers', 1)
 
-        self.add_param('motor_prep_show_target',1)
-        #self.add_param('motor_prep_show_cursor','no')
-        self.add_param('motor_prep_show_cursor','orig')
-        self.add_param('motor_prep_change_target_color',1)
+        self.add_param_comment('# Radius of the target')
+        #self.add_param('radius_target', 19)
+        self.add_param('radius_target', 30)
 
 
         # to minimize change of screen content
@@ -207,8 +205,7 @@ class VisuoMotor:
         self.add_param('ITI_duration', 2)
         self.add_param_comment('# Max jitter during ITI (seconds)')
         self.add_param('ITI_jitter', 0.1)
-        self.add_param_comment('# Show text?')
-        self.add_param('explosion_duration', 0.7)
+        #self.add_param_comment('# Show text?')
 
         self.add_param('pause_duration', 60)
         if self.debug:
@@ -232,20 +229,6 @@ class VisuoMotor:
         else:
             self.add_param('return_duration', 10)
 
-        ######################  Categorical params
-        # whether feedback is shown always on circle with fixed radius or
-        # normally
-        self.add_param('feedback_fixed_distance', 0)
-        self.add_param('send_startstop_MEG_triggers', 0)
-
-        self.add_param('rest_return_home_indication', 'return_circle') # ot 'text'
-
-        self.params['diode_width']  = 50 # maybe 100?
-        self.params['diode_height'] = 50
-
-        w = 1920
-        h = 1080
-
         # enables or disable return phase
         #self.add_param('rest_after_return',1)
         self.add_param('rest_after_return',0)
@@ -255,15 +238,52 @@ class VisuoMotor:
         self.add_param('return_home_after_ITI',1)
         self.add_param('hit_when_passing',0)
 
+        ######################  Rendering params
+
+
+        self.add_param('motor_prep_show_target',1)
+        #self.add_param('motor_prep_show_cursor','no')
+        self.add_param('motor_prep_show_cursor','orig')
+        self.add_param('motor_prep_change_target_color',1)
+
+        # whether feedback is shown always on circle with fixed radius or
+        # normally
+        self.add_param('feedback_fixed_distance', 0)
+        self.add_param('send_startstop_MEG_triggers', 0)
+
+        self.add_param('rest_return_home_indication', 'return_circle') # ot 'text'
+
+        self.add_param('diode_width' , 50)  # maybe 100?
+        self.add_param('diode_height', 50)
+
         self.add_param('notify_early_move', 0)
 
         # can be also offline though less tested
         self.add_param('feedback_type', 'online')
 
+        self.add_param('perf_notif_start_delay', 1.500) # in sec
         # 'no' or 'explosion'
-        self.add_param('hit_notif', 'no')
+        #self.add_param('hit_notif', 'no')
+        #self.add_param('hit_notif', 'explosion')
+        self.add_param('hit_notif', 'home_color_change')
         #   'target_explode', 'cursor_explode', 'text', 'no'
-        self.add_param('fail_notif', 'no')
+        #self.add_param('miss_notif', 'no')
+        self.add_param('miss_notif', 'home_color_change')
+
+        if self.params['hit_notif'] == 'home_color_change':
+            assert self.params['ITI_show_home']
+        if self.params['miss_notif'] == 'home_color_change':
+            assert self.params['ITI_show_home']
+
+        #self.add_param('perf_feedback_duration', 0.7) # for explosion
+        self.add_param('perf_feedback_duration', 0.1)
+
+
+        self.add_param_comment('# What info do we print during pause')
+        #self.add_param('pause_text_info', 'countdown_and_reward')
+        self.add_param('pause_text_info', 'reward')
+
+        self.add_param('pause_text_show_duration', 5) # in sec
 
         # how we determine that the reach is finished before the time elapsed
         #self.reach_end_event = 'target_reached'
@@ -316,11 +336,16 @@ class VisuoMotor:
             self.add_param('block_len_min',2)
             self.add_param('block_len_max',5)
 
-        if self.debug:
-            self.add_param('num_initial_veridical',2)
+
+        num_initial_veridical = info.get('num_initial_veridical', None)
+        if num_initial_veridical is None:
+            if self.debug:
+                self.add_param('num_initial_veridical',2)
+            else:
+                #self.add_param('num_initial_veridical',6)
+                self.add_param('num_initial_veridical',20)
         else:
-            #self.add_param('num_initial_veridical',6)
-            self.add_param('num_initial_veridical',20)
+            self.add_param('num_initial_veridical',num_initial_veridical)
 
         self.add_param('randomize_tgt_initial_veridical', 1)
 
@@ -437,11 +462,23 @@ class VisuoMotor:
         instr_cursor_size = False
 
         #French ver by Maelys
+        ctrl = self.params['controller_type']
+        if ctrl == 'joystick':
+            ctrl_str = 'le ' + ctrl
+        else:
+            ctrl_str = 'la souris'
+
+        if ctrl == 'joystick':
+            ctrl_de = 'du ' + ctrl
+        else:
+            ctrl_de = 'de la souris'
         #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
-        self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant le {self.params['controller_type']},\n"
+        self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant {ctrl_str},\n"
                     "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse\n\n"
         "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
         "Si vous partez trop tôt, vous verrez un cercle jaune apparaître qui vous aidera à revenir en arrière.\n"
+        '\nParfois il y auront des pauses de 60 secondes. Restez calme, no faisez rien,\n'
+            f'et surtout gardez {ctrl_str} dans la position neutre. La pause est fini cuand le courseur reapparait\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
         "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
@@ -451,10 +488,10 @@ class VisuoMotor:
             self.instuctions_str += '\nAppuyez sur "q", "w" pour contrôler la taille du curseur'
         self.instuctions_str += '\nAppuyez sur "echape" pour quitter'
 
-        if self.params['controller_type'] == 'mouse':
-            self.instuctions_str += "\n\nCliquer sur le bouton de la souris vous ramène au centre (à n'utiliser qu'en cas d'urgence)"
+        if ctrl == 'mouse':
+            self.instuctions_str += f"\n\nCliquer sur le bouton de {ctrl_str} vous ramène au centre (à n'utiliser qu'en cas d'urgence)"
 
-        self.instuctions_str += f"\n\nMaintenant, appuyez sur n'importe quel boutton de {self.params['controller_type']} pour commencer la tâche.\n\n"
+        self.instuctions_str += f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n\n"
 
 
         # English ver
@@ -479,6 +516,8 @@ class VisuoMotor:
         self.color_bg = [100, 100, 100]
         #self.color_hit = [255, 0, 0]   # red
         self.color_hit = [0 , 255,  0]   # green
+        self.color_home_def = [0, 0, 0]
+        self.color_home = self.color_home_def
         self.color_miss = [255, 0, 0]   # red
         self.color_feedback_def = [255, 255, 255]
         self.color_cursor_orig = [255, 255, 255]
@@ -506,7 +545,7 @@ class VisuoMotor:
 
         # it changes value to 1 only once, when we start the experiment
         self.task_started = 0
-        self.ctr_endmessage_show_def = 1000
+        self.ctr_endmessage_show_def = 2000
         self.ctr_endmessage_show = self.ctr_endmessage_show_def
 
         self.color_photodiode = self.color_diode_off
@@ -732,14 +771,24 @@ class VisuoMotor:
 
 
         # DEBUG TEST EC
-        #dspec = {'vis_feedback_type':'veridical', 'tgti':0,
-        #        'trial_type': 'error_clamp',
-        #        'special_block_type': 'error_clamp_sandwich' }
-        #self.trial_infos = self.trial_infos[:4] + [dspec] +\
-        #    self.trial_infos[4:]
+        test_trial_ind = info.get('test_trial_ind',3)
+        assert test_trial_ind > self.params['num_initial_veridical']
+        if info['test_err_clamp']:
+            dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+                    'trial_type': 'error_clamp',
+                    'special_block_type': 'error_clamp_sandwich' }
+            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                self.trial_infos[test_trial_ind:]
 
+        # DEBUG TEST PAUSE
+        if info['test_pause']:
+            dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'pause', 'special_block_type': None }
+            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                self.trial_infos[test_trial_ind:]
 
-
+        if info['test_end_task']:
+            self.trial_infos = self.trial_infos[:test_trial_ind]
 
 
         # I want list of tuples -- target id, visual feedback type, phase
@@ -780,7 +829,7 @@ class VisuoMotor:
         # print first trial infos
         #if self.debug:
         print(f'In total we have {len(self.trial_infos)} trials ')
-        for tc in range(30):
+        for tc in range( min(30, len(self.trial_infos ) ) ):
             ti = self.trial_infos[tc]
             print(tc, ti['trial_type'], ti['tgti'],
                   ti['vis_feedback_type'], ti['special_block_type'] )
@@ -1119,7 +1168,7 @@ class VisuoMotor:
                            dist, thickness)
 
     def drawHome(self):
-        pygame.draw.circle(self._display_surf, [0, 0, 0],
+        pygame.draw.circle(self._display_surf, self.color_home,
                            self.home_position,
                            int(self.params['radius_home']), 2)
 
@@ -1187,7 +1236,7 @@ class VisuoMotor:
         pygame.draw.lines(self._display_surf, c, False,
                           tpls, thickness )
 
-    def drawPerfInfo(self, reward_type = ['money', 'hit']):
+    def drawPerfInfo(self, reward_type = ['money', 'hit'], inc_mvt_num = True):
         monetary_value_last = self.reward * self.reward2EUR_coef
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
 
@@ -1207,7 +1256,8 @@ class VisuoMotor:
 
         perfinfo = []
         #perfinfo += [ f'Trial N={self.trial_index}/{len(self.trial_infos)}'  ]
-        perfinfo += [ f'Mouvement numéro {self.trial_index}/{len(self.trial_infos)}'  ]
+        if inc_mvt_num:
+            perfinfo += [ f'Mouvement numéro {self.trial_index}/{len(self.trial_infos)}'  ]
         if 'hit' in reward_type:
             perfinfo += [ f'# hits                                = {self.counter_hit_trials}' ]
             perfinfo += [ f'Récompense totale                     = {self.reward_accrued:.2f}' ]
@@ -1230,7 +1280,8 @@ class VisuoMotor:
             delay = self.ctr_endmessage_show / self.params['FPS']
             endstrs += [f'la fenêtre va se fermer dans {delay:.0f} seconds']
             #self.drawPopupText(pause_str)
-            perfstrs = self.drawPerfInfo(reward_type = ['money'] )
+            perfstrs = self.drawPerfInfo(reward_type = ['money'],
+                                         inc_mvt_num = False)
             if self.ctr_endmessage_show == self.ctr_endmessage_show_def:
                 print('Vos résultats ',perfstrs)
                 #subdir = 'data'
@@ -1258,11 +1309,33 @@ class VisuoMotor:
                 txt = self.phase2text[self.current_phase]
                 self.drawTextMultiline(txt.split('\n'), pos_label = 'center', font = self.myfont_popup )
             if self.current_phase == 'ITI':
-                if self.params['ITI_show_home']:
+                if self.params['ITI_show_home'] and not \
+                        (self.params['hit_notif'] == 'home_color_change' or \
+                        self.params['miss_notif'] == 'home_color_change'):
                     self.drawHome()
-                # draw nothing except maybe explosion of tgt
-                if self.reward < (1. - 1e-6):
-                    if self.params['fail_notif'] == 'text':
+
+                tdif = time.time() - \
+                    self.phase_start_times[self.current_phase]
+
+                # we could have gotten good reward also when we hit but don't
+                # stay at target long enough
+                if abs( self.reward - 1.) < 1e-6 and self.last_trial_full_success:
+                    tdif = time.time() - self.phase_start_times[self.current_phase]
+                    if self.params['hit_notif'] == 'explosion':
+                        self.color_target = self.color_hit
+                        self.drawTgt( 1 + 1.2 * \
+                            np.sin((tdif/self.params['perf_feedback_duration']) * np.pi))
+                    elif self.params['hit_notif'] == 'home_color_change':
+                        tdifdif = tdif - self.params['perf_notif_start_delay']
+                        if (tdifdif >= 0) and (tdifdif <= self.params['perf_feedback_duration']):
+                            self.color_home = self.color_hit
+                        else:
+                            self.color_home = self.color_home_def
+                        self.drawHome()
+                    elif self.params['hit_notif'] != 'no':
+                        raise ValueError(f'wrong hit notif {self.params["hit_notif"]}')
+                else:
+                    if self.params['miss_notif'] == 'text':
                         if self.last_reach_not_full_rad:
                             s = 'Reach did not even arrive to target distance in required time'
                             self.drawPopupText(s)
@@ -1273,35 +1346,33 @@ class VisuoMotor:
                             elif self.last_reach_too_slow == 2:
                                 s = 'Have not kept cursor at the target for enough time'
                                 self.drawPopupText(s)
-                    elif self.params['fail_notif'] == 'cursor_explode':
+                    elif self.params['miss_notif'] == 'cursor_explode':
                         self.color_feedback = self.color_miss
-                        tdif = time.time() - \
-                            self.phase_start_times[self.current_phase]
-                        self.drawCursorFeedback( 1 + 1.2 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
-                    elif self.params['fail_notif'] == 'target_explode':
+                        self.drawCursorFeedback( 1 + 1.2 * np.sin( (tdif/self.params['perf_feedback_duration']) * np.pi  ) )
+                    elif self.params['miss_notif'] == 'target_explode':
                         self.color_target = self.color_miss
                         tdif = time.time() - \
                             self.phase_start_times[self.current_phase]
-                        self.drawTgt( 1 + 1 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
+                        self.drawTgt( 1 + 1 * np.sin( (tdif/self.params['perf_feedback_duration']) * np.pi  ) )
                     # if 'no' then just do nothing
-                    elif self.params['fail_notif'] != 'no':
-                        raise ValueError(f'wrong fail notif {self.params["fail_notif"]}')
+                    elif self.params['miss_notif'] == 'home_color_change':
+                        tdifdif = tdif - self.params['perf_notif_start_delay']
+                        if (tdifdif >= 0) and (tdifdif <= self.params['perf_feedback_duration']):
+                            self.color_home = self.color_miss
+                        else:
+                            self.color_home = self.color_home_def
+                        self.drawHome()
+                    elif self.params['miss_notif'] != 'no':
+                        raise ValueError(f'wrong miss notif {self.params["miss_notif"]}')
 
-                # we could have gotten good reward also when we hit but don't
-                # stay at target long enough
-                if abs( self.reward - 1.) < 1e-6 and self.last_trial_full_success:
-                    if self.params['hit_notif'] == 'explosion':
-                        self.color_target = self.color_hit
-                        tdif = time.time() - self.phase_start_times[self.current_phase]
-                        self.drawTgt( 1 + 1.2 * np.sin( (tdif/self.params['explosion_duration']) * np.pi  ) )
-                    elif self.params['hit_notif'] != 'no':
-                        raise ValueError(f'wrong hit notif {self.params["hit_notif"]}')
+
                 #elif self.last_reach_stopped_away:
                 #    s = 'Reach stopped in some strange place'
                 #    self.drawPopupText(s)
 
             if self.current_phase == 'REST':
                 # if not very far from home, draw cursor
+                self.color_home = self.color_home_def
 
                 at_home_ext = self.is_home('unpert_cursor', 'radius_home_strict_inside', 2)
                 at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
@@ -1322,6 +1393,7 @@ class VisuoMotor:
                 self.drawHome()
 
             if self.current_phase == 'PAUSE':
+                self.color_home = self.color_home_def
                 self.drawHome()
 
                 # time left
@@ -1330,13 +1402,22 @@ class VisuoMotor:
                 #R = int(R)
 
                 timedif = time.time() - self.phase_start_times[self.current_phase]
-                R = int(self.params['pause_duration'] - timedif)
-
-                pause_str = f'Pause, time left={R} seconds'
-                #self.drawPopupText(pause_str)
-                perfstrs = self.drawPerfInfo(reward_type = ['money'] )
-                self.drawTextMultiline( [pause_str] + [''] + perfstrs, font = self.myfont_popup,
-                                       pos_label= 'center')
+                rem = self.params['pause_duration'] - timedif
+                R = int(rem)
+                if (R % 5 == 0) and (rem - R) <= 1/self.params['FPS']:
+                    print(f'ongoing pause, {R} sec left')
+                if self.params['pause_text_info'] == 'countdown_and_reward':
+                    pause_str = f'Pause, time left={R} seconds'
+                    #self.drawPopupText(pause_str)
+                    perfstrs = self.drawPerfInfo(reward_type = ['money'] )
+                    self.drawTextMultiline( [pause_str] + [''] + perfstrs, font = self.myfont_popup,
+                                           pos_label= 'center')
+                elif self.params['pause_text_info'] == 'reward':
+                    if timedif <= self.params['pause_text_show_duration']:
+                        pause_str = 'Pause commence'
+                        perfstrs = self.drawPerfInfo(reward_type = ['money'] )
+                        self.drawTextMultiline( [pause_str] + [''] + perfstrs,
+                            font = self.myfont_popup, pos_label= 'center')
 
             if self.params['feedback_type'] == 'offline':
                 if self.current_phase == 'TARGET':
@@ -1389,10 +1470,6 @@ class VisuoMotor:
                 #    size=(window_size[0]*2/5, 200),
                 #    fillColor=[-1, -1, -1],
                 #    lineColor=[-1, -1, -1])
-
-            # maybe show info on participant hitting performance
-            #if (self.params['show_text']):
-            #    self._display_surf.blit(self.currentText, (0, 0))
 
             if (self.current_phase == 'BREAK'):
                 #self.drawTextCenter(self.break_text, self.length_text)
@@ -2137,8 +2214,9 @@ class VisuoMotor:
                     # for the first time (because during ITI it is hidden and
                     # then we show first the wrong one until vars update is ran
                     # for the first time)
-                    trial_info2 = self.trial_infos[self.trial_index]
-                    self.tgti_to_show = trial_info2['tgti']
+                    if self.trial_index < len(self.trial_infos):
+                        trial_info2 = self.trial_infos[self.trial_index]
+                        self.tgti_to_show = trial_info2['tgti']
 
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
@@ -2362,6 +2440,13 @@ if __name__ == "__main__":
     parser.add_argument('--show_dialog', default=1, type=int )
     # can be  <int width>x<int hegiht>
     parser.add_argument('--screen_size', default='fixed', type=str )
+    parser.add_argument('--test_err_clamp', default=0, type=int)
+    parser.add_argument('--test_pause',    default=0,  type=int)
+    parser.add_argument('--test_end_task',    default=0,  type=int)
+    parser.add_argument('--num_initial_veridical',       type=int)
+    parser.add_argument('--test_trial_ind', default =3,   type=int)
+
+
     args = parser.parse_args()
     par = vars(args)
 
@@ -2383,8 +2468,11 @@ if __name__ == "__main__":
         info['participant'] = 'Dmitrii'
         info['session'] = 'session1'
 
-    info['joystick'] = par['joystick']
-    info['screen_size'] = par['screen_size']
+    for p,v in par.items():
+        if p not in ['participant', 'session']:
+            info[p] = v
+    #info['joystick'] = par['joystick']
+    #info['screen_size'] = par['screen_size']
 
 
     seed = 8
