@@ -338,13 +338,16 @@ class VisuoMotor:
         print('targetAngs = ',targetAngs)
         self.add_param('target_angles',tas)
 
-        #self.add_param('block_len_min',5)
-        #self.add_param('block_len_max',9)
-        #self.add_param('n_context_appearences',3)
-
+        # giving 55 min
         self.add_param('block_len_min',6)
         self.add_param('block_len_max',10)
         self.add_param('n_context_appearences',4)
+
+        # alternative giving 55 min as well
+        #self.add_param('block_len_min',10)
+        #self.add_param('block_len_max',15)
+        #self.add_param('n_context_appearences',3)
+
 
         if self.debug:
             self.add_param('block_len_min',2)
@@ -364,7 +367,7 @@ class VisuoMotor:
         self.add_param('randomize_tgt_initial_veridical', 1)
 
     def __init__(self, info, task_id='',
-                 use_true_triggers = 1, debug=False, seed= 1, start_fullscreen = 0):
+                 use_true_triggers = 1, debug=False, seed= None, start_fullscreen = 0):
         self.debug = (debug != 'no') # affects fullscreen or not and other things
         self.debug_type = debug
 
@@ -627,6 +630,8 @@ class VisuoMotor:
             print(f'seed = {self.seed}')
         else:
             self.seed = seed
+
+        self.add_param('seed',seed)
         np.random.seed(self.seed)
 
         was_repet = True
@@ -643,12 +648,15 @@ class VisuoMotor:
                     if vfti1 == vfti2:
                         was_repet = True
                         # break from this and return to outer while
-                        print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2}')
+                        print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
                         break
                 vfti0 = vfti_seq_noperm[ct_inds[0] ]
                 if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
                     print('First was veridical')
                     was_repet = True
+                if not was_repet:
+                    print('no conseq context block repetitions')
+
 
         #print('ct_inds',ct_inds)
         self.vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
@@ -2562,6 +2570,8 @@ if __name__ == "__main__":
 
     show_dialog = par['show_dialog']
     if show_dialog:
+        info['participant'] = ''
+        info['session'] = ''
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
             core.quit()
