@@ -114,6 +114,11 @@ class VisuoMotor:
             #self.add_param('height', 800)
             self.add_param('height', 1080)
 
+            self.add_param('progress_bar_whistespace', 10)
+            self.add_param('progress_bar_width', 400)
+            self.add_param('progress_bar_height', 80)
+            self.add_param('progress_bar_lw', 10)
+
             #import socket
             #hostname = socket.gethostbyname()
             #if hostname == 'demitau-Precision-7920-Tower':
@@ -287,7 +292,8 @@ class VisuoMotor:
 
         self.add_param_comment('# What info do we print during pause')
         #self.add_param('pause_text_info', 'countdown_and_reward')
-        self.add_param('pause_text_info', 'reward')
+        #self.add_param('pause_text_info', 'reward')
+        self.add_param('pause_text_info', 'progress_bar')
 
         self.add_param('pause_text_show_duration', 5) # in sec
 
@@ -1069,7 +1075,8 @@ class VisuoMotor:
                            self.target_coords[self.tgti_to_show],
                            self.params['radius_target'] * radmult, 0)
 
-    def drawTextMultiline(self, lines, pos_label = 'lower_left', font = None, voffset_glob = 0):
+    def drawTextMultiline(self, lines, pos_label = 'lower_left',
+        font = None, voffset_glob = 0):
         if font is None:
             font = self.myfont_debug
         if pos_label == 'lower_left':
@@ -1183,6 +1190,44 @@ class VisuoMotor:
                            self.home_position,
                            int(self.params['radius_home']), 2)
 
+    def drawProgressBar(self, prop = None):
+        if prop is None:
+            prop =  ( (self.trial_index + 1) / len( self.trial_infos))
+
+        space       = self.params['progress_bar_whistespace']
+        rect_width  = self.params['progress_bar_width']
+        rect_height = self.params['progress_bar_height']
+        lw          = self.params['progress_bar_lw']
+        rect_width_outer = rect_width + space * 2 + lw * 2
+        rect_height_outer = rect_height + space * 2 + lw * 2
+        my_coords = [0,0]
+        my_coords[0] =  self.params['width']/2.0 - rect_width / 2.
+        my_coords[1] =  self.params['height']/2.0 - rect_height / 2.
+
+        my_coords_outer = [0,0]
+        my_coords_outer[0] =  self.params['width']/2.0  -  rect_width_outer / 2.
+        my_coords_outer[1] =  self.params['height']/2.0 - rect_height_outer / 2.
+
+        self.color_progress_bar = [80,150,80]
+        pygame.draw.rect(self._display_surf, self.color_progress_bar,
+                        (my_coords[0], my_coords[1],
+                         rect_width * prop, rect_height), 0)
+        pygame.draw.rect(self._display_surf, self.color_progress_bar,
+                        (my_coords_outer[0], my_coords_outer[1],
+                         rect_width_outer, rect_height_outer), lw)
+
+
+        monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
+        perfinfo =  f'Récompense totale = {monetary_value_tot:.2f} Eur'
+
+        pause_str = 'Pause commence! '
+        perfstrs = [ pause_str ] +  [ perfinfo ]
+        self.drawTextMultiline(perfstrs, font = self.myfont_popup,
+                               pos_label = 'center',
+            voffset_glob = self.params['progress_bar_height'] )
+
+        #return pct
+
     def drawCursorFeedback(self, radmult = 1.):
         '''
         radmult is for explosions
@@ -1247,7 +1292,8 @@ class VisuoMotor:
         pygame.draw.lines(self._display_surf, c, False,
                           tpls, thickness )
 
-    def drawPerfInfo(self, reward_type = ['money', 'hit'], inc_mvt_num = True):
+    def getPerfInfoStrings(self, reward_type = ['money', 'hit'], inc_mvt_num = True,
+                     inc_last_reward = False):
         monetary_value_last = self.reward * self.reward2EUR_coef
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
 
@@ -1267,17 +1313,20 @@ class VisuoMotor:
 
         perfinfo = []
         #perfinfo += [ f'Trial N={self.trial_index}/{len(self.trial_infos)}'  ]
+        # TODO: CHECK FRENCH
         if inc_mvt_num:
             perfinfo += [ f'Mouvement numéro {self.trial_index}/{len(self.trial_infos)}'  ]
         if 'hit' in reward_type:
             perfinfo += [ f'# hits                                = {self.counter_hit_trials}' ]
             perfinfo += [ f'Récompense totale                     = {self.reward_accrued:.2f}' ]
-            perfinfo += [ f'Récompense pour le dernièr mouvement  = {self.reward:.2f}' ]
+            if inc_last_reward:
+                perfinfo += [ f'Récompense pour le dernièr mouvement  = {self.reward:.2f}' ]
 
 
         if 'money' in reward_type:
             perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f} Eur' ]
-            perfinfo += [ f'Récompense pour le dernièr mouvement  =  {monetary_value_last:.2f} Eur' ]
+            if inc_last_reward:
+                perfinfo += [ f'Récompense pour le dernièr mouvement  =  {monetary_value_last:.2f} Eur' ]
 
         return perfinfo
 
@@ -1285,13 +1334,14 @@ class VisuoMotor:
         '''
         called from on_execute
         '''
+        # end of the task
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
             endstrs = [ 'La tache est finie, vous etês super!' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
             endstrs += [f'la fenêtre va se fermer dans {delay:.0f} seconds']
             #self.drawPopupText(pause_str)
-            perfstrs = self.drawPerfInfo(reward_type = ['money'],
+            perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
                                          inc_mvt_num = False)
             if self.ctr_endmessage_show == self.ctr_endmessage_show_def:
                 print('Vos résultats ',perfstrs)
@@ -1312,7 +1362,7 @@ class VisuoMotor:
             # Clear screen
             self._display_surf.fill(self.color_bg)
             if self.debug:
-                perfstrs = self.drawPerfInfo()
+                perfstrs = self.getPerfInfoStrings()
                 self.drawTextMultiline( perfstrs, font = self.myfont_popup,
                                        pos_label = 'upper_right')
 
@@ -1420,15 +1470,21 @@ class VisuoMotor:
                 if self.params['pause_text_info'] == 'countdown_and_reward':
                     pause_str = f'Pause, time left={R} seconds'
                     #self.drawPopupText(pause_str)
-                    perfstrs = self.drawPerfInfo(reward_type = ['money'] )
+                    perfstrs = self.getPerfInfoStrings(reward_type = ['money'] )
                     self.drawTextMultiline( [pause_str] + [''] + perfstrs, font = self.myfont_popup,
                                            pos_label= 'center')
                 elif self.params['pause_text_info'] == 'reward':
                     if timedif <= self.params['pause_text_show_duration']:
                         pause_str = 'Pause commence'
-                        perfstrs = self.drawPerfInfo(reward_type = ['money'] )
+                        perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
+                            inc_last_reward = False)
                         self.drawTextMultiline( [pause_str] + [''] + perfstrs,
-                            font = self.myfont_popup, pos_label= 'center')
+                            font = self.myfont_popup, pos_label= 'center',
+                                               voffset_glob = -80)
+
+                elif self.params['pause_text_info'] == 'progress_bar':
+                    if timedif <= self.params['pause_text_show_duration']:
+                        self.drawProgressBar()
 
             if self.params['feedback_type'] == 'offline':
                 if self.current_phase == 'TARGET':
@@ -1543,6 +1599,15 @@ class VisuoMotor:
                 self.drawTextMultiline(instr, font = self.myfont_popup,
                                        pos_label= 'center', voffset_glob = -100 )
 
+                #self.drawProgressBar(0.23)
+
+                #perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
+                #    inc_last_reward = False, inc_mvt_num = 0)
+                #pause_str = 'Pause commence, '
+                #perfstrs = [ pause_str ] +  perfstrs
+                #self.drawTextMultiline(perfstrs, font = self.myfont_popup,
+                #                       pos_label = 'center',
+                #    voffset_glob = self.params['progress_bar_height'] )
                 #ax2 = self.HID_controller.get_axis(1)
                 #max_ax1 = ax1
                 #max_ax2 = ax2
