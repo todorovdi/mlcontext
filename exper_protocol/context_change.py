@@ -34,6 +34,7 @@ def trial_info2trgtpl(ti, phase):
 
 def get_target_angles(num_targets, target_location_pattern):
     if num_targets == 3:
+        assert target_location_pattern == 'fan'
         targetAngs = np.array([-15,0,15])
     elif num_targets == 2:
         targetAngs = np.array([-30,30])
@@ -179,8 +180,9 @@ class VisuoMotor:
         # to minimize change of screen content
         self.add_param('ITI_show_home',1)
 
-        # TODO: discuss with Romain
         self.add_param('max_EUR_reward', 10)
+
+        self.add_param('reward_rounding', 'end')
 
         ####################################################
         #################  durations
@@ -342,7 +344,7 @@ class VisuoMotor:
 
         self.add_param('block_len_min',6)
         self.add_param('block_len_max',10)
-        self.add_param('n_context_appearences',3)
+        self.add_param('n_context_appearences',4)
 
         if self.debug:
             self.add_param('block_len_min',2)
@@ -620,7 +622,9 @@ class VisuoMotor:
 
         # TODO: manage seed here, make it participant or date depenent explicitly
         if seed is None:
-            self.seed = 1
+            #print(time.time() )
+            self.seed = int( (time.time() - 1677000000 ) * 100  )
+            print(f'seed = {self.seed}')
         else:
             self.seed = seed
         np.random.seed(self.seed)
@@ -776,7 +780,7 @@ class VisuoMotor:
                 error_clamp_pair_end, error_clamp_sandwich_end,d)
 
 
-        n_pauses = (num_context_repeats *  2/8)
+        # TODO: estimate
         success_rate_expected = 0.6
         expected_max_reward = len( self.trial_infos ) * success_rate_expected
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
@@ -808,6 +812,9 @@ class VisuoMotor:
                 self.trial_infos = self.trial_infos[:test_trial_ind]
 
 
+        #n_pauses = (num_context_repeats *  2/8)
+        n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
+
         # I want list of tuples -- target id, visual feedback type, phase
         # (needed for trigger)
         self.CONTEXT_TRIGGER_DICT = {}
@@ -834,7 +841,7 @@ class VisuoMotor:
             ti = self.trial_infos[tc]
             s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
                   ti['vis_feedback_type'], ti['special_block_type'] )
-            print(s)
+            #print(s)
             self.paramfile.write( f'# {s}\n' )
         #s = json.dumps( {'trial_infos':list(enumerate(self.trial_infos) ) }
         #               , indent=4)
@@ -843,9 +850,19 @@ class VisuoMotor:
         self.paramfile.close()
 
 
+        duration_params = ['ITI_duration' , 'motor_prep_duration',
+                           'time_feedback', 'time_at_home']
+        durtot = 0.
+        for durpar in duration_params:
+            durtot += self.params[durpar]
+        durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
+                n_pauses * self.params['pause_duration']
+
         # print first trial infos
         #if self.debug:
-        print(f'In total we have {len(self.trial_infos)} trials ')
+        print(f'In total we have {len(self.trial_infos)} trials, of them {n_pauses} pauses ')
+        print(f'Expected trial duration = {durtot} sec, total = {durtot_all} sec (={durtot_all/60:.1f} min)')
+        # 4.1 sec
         for tc in range( min(30, len(self.trial_infos ) ) ):
             ti = self.trial_infos[tc]
             print(tc, ti['trial_type'], ti['tgti'],
@@ -1293,9 +1310,11 @@ class VisuoMotor:
                           tpls, thickness )
 
     def getPerfInfoStrings(self, reward_type = ['money', 'hit'], inc_mvt_num = True,
-                     inc_last_reward = False):
+                     inc_last_reward = False, round = False):
         monetary_value_last = self.reward * self.reward2EUR_coef
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
+        if round:
+            monetary_value_tot = np.ceil( monetary_value_tot / 5 ) * 5
 
         #ldt = self.drawPopupText(
         #    f'Trial N={self.trial_index}/{len(self.trial_infos)}',
@@ -1337,12 +1356,17 @@ class VisuoMotor:
         # end of the task
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
-            endstrs = [ 'La tache est finie, vous etês super!' ]
+            endstrs = [ 'La tache est finie, vous etês super, bravo!' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
             endstrs += [f'la fenêtre va se fermer dans {delay:.0f} seconds']
             #self.drawPopupText(pause_str)
+            rnd = False
+            if self.params['reward_rounding'] == 'end':
+                rnd = True
             perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
-                                         inc_mvt_num = False)
+                                         inc_mvt_num = False,
+                                         inc_last_reward = False,
+                                               round = rnd)
             if self.ctr_endmessage_show == self.ctr_endmessage_show_def:
                 print('Vos résultats ',perfstrs)
                 #subdir = 'data'
@@ -2511,6 +2535,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug', default='no' )
     parser.add_argument('--fullscreen', default=0, type=int )
     parser.add_argument('--joystick',   default=1, type=int )
+    parser.add_argument('--seed',   default=None )
     parser.add_argument('--participant', default='debug' )
     parser.add_argument('--session', default='debugsession' )
     parser.add_argument('--show_dialog', default=1, type=int )
@@ -2551,7 +2576,11 @@ if __name__ == "__main__":
     #info['screen_size'] = par['screen_size']
 
 
-    seed = 8
+    if par['seed'] is not None:
+        seed = par['seed']
+    else:
+        seed = None
+    print(f'seed = {seed}')
     start_fullscreen = 0
     #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
     #                 start_fullscreen = 0)
