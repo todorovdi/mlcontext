@@ -114,6 +114,12 @@ class VisuoMotor:
             #self.add_param('height', 800)
             self.add_param('height', 1080)
 
+            #import socket
+            #hostname = socket.gethostbyname()
+            #if hostname == 'demitau-Precision-7920-Tower':
+            #    self.add_param('width', 3840)
+            #    self.add_param('height', 2160)
+
             # for controller coords computation
             # I want same accuracy in X and Y dir
             self.add_param('width_for_cccomp',  1080)
@@ -162,14 +168,14 @@ class VisuoMotor:
 
         self.add_param_comment('# Radius of the target')
         #self.add_param('radius_target', 19)
-        self.add_param('radius_target', 30)
+        self.add_param('radius_target', 24)
 
 
         # to minimize change of screen content
         self.add_param('ITI_show_home',1)
 
         # TODO: discuss with Romain
-        self.add_param('max_EUR_reward', 20)
+        self.add_param('max_EUR_reward', 10)
 
         ####################################################
         #################  durations
@@ -337,15 +343,15 @@ class VisuoMotor:
             self.add_param('block_len_max',5)
 
 
-        num_initial_veridical = info.get('num_initial_veridical', None)
-        if num_initial_veridical is None:
+        num_training = info.get('num_training', None)
+        if num_training is None:
             if self.debug:
-                self.add_param('num_initial_veridical',2)
+                self.add_param('num_training',2)
             else:
-                #self.add_param('num_initial_veridical',6)
-                self.add_param('num_initial_veridical',20)
+                #self.add_param('num_training',6)
+                self.add_param('num_training',20)
         else:
-            self.add_param('num_initial_veridical',num_initial_veridical)
+            self.add_param('num_training',num_training)
 
         self.add_param('randomize_tgt_initial_veridical', 1)
 
@@ -416,7 +422,7 @@ class VisuoMotor:
         self.init_target_positions()  # does not draw anything, only calc
 
         self.phase2text = { 'TRAINING_START':
-            r"Étape d'entrenement: " f'faites {self.params["num_initial_veridical"]} '
+            r"Étape d'entrenement: " f'faites {self.params["num_training"]} '
             'mouvements,\n la récompense ne sera pas calculée',
             'TRAINING_END':
             'La tache principale commence'}
@@ -477,7 +483,7 @@ class VisuoMotor:
                     "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse\n\n"
         "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
         "Si vous partez trop tôt, vous verrez un cercle jaune apparaître qui vous aidera à revenir en arrière.\n"
-        '\nParfois il y auront des pauses de 60 secondes. Restez calme, no faisez rien,\n'
+        '\nParfois il y auront des pauses de 60 secondes. Restez calme, no faites rien,\n'
             f'et surtout gardez {ctrl_str} dans la position neutre. La pause est fini cuand le courseur reapparait\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
@@ -630,7 +636,7 @@ class VisuoMotor:
                         print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2}')
                         break
                 vfti0 = vfti_seq_noperm[ct_inds[0] ]
-                if self.params['num_initial_veridical'] > 1 and vfti0[0] == 'veridical':
+                if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
                     print('First was veridical')
                     was_repet = True
 
@@ -683,7 +689,7 @@ class VisuoMotor:
         # Add pretraining
         ###############################
         self.trial_infos = [] # this is the sequence of trial types
-        for i in range(self.params['num_initial_veridical']  ):
+        for i in range(self.params['num_training']  ):
             if self.params['randomize_tgt_initial_veridical']:
                 tgti_cur = np.random.randint( self.params['num_targets'] )
             else:
@@ -765,31 +771,35 @@ class VisuoMotor:
 
 
         n_pauses = (num_context_repeats *  2/8)
-        expected_max_reward = len( self.trial_infos ) * 0.6
+        success_rate_expected = 0.6
+        expected_max_reward = len( self.trial_infos ) * success_rate_expected
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
 
 
 
         # DEBUG TEST EC
         test_trial_ind = info.get('test_trial_ind',3)
+
+        #test_trial_ind = 3
+
         if test_trial_ind >= 0:
-            assert test_trial_ind > self.params['num_initial_veridical']
-        if info['test_err_clamp'] and test_trial_ind >= 0:
-            dspec = {'vis_feedback_type':'veridical', 'tgti':0,
-                    'trial_type': 'error_clamp',
-                    'special_block_type': 'error_clamp_sandwich' }
-            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                self.trial_infos[test_trial_ind:]
+            assert test_trial_ind > self.params['num_training']
+            if info['test_err_clamp'] and test_trial_ind >= 0:
+                dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+                        'trial_type': 'error_clamp',
+                        'special_block_type': 'error_clamp_sandwich' }
+                self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                    self.trial_infos[test_trial_ind:]
 
-        # DEBUG TEST PAUSE
-        if info['test_pause'] and test_trial_ind >= 0:
-            dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                         'trial_type': 'pause', 'special_block_type': None }
-            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                self.trial_infos[test_trial_ind:]
+            # DEBUG TEST PAUSE
+            if info['test_pause'] and test_trial_ind >= 0:
+                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                             'trial_type': 'pause', 'special_block_type': None }
+                self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                    self.trial_infos[test_trial_ind:]
 
-        if info['test_end_task'] and test_trial_ind >= 0:
-            self.trial_infos = self.trial_infos[:test_trial_ind]
+            if info['test_end_task'] and test_trial_ind >= 0:
+                self.trial_infos = self.trial_infos[:test_trial_ind]
 
 
         # I want list of tuples -- target id, visual feedback type, phase
@@ -2444,7 +2454,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_err_clamp', default=0, type=int)
     parser.add_argument('--test_pause',    default=0,  type=int)
     parser.add_argument('--test_end_task',    default=0,  type=int)
-    parser.add_argument('--num_initial_veridical',       type=int)
+    parser.add_argument('--num_training',       type=int)
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
 
 

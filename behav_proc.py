@@ -210,6 +210,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
             bn2trial_st[bn] = trial_st
             assert len(trial_st) == 6 # - 1
+        print(bn2trial_st)
 
         def f(row):
             t = row['trials']
@@ -225,6 +226,17 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             return r
 
         df_all['pert_stage_wb'] = df_all.apply(f,1)
+
+        def f(row):
+            bn = row['block_name']
+            ps = row['pert_stage_wb']
+            if np.isnan(ps):
+                return None
+            if bn.endswith('2'):
+                ps = int(ps) + 5
+
+            return ps
+        df_all['pert_stage'] = df_all.apply(f,1)
 
         ############################
 
@@ -243,6 +255,10 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         def f(row):
             bn = row['block_name']
             ps = row['pert_stage_wb']
+            if np.isnan(ps):
+                return None
+            else:
+                ps = int(ps)
             if bn not in bn2trial_st:
                 return None
             ps = int(ps)
@@ -251,12 +267,17 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             r =  row['trials'] - start
 
             bnrebase = bn[:-1] + '1'
+            l0 = bn2trial_st[bnrebase][1] - bn2trial_st[bnrebase][0]
+            l1 = bn2trial_st[bnrebase][3] - bn2trial_st[bnrebase][2]
+            l15 = bn2trial_st[bnrebase][2] - bn2trial_st[bnrebase][1]
             if ps == 2:
-                r += bn2trial_st[bnrebase][0]
+                r += l0
             elif ps == 4:
-                r += bn2trial_st[bnrebase][0] + bn2trial_st[bnrebase][2]
+                r += l0 + l1
+            elif ps == 3:
+                r += l15
 
-            return r
+            return int(r)
 
         df_all['trialwpert_wb'] = df_all.apply(f,1)
 
@@ -376,6 +397,17 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             df_all[f'{varn}_pscadj'] = df_all[varn] - np.pi
             cond = df_all['pert_seq_code'] == 1
             df_all.loc[cond, f'{varn}_pscadj']=  - ( df_all.loc[cond,varn]  -np.pi)
+
+        df_all['error_pscadj_pertstageadj'] = df_all['error_pscadj']
+        c = (df_all['pert_stage_wb'] == 3) & (df_all['block_name'] == 'stable1')
+        df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
+        c = (df_all['pert_stage_wb'] == 1) & (df_all['block_name'] == 'stable2')
+        df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
+
+        c = (df_all['pert_stage_wb'] == 4) & (df_all['block_name'] == 'stable1')
+        df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
+        c = (df_all['pert_stage_wb'] == 2) & (df_all['block_name'] == 'stable2')
+        df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
 
         addNonHitCol(df_all)
     return df_all
@@ -514,6 +546,10 @@ def getSubDf(df, subj, pertv, tgti, env, block_name=None, pert_seq_code=None,
     if verbose:
         print('final len(df) == ',len(df) )
     return df
+
+def plot(df, coln):
+    subjects =df['subject'].unique()
+    dfc = df.query('subject == @subjects[0]')
 
 #df = getSubDf(df_all, subj, pertv,tgti,env)
 def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc' ):
