@@ -15,6 +15,7 @@ from itertools import product  # ,repeat
 import argparse
 # import pylink
 # import EyeLink
+#from utils import get_target_angles
 
 def fnuniquify(path):
     'uniqify filename'
@@ -346,7 +347,7 @@ class VisuoMotor:
         targetAngs = get_target_angles(self.params['num_targets'],
                     self.params['target_location_pattern'],
                     self.params['target_location_spread'])
-        tas = map(lambda x: f'{x:.0f}', targetAngs)
+        tas = list( map(lambda x: f'{x:.0f}', targetAngs) )
         print('targetAngs = ',targetAngs)
         self.add_param('target_angles',tas)
 
@@ -441,20 +442,28 @@ class VisuoMotor:
                               'GO_CUE_WAIT_AND_SHOW':25,
                               'TARGET':20, 'FEEDBACK': 35,
                               'TARGET_AND_FEEDBACK':30,
-                           'ITI':40, 'BREAK':50, 'PAUSE':60 }
+                           'ITI':40, 'BREAK':50, 'PAUSE':60,
+                              'BUTTON_PRESS':70 }
+
+
         self.trigger2phase = dict((v, k) for k, v in self.phase2trigger.items())
         #ct = time.time()
         self.phase_start_times = dict( zip(self.phase2trigger.keys(), len(self.phase2trigger) * [-1.] ) )
         self.phase_start_times['at_home'] = 0.
         self.phase_start_times['trigger'] = 0.
         self.phase_start_times['current_trial'] = time.time()
+
+
+        self.home_position = (int(round(self.params['width']/2.0)),
+                              int(round(self.params['height']/2.0)))
+
         self.init_target_positions()  # does not draw anything, only calc
 
         self.phase2text = { 'TRAINING_START':
-            r"Étape d'entrenement: " f'faites {self.params["num_training"]} '
-            'mouvements,\n la récompense ne sera pas calculée',
+            r"Étape d'entraînement: " f'faites {self.params["num_training"]} '
+            "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.",
             'TRAINING_END':
-            'La tache principale commence'}
+            'La tâche principale commence maintenant'}
 
 
         ########################  graphics-related
@@ -488,8 +497,8 @@ class VisuoMotor:
         self.myfont_popup = pygame.font.SysFont(self.font_face, self.foruser_center_font_size)
 
         if self.params['controller_type'] == 'joystick':
-            retpos_str = ("\nAprès la fin (l'arrêt complét) de chaque movement et disparition du curseur,\n ramenez le joystick vers la position centrale.\n"
-            "Normalement ça se fait automatiquement, juste laissez le joystick revenir verticale par soi même\n")
+            retpos_str = ("\nÀ la fin (arrêt complet) de chaque movement et disparition du curseur,\n ramenez le joystick vers la position centrale.\n"
+            "Normalement c'est automatique, laissez juste le joystick revenir verticale par lui même\n")
         else:
             retpos_str = ''
 
@@ -511,12 +520,12 @@ class VisuoMotor:
         self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant {ctrl_str},\n"
                     "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse\n\n"
         "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
-        "Si vous partez trop tôt, vous verrez un cercle jaune apparaître qui vous aidera à revenir en arrière.\n"
-        '\nParfois il y auront des pauses de 60 secondes. Restez calme, no faites rien,\n'
-            f'et surtout gardez {ctrl_str} dans la position neutre. La pause est fini cuand le courseur reapparait\n'
+        "Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n"
+        '\nParfois il y aura des pauses de 60 secondes. Restez calme, ne faites rien,\n'
+            f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indique la fin de la pause\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
-        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
+        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance. :)")
         if instr_calib:
             self.instuctions_str += '\n\nAppuyez sur "c" pour calibrer le joystick'
         if instr_cursor_size:
@@ -584,8 +593,6 @@ class VisuoMotor:
         self.ctr_endmessage_show = self.ctr_endmessage_show_def
 
         self.color_photodiode = self.color_diode_off
-        self.home_position = (int(round(self.params['width']/2.0)),
-                              int(round(self.params['height']/2.0)))
 
         ##################################
         self.jaxlims_d = {}
@@ -858,8 +865,12 @@ class VisuoMotor:
 
         import json
         s = json.dumps(CTD_to_export, indent=4)
+        self.paramfile.write( '# CTD_to_export \n' )
         self.paramfile.write( '# trial param and phase 2 trigger values \n' )
         self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
+        self.paramfile.write( s + '\n' )
+        self.paramfile.write( '# phase2trigger \n' )
+        s = json.dumps(self.phase2trigger, indent=4)
         self.paramfile.write( s + '\n' )
 
         self.paramfile.write( '# trial_infos = \n' )
@@ -942,9 +953,9 @@ class VisuoMotor:
             # this will be given to pygame.draw.circle as 3rd arg
             # half screen width + cos * radius
             # half screen hight + sin * radius
-            self.target_coords.append((int(round(self.params['width']/2.0 +
+            self.target_coords.append((int(round(self.home_position[0] +
                                           np.cos(tgtAngRad) * self.params['dist_tgt_from_home'])),
-                                      int(round(self.params['height']/2.0 +
+                                      int(round(self.home_position[1] +
                                           np.sin(tgtAngRad) * self.params['dist_tgt_from_home']))))
 
     def send_trigger_cur_trial_info(self):
@@ -964,10 +975,10 @@ class VisuoMotor:
             self.trigger_value = value
 
             # always write to trigger logfile
+            td = self.current_time - self.initial_time
+            sa = f'; time={td}'
             if add_info is not None:
-                sa = '   ' + str(add_info)
-            else:
-                sa = ''
+                sa += '; ' + str(add_info)
             s = str(value) + sa + '\n'
             self.trigger_logfile.write(s )
         # print("Sent trigger " + str(value))
@@ -1017,82 +1028,6 @@ class VisuoMotor:
         pygame.image.save(pygame.display.get_surface(),fn_scr)
         print('Screenshot saved to ',fn_scr)
 
-    def on_event(self, event):
-        if event.type not in [pygame.MOUSEMOTION, pygame.JOYBALLMOTION,
-                              pygame.JOYHATMOTION, pygame.JOYAXISMOTION,
-                              pygame.WINDOWMOVED, pygame.AUDIODEVICEADDED,
-                              pygame.WINDOWSHOWN, pygame.WINDOWTAKEFOCUS,
-                              pygame.KEYUP]:
-            if pygame.mouse.get_focused():
-                print('on_event: ',event)
-
-        if (event.type == pygame.MOUSEMOTION) and self.just_moved_home:
-            self.just_moved_home = 0
-
-        if event.type == pygame.QUIT:
-            self._running = False
-        if event.type == self.phase_shift_event_type:
-            print(self.cursorX, self.cursorY, self.current_phase,
-                  self.trial_infos[self.trial_index] )
-
-            # if task was not started and a button was pressed, start the task
-            if self.task_started == 0:
-                self.current_phase = self.first_phase_after_start
-                ct = time.time()
-                self.phase_start_times[self.current_phase] = ct
-                if self.current_phase == 'REST':
-                    # TODO: are you sure we need to set it here?
-                    self.phase_start_times['at_home'] = ct
-                    self.send_trigger_cur_trial_info()
-                self.moveHome()
-                pygame.mouse.set_visible(0)
-                self.reset_traj()
-
-                self.send_trigger(self.MEG_start_trigger)
-                self.MEG_rec_started = 1
-
-                self.task_started = 1
-
-            # if task was started and a button was pressed, release break
-            else:
-                self.moveHome()
-                self.free_from_break = 1
-
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                self.on_cleanup(-1)
-            if event.key == pygame.K_F11 and pygame.mouse.get_focused():
-                disp_sizes = pygame.display.get_desktop_sizes()
-                print(  f'disp_sizes = {disp_sizes}' )
-                if len(disp_sizes) > 1:
-                    display = self.preferred_display
-                else:
-                    display = 0
-
-                if (self._display_surf.get_flags() & pygame.FULLSCREEN):
-                    self._display_surf = pygame.display.set_mode(self.size, display = display)
-                else:
-                    self._display_surf = pygame.display.set_mode(self.size,
-                        pygame.FULLSCREEN, display = display)
-                    #self._display_surf = pygame.display.set_mode(0,0,
-            if event.key == pygame.K_q:
-                self.params['radius_cursor'] = self.params['radius_cursor']-1
-            if event.key == pygame.K_w:
-                self.params['radius_cursor'] = self.params['radius_cursor']+1
-            if event.key == pygame.K_r:
-                self.moveHome()
-            if event.key == pygame.K_s:
-                self.save_scr()
-            if (event.key == pygame.K_c) and (not self.task_started == 1) and\
-                    (self.params['controller_type'] == 'joystick' ):
-                self.current_phase = self.calib_seq[0]
-                self.reset_traj()
-                pygame.mouse.set_visible(0)
-
-                print('Start calibration')
-            #if event.key == pygame.K_c:
-            #    if (self.params['use_eye_tracker']):
-            #        EyeLink.tracker(self.params['width'], self.params['height'])
 
     def moveHome(self):
         ja2cct = self.params['joystick_angle2cursor_control_type']
@@ -1233,7 +1168,7 @@ class VisuoMotor:
                            self.home_position,
                            int(self.params['radius_home']), 2)
 
-    def drawProgressBar(self, prop = None):
+    def drawProgressBar(self, prop = None, vshift = -150):
         if prop is None:
             prop =  ( (self.trial_index + 1) / len( self.trial_infos))
 
@@ -1245,15 +1180,15 @@ class VisuoMotor:
         rect_height_outer = rect_height + space * 2 + lw * 2
         my_coords = [0,0]
         my_coords[0] =  self.params['width']/2.0 - rect_width / 2.
-        my_coords[1] =  self.params['height']/2.0 - rect_height / 2.
+        my_coords[1] =  self.params['height']/2.0 - rect_height / 2. + vshift
 
         my_coords_outer = [0,0]
         my_coords_outer[0] =  self.params['width']/2.0  -  rect_width_outer / 2.
-        my_coords_outer[1] =  self.params['height']/2.0 - rect_height_outer / 2.
+        my_coords_outer[1] =  self.params['height']/2.0 - rect_height_outer / 2. + vshift
 
         self.color_progress_bar = [80,150,80]
         pygame.draw.rect(self._display_surf, self.color_progress_bar,
-                        (my_coords[0], my_coords[1],
+                        (my_coords[0], my_coords[1] ,
                          rect_width * prop, rect_height), 0)
         pygame.draw.rect(self._display_surf, self.color_progress_bar,
                         (my_coords_outer[0], my_coords_outer[1],
@@ -1267,7 +1202,7 @@ class VisuoMotor:
         perfstrs = [ pause_str ] +  [ perfinfo ]
         self.drawTextMultiline(perfstrs, font = self.myfont_popup,
                                pos_label = 'center',
-            voffset_glob = self.params['progress_bar_height'] )
+            voffset_glob = self.params['progress_bar_height'] - vshift )
 
         #return pct
 
@@ -1868,8 +1803,8 @@ class VisuoMotor:
         my_coords = [-1, -1]
         # subtract center
         # home position but float
-        my_coords[0] = coordinates[0] - self.params['width']/2.0
-        my_coords[1] = coordinates[1] - self.params['height']/2.0
+        my_coords[0] = float( coordinates[0] - self.home_position[0] )
+        my_coords[1] = float( coordinates[1] - self.home_position[1] )
         # rotate
         if self.params['feedback_fixed_distance']:
             mult = self.params['dist_tgt_from_home']
@@ -1886,8 +1821,8 @@ class VisuoMotor:
         cursorReachX *= sign_x
 
         # translate back
-        cursorReachX = cursorReachX + self.params['width']/2.0
-        cursorReachY = cursorReachY + self.params['height']/2.0
+        cursorReachX = cursorReachX + self.home_position[0]
+        cursorReachY = cursorReachY + self.home_position[1]
         cursorReachX = int(round(cursorReachX))
         cursorReachY = int(round(cursorReachY))
         return cursorReachX, cursorReachY
@@ -1915,6 +1850,21 @@ class VisuoMotor:
             if verbose:
                 print('r = ',r,'timedif = ',timedif, '  strt=', self.phase_start_times[phase], 'thr=',thr)
         return r
+
+    def is_home(self, coords_label = 'unpert_cursor',
+                param_name = 'radius_return', mult=1.):
+        if self.just_moved_home:
+            return True
+        if coords_label == 'unpert_cursor':
+            pos = (self.cursorX, self.cursorY)
+        elif coords_label == 'feedback':
+            pos = (self.feedbackX, self.feedbackY)
+        else:
+            raise ValueError('wrong coords label')
+
+        at_home = self.point_in_circle(self.home_position, pos,
+                                self.params[param_name] * mult, verbose=0)
+        return at_home
 
     def cursor_pos_update(self):
         if self.params['controller_type'] == 'joystick':
@@ -2191,6 +2141,7 @@ class VisuoMotor:
                 else:
                     # regarless whether we hit or not if to slow then no reward
                     #d = (self.error_distance - (self.params['radius_target'] + self.params['radius_cursor'] ))
+                    #  self.error_distance was computed on previous call of this function
                     d = self.error_distance / self.params['radius_target']
                     d = max(d , 1.)
                     # control decay of reward larger means stronger punishment
@@ -2219,8 +2170,9 @@ class VisuoMotor:
 
                 # This variable saves the unperturbed, unprojected feedback
                 self.unpert_feedbackX, self.unpert_feedbackY = self.cursorX, self.cursorY
-                self.error_distance = np.sqrt((self.feedbackX - self.target_coords[self.tgti_to_show][0])**2 +
-                                              (self.feedbackY - self.target_coords[self.tgti_to_show][1])**2)
+                d = (self.feedbackX - self.target_coords[self.tgti_to_show][0])**2 + \
+                    (self.feedbackY - self.target_coords[self.tgti_to_show][1])**2
+                self.error_distance = np.sqrt(float(d))
 
                 if self.params['hit_when_passing'] and hit_cond:
                     # hit color
@@ -2443,30 +2395,31 @@ class VisuoMotor:
         self.current_log.append(self.unpert_feedbackY)
         self.current_log.append(self.error_distance)  # Euclidean distance
         # TODO: save area difference of traj
+        # TODO: save angular coords?
+        # TODO: trial within block?
 
         # maybe I will add it several times if I cross more than once
         # or stay around dist. But it is okay, I can select later first or last
         # crossing during data processing
-        self.current_log.append(self.feedbackX_when_crossing)  # Euclidean distance
-        self.current_log.append(self.feedbackY_when_crossing)  # Euclidean distance
+        self.current_log.append(self.feedbackX_when_crossing)
+        self.current_log.append(self.feedbackY_when_crossing)
+
+        if self.params['controller_type'] == 'joystick':
+            ax1 = self.HID_controller.get_axis(0)
+            ax2 = self.HID_controller.get_axis(1)
+            self.current_log.append(ax1)
+            self.current_log.append(ax2)
+        else:
+            self.current_log.append(-1)
+            self.current_log.append(-1)
 
         self.current_log.append(self.current_time - self.initial_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
 
-    def is_home(self, coords_label = 'unpert_cursor',
-                param_name = 'radius_return', mult=1.):
-        if self.just_moved_home:
-            return True
-        if coords_label == 'unpert_cursor':
-            pos = (self.cursorX, self.cursorY)
-        elif coords_label == 'feedback':
-            pos = (self.feedbackX, self.feedbackY)
-        else:
-            raise ValueError('wrong coords label')
+    #
+    #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time
 
-        at_home = self.point_in_circle(self.home_position, pos,
-                                self.params[param_name] * mult, verbose=0)
-        return at_home
+
 
     def on_cleanup(self, exit_type):
         '''
@@ -2487,6 +2440,85 @@ class VisuoMotor:
         pygame.quit()
         exit()
 
+    def on_event(self, event):
+        if event.type not in [pygame.MOUSEMOTION, pygame.JOYBALLMOTION,
+                              pygame.JOYHATMOTION, pygame.JOYAXISMOTION,
+                              pygame.WINDOWMOVED, pygame.AUDIODEVICEADDED,
+                              pygame.WINDOWSHOWN, pygame.WINDOWTAKEFOCUS,
+                              pygame.KEYUP]:
+            if pygame.mouse.get_focused():
+                print('on_event: ',event)
+
+        if event.type in [ pygame.JOYBUTTONDOWN, pygame.MOUSEBUTTONDOWN  ]:
+            self.send_trigger(self.phase2trigger['BUTTON_PRESS'] )
+
+        if (event.type == pygame.MOUSEMOTION) and self.just_moved_home:
+            self.just_moved_home = 0
+
+        if event.type == pygame.QUIT:
+            self._running = False
+        if event.type == self.phase_shift_event_type:
+            print(self.cursorX, self.cursorY, self.current_phase,
+                  self.trial_infos[self.trial_index] )
+
+            # if task was not started and a button was pressed, start the task
+            if self.task_started == 0:
+                self.current_phase = self.first_phase_after_start
+                ct = time.time()
+                self.phase_start_times[self.current_phase] = ct
+                if self.current_phase == 'REST':
+                    # TODO: are you sure we need to set it here?
+                    self.phase_start_times['at_home'] = ct
+                    self.send_trigger_cur_trial_info()
+                self.moveHome()
+                pygame.mouse.set_visible(0)
+                self.reset_traj()
+
+                self.send_trigger(self.MEG_start_trigger)
+                self.MEG_rec_started = 1
+
+                self.task_started = 1
+
+            # if task was started and a button was pressed, release break
+            else:
+                self.moveHome()
+                self.free_from_break = 1
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.on_cleanup(-1)
+            if event.key == pygame.K_F11 and pygame.mouse.get_focused():
+                disp_sizes = pygame.display.get_desktop_sizes()
+                print(  f'disp_sizes = {disp_sizes}' )
+                if len(disp_sizes) > 1:
+                    display = self.preferred_display
+                else:
+                    display = 0
+
+                if (self._display_surf.get_flags() & pygame.FULLSCREEN):
+                    self._display_surf = pygame.display.set_mode(self.size, display = display)
+                else:
+                    self._display_surf = pygame.display.set_mode(self.size,
+                        pygame.FULLSCREEN, display = display)
+                    #self._display_surf = pygame.display.set_mode(0,0,
+            if event.key == pygame.K_q:
+                self.params['radius_cursor'] = self.params['radius_cursor']-1
+            if event.key == pygame.K_w:
+                self.params['radius_cursor'] = self.params['radius_cursor']+1
+            if event.key == pygame.K_r:
+                self.moveHome()
+            if event.key == pygame.K_s:
+                self.save_scr()
+            if (event.key == pygame.K_c) and (not self.task_started == 1) and\
+                    (self.params['controller_type'] == 'joystick' ):
+                self.current_phase = self.calib_seq[0]
+                self.reset_traj()
+                pygame.mouse.set_visible(0)
+
+                print('Start calibration')
+            #if event.key == pygame.K_c:
+            #    if (self.params['use_eye_tracker']):
+            #        EyeLink.tracker(self.params['width'], self.params['height'])
 
     def on_execute(self):
         if self.on_init() is False:

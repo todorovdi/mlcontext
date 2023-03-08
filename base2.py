@@ -300,9 +300,14 @@ def calc_target_coordinates_centered(target_angs):
     return target_coords
 
 
-def calc_rad_angle_from_coordinates(X, Y):
-    angles = np.arctan2(Y/float(radius),
-                        X/float(radius))
+def calc_rad_angle_from_coordinates(X, Y, radius_ = None):
+    if radius_ is None:
+        radius_cur = radius_
+    else:
+        radius_cur = radius
+
+    angles = np.arctan2(Y/float(radius_cur),
+                        X/float(radius_cur))
     # change the 0 angle (0 is now bottom vertical in the circle)
     angles = angles + np.pi/2.
     # make the angle between 0 and 2*np.pi

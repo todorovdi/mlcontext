@@ -1,0 +1,83 @@
+import numpy as np
+
+def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 0):
+    # defloc -- angle from vertical line
+    if num_targets == 3:
+        assert target_location_pattern == 'fan'
+        targetAngs = np.array([defloc-spread,defloc,defloc + spread])
+    elif num_targets == 2:
+        targetAngs = np.array([defloc-spread,defloc + spread])
+    elif num_targets == 1:
+        targetAngs = np.array([defloc])
+    elif num_targets == 4:
+        if target_location_pattern == 'diamond':
+            mult = 90 # in deg
+            targetAngs = np.arange(num_targets) * mult
+        elif target_location_pattern == 'fan':
+            mult = spread # in deg
+            m = num_targets * mult
+            targetAngs = np.arange(num_targets) * mult -  m / 2
+        else:
+            raise ValueError(f'target_location_pattern = {target_location_pattern} not implemented')
+    elif num_targets >= 4:
+        mult = spread # in deg
+        m = num_targets * mult
+        targetAngs = np.arange(num_targets) * mult -  m / 2
+
+    targetAngs = targetAngs + (180 + 90)
+    return targetAngs
+
+def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
+    '''
+    called in class constructor
+    '''
+    #targetAngs = [22.5+180, 67.5+180, 112.5+180, 157.5+180]
+    #targetAngs = get_target_angles(self.params['num_targets'])
+
+    # list of 2-tuples
+    target_coords = []
+    for tgti,tgtAngDeg in enumerate(targetAngs):
+        tgtAngRad = float(tgtAngDeg)*(np.pi/180)
+        # this will be given to pygame.draw.circle as 3rd arg
+        # half screen width + cos * radius
+        # half screen hight + sin * radius
+        target_coords.append((int(round(home_pos[0] +
+                                      np.cos(tgtAngRad) * dist_tgt_from_home)),
+                                  int(round(home_pos[1] +
+                                      np.sin(tgtAngRad) * dist_tgt_from_home))))
+
+    return target_coords
+
+def calc_err_eucl(feedbackXY, target_coords, tgti_to_show):
+    feedbackX, feedbackY = feedbackXY
+    d = (feedbackX -target_coords[tgti_to_show][0])**2 + \
+        (feedbackY -target_coords[tgti_to_show][1])**2
+    error_distance = np.sqrt(float(d))
+    return error_distance
+
+def coords2anglesRad(X, Y, home_position, radius = None ):
+    if home_position is not None:
+        if isinstance(X,np.ndarray):
+            X = X.copy()
+            Y = Y.copy()
+        X -= home_position[0]
+        Y -= home_position[1]
+    if radius is None:
+        radius = np.sqrt( X*X + Y*Y )
+
+    angles = np.arctan2(Y/float(radius),
+                        X/float(radius))
+    # change the 0 angle (0 is now bottom vertical in the circle)
+    #angles = angles + np.pi/2.
+    # make the angle between 0 and 2*np.pi
+    if isinstance(X,np.ndarray):
+        for i in np.where(angles < 0):
+            angles[i] = angles[i] + 2*np.pi
+        for i in np.where(angles > 2*np.pi):
+            angles[i] = angles[i] - 2*np.pi
+    else:
+        if angles < 0:
+            angles = angles + 2*np.pi
+        if angles > 2*np.pi:
+            angles = angles - 2*np.pi
+    return angles

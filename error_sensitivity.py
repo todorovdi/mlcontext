@@ -1,9 +1,9 @@
 import os
 import os.path as op
 import numpy as np
-import mne
-from mne.io import read_raw_fif
-from mne import Epochs
+#import mne
+#from mne.io import read_raw_fif
+#from mne import Epochs
 # import pandas as pd
 import warnings
 import sys
@@ -435,6 +435,8 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None, do_delete_trials=1,
 def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None,
         force_resave_raw = 0,  ICA = 'with_ICA', hpass=0.1  ):
     from config2 import cleanEvents,delay_trig_photodi
+    import mne
+    from mne.io import read_raw_fif
 
     tmin = -0.5
     tmax = 0
@@ -499,6 +501,7 @@ def computeErrSens(behav_df, subject, task = 'VisuoMotor_' ,fname=None, raw=None
     #events = np.delete(events, bad_events, 0)
     events = cleanEvents(events)
 
+    from mne import Epochs
     epochs = Epochs(raw, events, event_id=event_ids_tgt,
                     tmin=tmin, tmax=tmax, preload=True,
                     baseline=None, decim=2)
@@ -923,6 +926,8 @@ def getAnalysisData(env, time_locked, control_type, behav_df):
 
 # from td_long2
 def getEpochs(raw,is_short,bsl):
+    import mne
+    from mne import Epochs
     events = mne.find_events(raw, stim_channel='UPPT001',
                             min_duration=min_event_duration)
     events[:, 0] += delay_trig_photodi  # to account for delay between trig. & photodi.
