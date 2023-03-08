@@ -77,7 +77,7 @@ if os.path.exists(path_data):
     subjects = [f for f in os.listdir(path_data) if f.startswith('sub') ]
     subjects = list(sorted(subjects))
 else:
-    print(f'data dir {path_data} not exists, setting default subjects')
+    print(f'data dir {path_data} does not exist, setting default subjects')
     subjects = subjects_predef
 
 if os.path.expandvars('$USER') == 'demitau':

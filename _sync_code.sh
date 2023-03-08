@@ -17,13 +17,17 @@ else
 fi
 
 echo '' > sync_dest_changes.log
-run="python3 _rsync_careful.py"
+run="python3 $MYSCRIPTS/_rsync_careful.py"
 LOCAL_DIR="/home/demitau/memerr_code"
 #FLAGS="-rtvh$DRY_RUN_FLAG --progress"
 # for dry run
 #FLAGS="-rtvzn --progress"; echo "DRY RUN!!"
 
+
 DIRECT_SSH=0
+#. remount_HPC.sh
+
+
 if [ $DIRECT_SSH -ne 0 ]; then
   echo "Using rsync -e ssh"
   SSH_FLAG="-e ssh -z"
@@ -32,8 +36,9 @@ if [ $DIRECT_SSH -ne 0 ]; then
   SLEEP="sleep 1s"
   echo "not implemented; need to change _rsync_careful"; exit 1
 else
+  echo mountpath=$mountpath
   numfiles=`ls $mountpath | wc -l`
-  MQR=`mountpoint -q "$mountpath"`
+  MQR=$(mountpoint -q "$mountpath")
   while [ $numfiles -eq 0 ] || ! mountpoint -q "$mountpath"; do
     echo "not mounted! trying to remount; numfiles=$numfiles MQR=$MQR"
     sudo umount -l $mountpath # would not work if I run on cron
@@ -56,7 +61,7 @@ fi
 echo "  sync souce code"
 # if I put *.{py,sh} here, then it does not get parsed well by python
 $run --mode:$RUNTYPE --exclude="*HPC*.py" --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.py"  "$CLUSTER_CODE/"
-$run --mode:$RUNTYPE --exclude="*HPC*.sh" --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.sh"  "$CLUSTER_CODE/"
+$run --mode:$RUNTYPE --exclude="runexp_debug.sh" a--exclude="_export_task.sh" --exclude="*HPC*.sh" --exclude="*_orig.*" --exclude="_sync*.sh" "$LOCAL_DIR/*.sh"  "$CLUSTER_CODE/"
 if [ $? -ne 0 ]; then
   exit $?
 fi
@@ -89,16 +94,20 @@ $run --mode:$RUNTYPE  "--exclude sbatch*.sh" "$CLUSTER_CODE/$subdir/*HPC*.ini"  
 
 
 # save current code version and make it transferable to HPC (we don't have git there)
-v=`git tag | tail -1` 
-h=`git rev-parse --short HEAD`
-echo "$v, hash=$h" > last_code_ver_synced_with_HPC.txt
-wait
+if git rev-parse --git-dir > /dev/null 2>&1; then
+  GITHERE=1
+  v=`git tag | tail -1` 
+  h=`git rev-parse --short HEAD`
+  echo "$v, hash=$h" > last_code_ver_synced_with_HPC.txt
+  wait
 
-echo "  sync req and code ver"
-$run --mode:$RUNTYPE "$LOCAL_DIR/requirements.txt" "$JUSUF_CODE/"
+  echo "  sync req and code ver"
+  $run --mode:$RUNTYPE "$LOCAL_DIR/last_code_ver_synced_with_HPC.txt" "$JUSUF_CODE/"
+fi
+$run --mode:$RUNTYPE "$LOCAL_DIR/requirements.yml" "$JUSUF_CODE/"
 #$SLEEP
-$run --mode:$RUNTYPE "$LOCAL_DIR/last_code_ver_synced_with_HPC.txt" "$JUSUF_CODE/"
 
+cat sync_dest_changes.log
 
 #$SLEEP
 #sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/

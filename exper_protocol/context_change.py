@@ -32,28 +32,30 @@ def trial_info2trgtpl(ti, phase):
     tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
     return tpl
 
-def get_target_angles(num_targets, target_location_pattern):
+def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 0):
+    # defloc -- angle from vertical line
     if num_targets == 3:
         assert target_location_pattern == 'fan'
-        targetAngs = np.array([-15,0,15])
+        targetAngs = np.array([defloc-spread,defloc,defloc + spread])
     elif num_targets == 2:
-        targetAngs = np.array([-30,30])
+        targetAngs = np.array([defloc-spread,defloc + spread])
     elif num_targets == 1:
-        targetAngs = np.array([0])
+        targetAngs = np.array([defloc])
     elif num_targets == 4:
         if target_location_pattern == 'diamond':
             mult = 90 # in deg
             targetAngs = np.arange(num_targets) * mult
         elif target_location_pattern == 'fan':
-            mult = 15 # in deg
+            mult = spread # in deg
             m = num_targets * mult
             targetAngs = np.arange(num_targets) * mult -  m / 2
         else:
             raise ValueError(f'target_location_pattern = {target_location_pattern} not implemented')
     elif num_targets >= 4:
-        mult = 15 # in deg
+        mult = spread # in deg
         m = num_targets * mult
         targetAngs = np.arange(num_targets) * mult -  m / 2
+
     targetAngs = targetAngs + (180 + 90)
     return targetAngs
 
@@ -269,9 +271,13 @@ class VisuoMotor:
         self.add_param('diode_width' , 50)  # maybe 100?
         self.add_param('diode_height', 50)
 
+        # for behav task it is 0
+        self.add_param('show_diode' , 0)
+
+        # text notification about leaving home at rest
         self.add_param('notify_early_move', 0)
 
-        # can be also offline though less tested
+        # can be also offline but needs redebugging
         self.add_param('feedback_type', 'online')
 
         self.add_param('perf_notif_start_delay', 1.500) # in sec
@@ -321,27 +327,39 @@ class VisuoMotor:
                 'rot-15,rot15,rot30,rot60,rot90,scale-,scale+,reverse_x')
         else:
             #self.add_param('pert_block_types','rot-15,rot15,rot30,rot60')
-            self.add_param('pert_block_types','rot-15,rot15,rot30')
+            #self.add_param('pert_block_types','rot-15,rot15,rot30')
+            self.add_param('pert_block_types','rot-20,rot20')
 
         self.add_param('spec_trial_modN',8)
         self.add_param('allow_context_conseq_repetition', 0)
         # one can also use combinations of scale and rot
         # 'scale-&rot-15','scale-&rot30'
 
-        #self.add_param('num_targets',3)
-        self.add_param('num_targets',4)
+        # in degrees
+        #self.add_param('target_location_spread',15)
+        self.add_param('target_location_spread',20)
+
+        self.add_param('num_targets',3)
+        #self.add_param('num_targets',4)
         #self.add_param('target_location_pattern', 'diamond')
         self.add_param('target_location_pattern', 'fan')
         targetAngs = get_target_angles(self.params['num_targets'],
-                    self.params['target_location_pattern'])
+                    self.params['target_location_pattern'],
+                    self.params['target_location_spread'])
         tas = map(lambda x: f'{x:.0f}', targetAngs)
         print('targetAngs = ',targetAngs)
         self.add_param('target_angles',tas)
 
         # giving 55 min
+        # 4 pert, 4 targets
+        #self.add_param('block_len_min',6)
+        #self.add_param('block_len_max',10)
+        #self.add_param('n_context_appearences',4)
+
+        # 3 pert, 3 targets
         self.add_param('block_len_min',6)
-        self.add_param('block_len_max',10)
-        self.add_param('n_context_appearences',4)
+        self.add_param('block_len_max',11)
+        self.add_param('n_context_appearences',7)
 
         # alternative giving 55 min as well
         #self.add_param('block_len_min',10)
@@ -1555,7 +1573,7 @@ class VisuoMotor:
                                    self.home_position,
                                    self.params['radius_return'], thickness)
 
-            show_diode = 1
+            show_diode = self.params['show_diode']
             diode_width  = self.params['diode_width']
             diode_height = self.params['diode_height']
 
