@@ -306,10 +306,15 @@ class VisuoMotor:
 
         self.add_param('pause_text_show_duration', 5) # in sec
 
+        #self.add_param('reach_termination_condition', 'time_or_reach_end')
+        #self.add_param('reach_termination_condition', 'reach_end')
+        self.add_param('reach_termination_condition', 'time')
+
         # how we determine that the reach is finished before the time elapsed
-        #self.reach_end_event = 'target_reached'
-        #self.reach_end_event = 'distance_reached'
-        self.add_param('reach_end_event', 'stopped')
+        #self.early_reach_end_event = 'target_reached'
+        #self.early_reach_end_event = 'distance_reached'
+        self.add_param('early_reach_end_event', 'stopped')
+
         self.add_param_comment('# How long should we stay at one point before the movement is judged finished?')
         self.add_param('stopping_min_dur', 0.13)
         self.add_param('stop_rad_px', 3)
@@ -519,13 +524,18 @@ class VisuoMotor:
         #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
         self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant {ctrl_str},\n"
                     "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse.\n\n"
-        "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
-        "Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n\n"
+        #"Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
+        "Commencez à bouger seulement quand vous voyez le curseur blanc et que la cible change de couleur et devient vert vif\n"
+        #
+        #"Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n\n"
+        "Si vous partez trop tôt, un cercle jaune apparaîtra et vous incitera à retourner à votre position de départ\n\n."
+        #
         "A la fin de chaque mouvement, la couleur du cercle central "
         "changera (vert ou rouge)\n pour vous indiquer si vous avez atteint "
         "correctement la cible ou non.\n"
-        '\nParfois il y aura des pauses de 60 secondes. Restez calme, ne faites rien,\n'
-            f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indique la fin de la pause\n'
+
+        f'\nParfois il y aura des pauses de {self.params["pause_duration"]} secondes. Restez calme, ne faites rien,\n'
+            f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indiquera la fin de la pause\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
         "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
@@ -1683,6 +1693,8 @@ class VisuoMotor:
         pygame.display.update()
 
     def test_reach_finished(self, ret_ext = False):
+        # does not check time
+
         #at_home = self.point_in_circle(self.home_position, (self.cursorX, self.cursorY),
         #                        self.params['radius_cursor'], verbose=0)
         at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
@@ -1691,12 +1703,12 @@ class VisuoMotor:
         stopped = self.test_stopped(stop_rad_px = stop_rad_px)
         radius_reached = self.test_radius_reached()
         r = at_home,stopped,radius_reached
-        if self.params['reach_end_event'] == 'stopped':
+        if self.params['early_reach_end_event'] == 'stopped':
             b = stopped and (not at_home)
-        elif self.params['reach_end_event'] == 'distance_reached':
+        elif self.params['early_reach_end_event'] == 'distance_reached':
             b = radius_reached
         if self.debug and b:
-            print('test_reach_finished: ', self.params['reach_end_event'])
+            print('test_reach_finished: ', self.params['early_reach_end_event'])
         if ret_ext:
             return b, r
         else:
@@ -2096,9 +2108,15 @@ class VisuoMotor:
             if reach_time_finished:
                 self.timer_check(self.current_phase,
                                     'time_feedback', verbose=1)
-            # if time is up we switch to ITI, else
+
+            rtc = self.params['reach_termination_condition']
+
             reach_finished, extinfo = self.test_reach_finished(ret_ext = 1)
             at_home,stopped,radius_reached = extinfo
+            if rtc == 'time':
+                reach_finished = reach_time_finished
+
+            # if time is up we switch to ITI, else
             if reach_time_finished or reach_finished:
                 print(f'reach_time_finished={reach_time_finished}, '
                       f'at_home={at_home}, stopped={stopped}, '
@@ -2124,7 +2142,8 @@ class VisuoMotor:
                         else:
                             self.last_reach_too_slow = 1
                         tdif = time.time() - self.phase_start_times[self.current_phase]
-                        print(f'Reach too slow: {tdif:.2f} sec')
+                        print(f'Reach did not finish early, according to '
+                            '{self.params["early_reach_end_event"]}: tdif={tdif:.2f} sec')
                     else:
                         self.last_reach_too_slow = 0
 
