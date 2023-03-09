@@ -695,36 +695,42 @@ class VisuoMotor:
 
         def genSpecTrialBlock(pause_trial,
                               error_clamp_pair, error_clamp_sandwich,
-                              d):
+                              d, bi):
             trial_infos = []
             # inplace
             if pause_trial:
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                      'trial_type': 'pause', 'special_block_type': None }
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
             if error_clamp_sandwich:
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                      'trial_type': 'error_clamp',
                      'special_block_type': 'error_clamp_sandwich' }
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
                 #
                 dspec = d.copy()
                 dspec['special_block_type'] = 'error_clamp_sandwich'
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
                 #
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                      'trial_type': 'error_clamp',
                      'special_block_type': 'error_clamp_sandwich' }
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
             if error_clamp_pair:
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                      'trial_type': 'error_clamp',
                      'special_block_type': 'error_clamp_pair' }
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
                 #
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                      'trial_type': 'error_clamp',
                      'special_block_type': 'error_clamp_pair' }
+                dspec[ 'block_ind' ] = bi
                 trial_infos += [dspec]
             return trial_infos
 
@@ -741,7 +747,7 @@ class VisuoMotor:
 
             d = {'vis_feedback_type':'veridical', 'tgti':tgti_cur,
                     'trial_type': 'veridical',
-                 'special_block_type': 'pretraining' }
+                 'special_block_type': 'pretraining', 'block_ind':-1 }
             self.trial_infos += [d]
 
 
@@ -765,6 +771,7 @@ class VisuoMotor:
 
         # TODO: care about whether pauses and clamps are parts of the block or
         # not
+        #block_ind = 0
         block_start_inds = []
         for (bi, num_context_repeats), (vis_feedback_type, tgti) in\
                 zip( enumerate(ns_context_repeat), self.vfti_seq):
@@ -776,7 +783,8 @@ class VisuoMotor:
             else:
                 ttype = 'perturbation'
             d = {'vis_feedback_type':vis_feedback_type, 'tgti':tgti,
-                 'trial_type': ttype, 'special_block_type': None }
+                 'trial_type': ttype, 'special_block_type': None,
+                 'block_ind': bi}
 
             pause_trial_middle, error_clamp_pair_middle,\
                     error_clamp_sandwich_middle = 0,0,0
@@ -805,12 +813,13 @@ class VisuoMotor:
 
             # insert in the middle
             self.trial_infos += genSpecTrialBlock(pause_trial_middle,
-                error_clamp_pair_middle, error_clamp_sandwich_middle,d)
+                error_clamp_pair_middle, error_clamp_sandwich_middle,d,
+                                                  bi)
 
             self.trial_infos += [d] * rhd
 
             self.trial_infos += genSpecTrialBlock(pause_trial_end,
-                error_clamp_pair_end, error_clamp_sandwich_end,d)
+                error_clamp_pair_end, error_clamp_sandwich_end,d, bi)
 
 
         # TODO: estimate
@@ -2386,6 +2395,7 @@ class VisuoMotor:
         self.current_log.append(ti['vis_feedback_type']) #perturbation
         self.current_log.append(ti['trial_type']) #perturbation
         self.current_log.append(ti['special_block_type']) #perturbation
+        self.current_log.append(ti.get('block_ind',-100) )
         #self.current_log.append(self.cursorX)
         #self.current_log.append(self.cursorY)
         self.current_log.append(self.feedbackX)
