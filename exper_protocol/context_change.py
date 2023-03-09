@@ -518,24 +518,30 @@ class VisuoMotor:
             ctrl_de = 'de la souris'
         #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
         self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant {ctrl_str},\n"
-                    "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse\n\n"
+                    "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse.\n\n"
         "Commencez à bouger uniquement après que vous ayez vu la cible vert vif ET le curseur.\n"
-        "Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n"
+        "Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n\n"
+        "A la fin de chaque mouvement, la couleur du cercle central "
+        "changera (vert ou rouge)\n pour vous indiquer si vous avez atteint "
+        "correctement la cible ou non.\n"
         '\nParfois il y aura des pauses de 60 secondes. Restez calme, ne faites rien,\n'
             f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indique la fin de la pause\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
-        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance. :)")
+        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
         if instr_calib:
             self.instuctions_str += '\n\nAppuyez sur "c" pour calibrer le joystick'
         if instr_cursor_size:
             self.instuctions_str += '\nAppuyez sur "q", "w" pour contrôler la taille du curseur'
-        self.instuctions_str += '\nAppuyez sur "echape" pour quitter'
+
+        #self.instuctions_str += '\nAppuyez sur "echape" pour quitter'
 
         if ctrl == 'mouse':
             self.instuctions_str += f"\n\nCliquer sur le bouton de {ctrl_str} vous ramène au centre (à n'utiliser qu'en cas d'urgence)"
 
-        self.instuctions_str += f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n\n"
+        self.instuctions_str += (f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n"
+        "(c'est la seule fois où vous devrez appuyer sur un bouton du joystick)\n\n")
+
 
 
         # English ver
@@ -693,9 +699,10 @@ class VisuoMotor:
         #seq0 = np.tile( np.arange(n_contexts), self.params['n_context_appearences'])
         #context_seq = np.random.permutation(seq0)
 
-        def genSpecTrialBlock(pause_trial,
+        def genSpecTrialSubblock(pause_trial,
                               error_clamp_pair, error_clamp_sandwich,
                               d, bi):
+            # d is "normal" trial around which we create special ones
             trial_infos = []
             # inplace
             if pause_trial:
@@ -812,22 +819,21 @@ class VisuoMotor:
             self.trial_infos += [d] * hd
 
             # insert in the middle
-            self.trial_infos += genSpecTrialBlock(pause_trial_middle,
+            self.trial_infos += genSpecTrialSubblock(pause_trial_middle,
                 error_clamp_pair_middle, error_clamp_sandwich_middle,d,
                                                   bi)
 
             self.trial_infos += [d] * rhd
 
-            self.trial_infos += genSpecTrialBlock(pause_trial_end,
+            self.trial_infos += genSpecTrialSubblock(pause_trial_end,
                 error_clamp_pair_end, error_clamp_sandwich_end,d, bi)
 
 
         # TODO: estimate
-        success_rate_expected = 0.6
+        #success_rate_expected = 0.6
+        success_rate_expected = 0.7
         expected_max_reward = len( self.trial_infos ) * success_rate_expected
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
-
-
 
         # DEBUG TEST EC
         test_trial_ind = info.get('test_trial_ind',3)
@@ -1207,7 +1213,7 @@ class VisuoMotor:
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
         perfinfo =  f'Récompense totale = {monetary_value_tot:.2f} Eur'
 
-        pause_str = 'Pause commence! '
+        pause_str = 'La pause commence maintenant ! '
         perfstrs = [ pause_str ] +  [ perfinfo ]
         self.drawTextMultiline(perfstrs, font = self.myfont_popup,
                                pos_label = 'center',
@@ -1309,13 +1315,13 @@ class VisuoMotor:
             perfinfo += [ f'# hits                                = {self.counter_hit_trials}' ]
             perfinfo += [ f'Récompense totale                     = {self.reward_accrued:.2f}' ]
             if inc_last_reward:
-                perfinfo += [ f'Récompense pour le dernièr mouvement  = {self.reward:.2f}' ]
+                perfinfo += [ f'Récompense pour le dernier mouvement  = {self.reward:.2f}' ]
 
 
         if 'money' in reward_type:
             perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f} Eur' ]
             if inc_last_reward:
-                perfinfo += [ f'Récompense pour le dernièr mouvement  =  {monetary_value_last:.2f} Eur' ]
+                perfinfo += [ f'Récompense pour le dernier mouvement  =  {monetary_value_last:.2f} Eur' ]
 
         return perfinfo
 
@@ -1326,9 +1332,9 @@ class VisuoMotor:
         # end of the task
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
-            endstrs = [ 'La tache est finie, vous etês super, bravo!' ]
+            endstrs = [ 'La tache est maintenant finie. Vous avez été super, bravo !' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
-            endstrs += [f'la fenêtre va se fermer dans {delay:.0f} seconds']
+            endstrs += [f'La fenêtre va se fermer dans {delay:.0f} secondes']
             #self.drawPopupText(pause_str)
             rnd = False
             if self.params['reward_rounding'] == 'end':
@@ -1591,7 +1597,7 @@ class VisuoMotor:
                 #self.drawPopupText(instr,
                 #                   font_size = self.foruser_font_size)
                 self.drawTextMultiline(instr, font = self.myfont_popup,
-                                       pos_label= 'center', voffset_glob = -100 )
+                                       pos_label= 'center', voffset_glob = -160 )
 
                 #self.drawProgressBar(0.23)
 
