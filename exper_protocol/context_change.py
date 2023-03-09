@@ -2394,6 +2394,8 @@ class VisuoMotor:
         self.current_log.append(self.unpert_feedbackX) # before was called 'org_feedback'
         self.current_log.append(self.unpert_feedbackY)
         self.current_log.append(self.error_distance)  # Euclidean distance
+
+        self.current_log.append(self.target_coords[self.tgti_to_show])  # Euclidean distance
         # TODO: save area difference of traj
         # TODO: save angular coords?
         # TODO: trial within block?

@@ -30,6 +30,7 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
 def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
     '''
     called in class constructor
+    returns in screen coords
     '''
     #targetAngs = [22.5+180, 67.5+180, 112.5+180, 157.5+180]
     #targetAngs = get_target_angles(self.params['num_targets'])
@@ -41,10 +42,9 @@ def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
         # this will be given to pygame.draw.circle as 3rd arg
         # half screen width + cos * radius
         # half screen hight + sin * radius
-        target_coords.append((int(round(home_pos[0] +
-                                      np.cos(tgtAngRad) * dist_tgt_from_home)),
-                                  int(round(home_pos[1] +
-                                      np.sin(tgtAngRad) * dist_tgt_from_home))))
+        target_coords.append(
+                (int(round(home_pos[0] + np.cos(tgtAngRad) * dist_tgt_from_home)),
+                int(round(home_pos[1] + np.sin(tgtAngRad) * dist_tgt_from_home))))
 
     return target_coords
 
@@ -55,29 +55,59 @@ def calc_err_eucl(feedbackXY, target_coords, tgti_to_show):
     error_distance = np.sqrt(float(d))
     return error_distance
 
+def screen2homec(X,Y,home_position):
+    from collections.abc import Iterable
+    if isinstance(X,Iterable):
+        X = np.array(X)
+    if isinstance(Y,Iterable):
+        Y = np.array(Y)
+    # home_positino is in screen coords
+    return X - home_position[0], - ( Y - home_position[1] )
+
+def homec2screen(X,Y,home_position):
+    from collections.abc import Iterable
+    if isinstance(X,Iterable):
+        X = np.array(X)
+    if isinstance(Y,Iterable):
+        Y = np.array(Y)
+    # home_positino is in screen coords
+    return X + home_position[0], ( home_position[1] - Y   )
+
 def coords2anglesRad(X, Y, home_position, radius = None ):
-    if home_position is not None:
-        if isinstance(X,np.ndarray):
-            X = X.copy()
-            Y = Y.copy()
-        X -= home_position[0]
-        Y -= home_position[1]
+    # X,Y screen coords
+    assert home_position is not None
+    #from collections.abc import Iterable
+    #if isinstance(X,Iterable):
+    #    X = np.array(X)
+    #if isinstance(Y,Iterable):
+    #    Y = np.array(Y)
+
+    #if home_position is not None:
+    #    if isinstance(X,np.ndarray):
+    #        X = X.copy()
+    #        Y = Y.copy()
+    #    X -= home_position[0]
+    #    Y -= home_position[1]
+
+    X,Y = screen2homec(X,Y,home_position)
+
     if radius is None:
         radius = np.sqrt( X*X + Y*Y )
 
     angles = np.arctan2(Y/float(radius),
                         X/float(radius))
     # change the 0 angle (0 is now bottom vertical in the circle)
-    #angles = angles + np.pi/2.
+    ##angles = angles + np.pi/2.
     # make the angle between 0 and 2*np.pi
-    if isinstance(X,np.ndarray):
-        for i in np.where(angles < 0):
-            angles[i] = angles[i] + 2*np.pi
-        for i in np.where(angles > 2*np.pi):
-            angles[i] = angles[i] - 2*np.pi
-    else:
-        if angles < 0:
-            angles = angles + 2*np.pi
-        if angles > 2*np.pi:
-            angles = angles - 2*np.pi
+
+    #if isinstance(X,np.ndarray):
+    #    for i in np.where(angles < 0):
+    #        angles[i] = angles[i] + 2*np.pi
+    #    for i in np.where(angles > 2*np.pi):
+    #        angles[i] = angles[i] - 2*np.pi
+    #else:
+    #    if angles < 0:
+    #        angles = angles + 2*np.pi
+    #    if angles > 2*np.pi:
+    #        angles = angles - 2*np.pi
     return angles
