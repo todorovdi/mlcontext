@@ -178,7 +178,8 @@ class VisuoMotor:
 
         self.add_param_comment('# Radius of the target')
         #self.add_param('radius_target', 19)
-        self.add_param('radius_target', 24)
+        #self.add_param('radius_target', 24)
+        self.add_param('radius_target', 20)
 
 
         # to minimize change of screen content
@@ -206,7 +207,8 @@ class VisuoMotor:
             if self.params['controller_type'] == 'mouse':
                 self.add_param('time_feedback', 0.95)
             else:
-                self.add_param('time_feedback', 1.15)
+                #self.add_param('time_feedback', 1.15)
+                self.add_param('time_feedback', 0.75)
 
         # see  Haith 2015 JNeuro (used 0.3s and 1.5s) and Bracco 2018 (used
         # 1.5s)
@@ -465,11 +467,12 @@ class VisuoMotor:
 
         self.init_target_positions()  # does not draw anything, only calc
 
+        ###################   FRENCH TEXT BEGIN #####################
         self.phase2text = { 'TRAINING_START':
             r"Étape d'entraînement: " f'faites {self.params["num_training"]} '
             "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.",
-            'TRAINING_END':
-            'La tâche principale commence maintenant'}
+            'TRAINING_END': 'La tâche principale commence maintenant'}
+        ###################   FRENCH TEXT END #####################
 
 
         ########################  graphics-related
@@ -522,6 +525,8 @@ class VisuoMotor:
             ctrl_de = 'du ' + ctrl
         else:
             ctrl_de = 'de la souris'
+
+        ###################   FRENCH TEXT BEGIN #####################
         #self.instuctions_str = "Nous allons bientôt commencer. Veuillez attendre les instructions."
         self.instuctions_str = (f"Vous allez voir apparaître des cibles que vous devrez atteindre en utilisant {ctrl_str},\n"
                     "puis garder le curseur sur la cible jusqu'à ce qu'elle disparaisse.\n\n"
@@ -552,6 +557,7 @@ class VisuoMotor:
 
         self.instuctions_str += (f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n"
         "(c'est la seule fois où vous devrez appuyer sur un bouton du joystick)\n\n")
+        ###################   FRENCH TEXT END #####################
 
 
 
@@ -1224,6 +1230,7 @@ class VisuoMotor:
                          rect_width_outer, rect_height_outer), lw)
 
 
+        ###################   FRENCH TEXT BEGIN #####################
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
         perfinfo =  f'Récompense totale = {monetary_value_tot:.2f} Eur'
 
@@ -1232,6 +1239,7 @@ class VisuoMotor:
         self.drawTextMultiline(perfstrs, font = self.myfont_popup,
                                pos_label = 'center',
             voffset_glob = self.params['progress_bar_height'] - vshift )
+        ###################   FRENCH TEXT END #####################
 
         #return pct
 
@@ -1346,9 +1354,13 @@ class VisuoMotor:
         # end of the task
         if (self.task_started == 2):
             self._display_surf.fill(self.color_bg)
+
+            ###################   FRENCH TEXT BEGIN #####################
             endstrs = [ 'La tache est maintenant finie. Vous avez été super, bravo !' ]
             delay = self.ctr_endmessage_show / self.params['FPS']
             endstrs += [f'La fenêtre va se fermer dans {delay:.0f} secondes']
+            ###################   FRENCH TEXT END #####################
+
             #self.drawPopupText(pause_str)
             rnd = False
             if self.params['reward_rounding'] == 'end':
