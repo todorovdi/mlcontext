@@ -193,6 +193,9 @@ class VisuoMotor:
         # can be 'no'
         self.add_param('autmatic_joystick_center_calib_adjust', 'end_ITI')
 
+        self.add_param('smooth_traj_home',8)
+        self.add_param('smooth_traj_feedback',0)
+
         ####################################################
         #################  durations
         ####################################################
@@ -242,7 +245,7 @@ class VisuoMotor:
         if self.debug:
             self.add_param('training_text_show_duration', 0.4)
         else:
-            self.add_param('training_text_show_duration', 3)
+            self.add_param('training_text_show_duration', 4)
             #self.add_param('training_text_show_duration', 0.3)
 
 
@@ -616,7 +619,7 @@ class VisuoMotor:
         self.joystick_center_autocalib = True
 
         #self.jaxlims = -1,1
-        self.discrepancy_red_lr = 0.1
+        self.discrepancy_red_lr = 0.2
 
         self.tgti_to_show = -1
         self.cursorX = 0
@@ -1252,14 +1255,16 @@ class VisuoMotor:
         #else:
         radius = self.params['radius_cursor']
         radius *= radmult
+        #zeroth element is invalid
         xy = (self.feedbackX, self.feedbackY)
-        sml = min(smooth, len(self.trajfbX) )
+        sml = min(smooth, len(self.trajfbX)-1 )
         if sml > 1:
-            xy = np.mean( self.trajfbX[:sml] ), np.mean( self.trajfbY[:sml] )
+            xy = np.mean( self.trajfbX[-sml:] ), np.mean( self.trajfbY[-sml:] )
         pygame.draw.circle(self._display_surf, self.color_feedback,
                         xy, radius, 0)
+        return xy
 
-    def drawCursorOrig(self, debug=0, verbose=0):
+    def drawCursorOrig(self, debug=0, verbose=0, smooth = 0):
         r = self.params['radius_cursor']
         c = self.color_cursor_orig
         if debug:
@@ -1269,12 +1274,21 @@ class VisuoMotor:
         if self.just_moved_home:
             #return True
             x,y = self.home_position
+            xy = (x,y)
         else:
             x,y = (self.cursorX, self.cursorY)
 
-        pygame.draw.circle(self._display_surf, c, (x,y) , r, 0)
+            xy = (x,y)
+            #zeroth element is invalid
+            sml = min(smooth, len(self.trajX)-1 )
+            if sml > 2:
+                xy = np.mean( self.trajX[-sml:] ), np.mean( self.trajY[-sml:] )
+                #print(f'{self.current_phase}: Smoothed coords = {xy}')
+
+        pygame.draw.circle(self._display_surf, c, xy , r, 0)
         if verbose:
             print(f'Draw orig cursor {self.cursorX, self.cursorY}')
+        return xy
 
 
     def drawTraj(self, pert=0):
@@ -1456,10 +1470,11 @@ class VisuoMotor:
                 self.color_home = self.color_home_def
 
                 at_home_ext = self.is_home('unpert_cursor', 'radius_home_strict_inside', 2)
-                at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
+                at_home =     self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
                 if at_home_ext:
-                    self.drawCursorOrig(verbose=0)
-                if not at_home:
+                    smooth = self.params['smooth_traj_home']
+                    xy = self.drawCursorOrig(verbose=0, smooth = smooth)
+                if not at_home_ext:
                     if self.params['rest_return_home_indication'] == 'text':
                         s = 'Return to the center'
                         if self.left_home_during_prep and \
@@ -1521,7 +1536,7 @@ class VisuoMotor:
                     self.drawHome()
                     at_home = self.is_home('unpert_cursor', 'radius_home')
                     if at_home:
-                        smooth = 3
+                        smooth = self.params['smooth_traj_feedback'] // 2
                     else:
                         smooth = 0
                     self.drawCursorFeedback(smooth = smooth)
@@ -1532,10 +1547,11 @@ class VisuoMotor:
                     self.drawTgt()
                 self.drawHome()
                 mpsc = self.params['motor_prep_show_cursor']
+                smooth = self.params['smooth_traj_home']
                 if mpsc == 'orig':
-                    self.drawCursorOrig()
+                    xy = self.drawCursorOrig(smooth = smooth)
                 elif mpsc == 'feedback':
-                    self.drawCursorFeedback()
+                    self.drawCursorFeedback(smooth = smooth)
                 elif mpsc != 'no':
                     raise ValueError(f'Wrong param motor_prep_show_cursor == {mpsc}')
                 #self.drawPopupText('WAIT', 'center')
@@ -1894,7 +1910,7 @@ class VisuoMotor:
         return r
 
     def is_home(self, coords_label = 'unpert_cursor',
-                param_name = 'radius_return', mult=1.):
+                param_name = 'radius_return', mult=1., pos = None):
         if self.just_moved_home:
             return True
         if coords_label == 'unpert_cursor':
@@ -1956,8 +1972,8 @@ class VisuoMotor:
 
             if self.params['joystick_angle2cursor_control_type'] == 'angle_scaling':
                 # set cursor as a multiple of the total height/width
-                self.cursorX = self.home_position[0] + ax1 * (self.params['width_for_cccomp'] / 2)
-                self.cursorY = self.home_position[1] + ax2 * (self.params['height_for_cccomp'] / 2)
+                cursorX = self.home_position[0] + ax1 * (self.params['width_for_cccomp'] / 2)
+                cursorY = self.home_position[1] + ax2 * (self.params['height_for_cccomp'] / 2)
             elif self.params['joystick_angle2cursor_control_type'] == 'velocity':
                 coefX = 0.05
                 coefY = 0.05
@@ -1966,14 +1982,14 @@ class VisuoMotor:
                 noisesc_start = 1.1
                 noisesc_cont  = 0.5
                 if abs(ax1orig) > noise1 * noisesc_start or ( len(self.trajX) > ml and abs(ax1orig) > noise1 * noisesc_cont ) :
-                    self.cursorX += ax1 * (self.params['width_for_cccomp'] / 2)   * coefX
+                    cursorX = self.cursorX + ax1 * (self.params['width_for_cccomp'] / 2)   * coefX
                 if abs(ax2orig) > noise2 * noisesc_start or ( len(self.trajY) > ml and abs(ax1orig) > noise1 * noisesc_cont ):
-                    self.cursorY += ax2 * (self.params['height_for_cccomp'] / 2)  * coefY
+                    cursorY += self.cursorY + ax2 * (self.params['height_for_cccomp'] / 2)  * coefY
             else:
                 raise ValueError(self.params['joystick_angle2cursor_control_type'])
 
-            self.cursorX = int(  self.cursorX  )
-            self.cursorY = int(  self.cursorY  )
+            self.cursorX = int(  cursorX  )
+            self.cursorY = int(  cursorY  )
             # old
             #self.cursorX = int(round(((ax1 - jaxlims[0]) / jaxrng) *
             #                    (self.params['width'] - 0) + 0))
@@ -1981,6 +1997,10 @@ class VisuoMotor:
             #                    (self.params['height'] - 0) + 0))
         else:
             self.cursorX, self.cursorY = self.HID_controller.get_pos()
+            cursorX, cursorY = self.cursorX, self.cursorY
+
+        #float coords
+        return cursorX, cursorY
 
     def reset_traj(self):
         self.trajX     = [] # true traj
@@ -2006,9 +2026,10 @@ class VisuoMotor:
         it govers phase change
         '''
         prev_phase = self.current_phase
-        self.cursor_pos_update()
+        cursorX,cursorY = self.cursor_pos_update()
         # only if task is running (i.e. when task_start is True)
-
+        self.trajX += [ cursorX ]
+        self.trajY += [ cursorY ]
 
         #print('alall')
 
@@ -2025,6 +2046,7 @@ class VisuoMotor:
             if not at_home:
                 # if we leave center, reset to zero
                 self.phase_start_times["at_home"] = time.time()
+                #print(f'REST: Not at home, reset: {self.cursorX,self.cursorY}, home pos = {self.home_position}')
 
             # if we spent inside time at home than show target
             #at_home_enough = (self.frame_counters["at_home"] == self.params['FPS']*\
@@ -2105,8 +2127,8 @@ class VisuoMotor:
                 self.current_phase = 'REST'
 
         elif self.current_phase == 'TARGET_AND_FEEDBACK':
-            self.trajX += [ self.cursorX ]
-            self.trajY += [ self.cursorY ]
+            #self.trajX += [ self.cursorX ]
+            #self.trajY += [ self.cursorY ]
 
             self.color_target = self.color_target_def
 
@@ -2243,8 +2265,8 @@ class VisuoMotor:
         elif (self.current_phase == 'TARGET'):
             if self.params['feedback_type'] == 'online':
                 raise ValueError('nooo!')
-            self.trajX += [ self.cursorX ]
-            self.trajY += [ self.cursorY ]
+            #self.trajX += [ self.cursorX ]
+            #self.trajY += [ self.cursorY ]
             print(f'len traj = {len(self.trajX) }')
             # if we have reached radius, set to FEEDBACK
             if (self.test_reach_finished()):
@@ -2387,7 +2409,7 @@ class VisuoMotor:
 
                         snew = repr(self.jaxcenter)
 
-                        print(f'Update jaxcenter, add {jaxc_upd}:  {sold} -> {snew}')
+                        print(f'AUTO RECALIB: Update jaxcenter, add {jaxc_upd}:  {sold} -> {snew}')
 
         elif (self.current_phase == 'RETURN'):
             at_home = self.is_home('unpert_cursor', 'radius_return')
