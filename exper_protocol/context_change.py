@@ -391,7 +391,7 @@ class VisuoMotor:
                 self.add_param('num_training',2)
             else:
                 #self.add_param('num_training',6)
-                self.add_param('num_training',20)
+                self.add_param('num_training',12)
         else:
             self.add_param('num_training',num_training)
 
@@ -562,25 +562,6 @@ class VisuoMotor:
         self.instuctions_str += (f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n"
         "(c'est la seule fois où vous devrez appuyer sur un bouton du joystick)\n\n")
         ###################   FRENCH TEXT END #####################
-
-
-
-        # English ver
-        ##self.instuctions_str = 'We will start soon. Please wait for instructions'
-        #self.instuctions_str = (f'You will see targets that you have to reach using {self.params["controller_type"]}\n\n'
-        #'Start moving only after you see BOTH the bright green target and the cursor.\n'
-        #'If you leave too early, you will see a red circle helping you to return back.\n'
-        #'Remember: you have to keep your hand steady at the end to complete the reach.\n'
-        #f'{retpos_str}\n'
-        #'After you finish you will receive Eur reward\n proportional to your performance :)')
-        #self.instuctions_str += '\n\npress "c" to calibrate joystick'
-        #self.instuctions_str += '\npress "q","w" to control cursor size'
-        #self.instuctions_str += '\npress "ESCAPE" to exit'
-
-        #if self.params['controller_type'] == 'mouse':
-        #    self.instuctions_str += '\n\nClicking mouse button returns you to center (only to be used in emergency)'
-
-        #self.instuctions_str += f'\n\nNow press any {self.params["controller_type"]} button start the task.\n\n'
 
         self.break_start_str = 'BREAK'
         # color to which target changes when it is touched by the feedback
@@ -1388,9 +1369,9 @@ class VisuoMotor:
                 #    f.writelines(perfstrs )
 
                 self.logfile.write('\n\n' )
-                self.logfile.write(";".join(perfstrs) )
                 monetary_value_tot = self.reward_accrued * self.reward2EUR_coef # without rounding!
                 perfstrs[-1] = perfstrs[-1] + f'; reward_accrued={self.reward_accrued}; monetary_value_tot={monetary_value_tot}'
+                self.logfile.write(";".join(perfstrs) )
 
             self.drawTextMultiline( endstrs + [''] + perfstrs,
                                    font = self.myfont_popup,
@@ -1641,7 +1622,7 @@ class VisuoMotor:
                 #self.drawPopupText(instr,
                 #                   font_size = self.foruser_font_size)
                 self.drawTextMultiline(instr, font = self.myfont_popup,
-                                       pos_label= 'center', voffset_glob = -160 )
+                                       pos_label= 'center', voffset_glob = -300 )
 
                 #self.drawProgressBar(0.23)
 
