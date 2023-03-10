@@ -186,8 +186,12 @@ class VisuoMotor:
         self.add_param('ITI_show_home',1)
 
         self.add_param('max_EUR_reward', 10)
+        self.add_param('success_rate_expected', 0.9) # not only hits but total reward
 
         self.add_param('reward_rounding', 'end')
+
+        # can be 'no'
+        self.add_param('autmatic_joystick_center_calib_adjust', 'end_ITI')
 
         ####################################################
         #################  durations
@@ -534,7 +538,7 @@ class VisuoMotor:
         "Commencez à bouger seulement quand vous voyez le curseur blanc et que la cible change de couleur et devient vert vif\n"
         #
         #"Si vous partez trop tôt, un cercle jaune apparaît, ce qui indique qu'il faut revenir à la position de départ.\n\n"
-        "Si vous partez trop tôt, un cercle jaune apparaîtra et vous incitera à retourner à votre position de départ\n\n."
+        "Si vous partez trop tôt, un cercle jaune apparaîtra et vous incitera à retourner à votre position de départ.\n\n"
         #
         "A la fin de chaque mouvement, la couleur du cercle central "
         "changera (vert ou rouge)\n pour vous indiquer si vous avez atteint "
@@ -622,7 +626,7 @@ class VisuoMotor:
         # precalib on workstation
         self.jaxlims_d = {'left': 0.788848876953125, 'right': 0.6519775390625,
                           'up': 0.724334716796875, 'down': 0.618743896484375}
-        self.jaxcenter =  {'ax1':0.055, 'ax2':-0.06} #{'ax1' :0}
+        #self.jaxcenter =  {'ax1':0.055, 'ax2':-0.06} #{'ax1' :0}
         self.jaxcenter =  {'ax1':-0.04, 'ax2':-0.013} #{'ax1' :0}
 
         # when set to true, we take as center the axes values
@@ -631,6 +635,7 @@ class VisuoMotor:
         self.joystick_center_autocalib = True
 
         #self.jaxlims = -1,1
+        self.discrepancy_red_lr = 0.1
 
         self.tgti_to_show = -1
         self.cursorX = 0
@@ -848,7 +853,7 @@ class VisuoMotor:
 
         # TODO: estimate
         #success_rate_expected = 0.6
-        success_rate_expected = 0.7
+        success_rate_expected = self.params['success_rate_expected']
         expected_max_reward = len( self.trial_infos ) * success_rate_expected
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
 
@@ -1243,7 +1248,7 @@ class VisuoMotor:
 
         #return pct
 
-    def drawCursorFeedback(self, radmult = 1.):
+    def drawCursorFeedback(self, radmult = 1., smooth = 0):
         '''
         radmult is for explosions
         '''
@@ -1266,9 +1271,12 @@ class VisuoMotor:
         #else:
         radius = self.params['radius_cursor']
         radius *= radmult
+        xy = (self.feedbackX, self.feedbackY)
+        sml = min(smooth, len(self.trajfbX) )
+        if sml > 1:
+            xy = np.mean( self.trajfbX[:sml] ), np.mean( self.trajfbY[:sml] )
         pygame.draw.circle(self._display_surf, self.color_feedback,
-                        (self.feedbackX, self.feedbackY),
-                        radius, 0)
+                        xy, radius, 0)
 
     def drawCursorOrig(self, debug=0, verbose=0):
         r = self.params['radius_cursor']
@@ -1313,6 +1321,8 @@ class VisuoMotor:
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
         if round:
             monetary_value_tot = np.ceil( monetary_value_tot / 5 ) * 5
+
+            monetary_value_tot = min(monetary_value_tot, self.params['max_EUR_reward'])
 
         #ldt = self.drawPopupText(
         #    f'Trial N={self.trial_index}/{len(self.trial_infos)}',
@@ -1528,7 +1538,12 @@ class VisuoMotor:
                 if self.current_phase == 'TARGET_AND_FEEDBACK':
                     self.drawTgt()
                     self.drawHome()
-                    self.drawCursorFeedback()
+                    at_home = self.is_home('unpert_cursor', 'radius_home')
+                    if at_home:
+                        smooth = 3
+                    else:
+                        smooth = 0
+                    self.drawCursorFeedback(smooth = smooth)
 
             if self.current_phase == 'GO_CUE_WAIT_AND_SHOW':
                 self.color_target = self.color_wait_for_go_cue
@@ -2120,7 +2135,7 @@ class VisuoMotor:
             hit_cond = self.point_in_circle(self.target_coords[self.tgti_to_show],
                                     (self.feedbackX, self.feedbackY),
                                     self.params['radius_target'] +
-                                    self.params['radius_cursor'])
+                                    self.params['radius_cursor'] / 2.)
 
             reach_time_finished = self.timer_check(self.current_phase,
                                     'time_feedback')
@@ -2362,6 +2377,37 @@ class VisuoMotor:
                         self.current_phase = 'TRAINING_END'
                         self.reset_main_vars()
 
+                # update joystick calibration at the end of ITI (normally one
+                # would expect participant to return joystick to vertical at
+                # this moment)
+                if self.params['controller_type'] == 'joystick' and \
+                        self.params['autmatic_joystick_center_calib_adjust'] == 'end_ITI':
+                    # uses cursorX,cursorY values
+                    at_home = self.is_home('unpert_cursor',
+                                           'radius_home')
+                    # only update calibration if at home otherwise we assume
+                    # they moved too much
+                    if at_home:
+                        # normally we should be in the center if we are not, ther
+                        # is a problem and we have to update calibration
+                        #discrepancy_x = self.cursorX - self.home_position[0]
+                        #discrepancy_y = self.cursorY - self.home_position[1]
+                        ax1 = self.HID_controller.get_axis(0)
+                        ax2 = self.HID_controller.get_axis(1)
+                        ax1c = self.jaxcenter['ax1']
+                        ax2c = self.jaxcenter['ax2']
+                        jaxc_upd = (ax1 - ax1c) * self.discrepancy_red_lr,\
+                            (ax2 - ax2c) * self.discrepancy_red_lr
+
+                        sold = repr(self.jaxcenter)
+
+                        self.jaxcenter['ax1'] += jaxc_upd[0]
+                        self.jaxcenter['ax2'] += jaxc_upd[1]
+
+                        snew = repr(self.jaxcenter)
+
+                        print(f'Update jaxcenter, add {jaxc_upd}:  {sold} -> {snew}')
+
         elif (self.current_phase == 'RETURN'):
             at_home = self.is_home('unpert_cursor', 'radius_return')
             #time_is_up = ( self.frame_counters["return"] == int(self.params['FPS'] *\
@@ -2454,6 +2500,7 @@ class VisuoMotor:
         self.current_log.append(ty)
 
 
+
         # TODO: save area difference of traj
         # TODO: save angular coords?
         # TODO: trial within block?
@@ -2473,8 +2520,12 @@ class VisuoMotor:
             self.current_log.append(-1)
             self.current_log.append(-1)
 
-        # add rwd
         self.current_log.append(self.reward)
+
+        #tgtcolor = ':'.join( map(str,self.color_target) )
+        #self.current_log.append(tgtcolor)
+        #homecolor = ':'.join( map(str,self.color_home) )
+        #self.current_log.append(homecolor)
 
         self.current_log.append(self.current_time - self.initial_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
