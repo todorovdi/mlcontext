@@ -24,7 +24,9 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
         m = num_targets * mult
         targetAngs = np.arange(num_targets) * mult -  m / 2
 
-    targetAngs = targetAngs + (180 + 90)
+    #targetAngs = targetAngs + (180 + 90)
+    targetAngs = targetAngs + 90
+    print('Angles counting CCW from right pointing Oy, mostly above home')
     return targetAngs
 
 def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
@@ -42,9 +44,10 @@ def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
         # this will be given to pygame.draw.circle as 3rd arg
         # half screen width + cos * radius
         # half screen hight + sin * radius
-        target_coords.append(
-                (int(round(home_pos[0] + np.cos(tgtAngRad) * dist_tgt_from_home)),
-                int(round(home_pos[1] + np.sin(tgtAngRad) * dist_tgt_from_home))))
+        X = (np.cos(tgtAngRad) * dist_tgt_from_home)
+        Y = (np.sin(tgtAngRad) * dist_tgt_from_home)
+        X,Y = homec2screen(X,Y, home_pos)
+        target_coords.append((X,Y) )
 
     return target_coords
 

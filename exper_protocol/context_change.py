@@ -58,6 +58,7 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
         targetAngs = np.arange(num_targets) * mult -  m / 2
 
     targetAngs = targetAngs + (180 + 90)
+    print('Angles counting CCW from right pointing Oy, mostly below home')
     return targetAngs
 
 class VisuoMotor:
@@ -968,6 +969,9 @@ class VisuoMotor:
         '''
         #targetAngs = [22.5+180, 67.5+180, 112.5+180, 157.5+180]
         #targetAngs = get_target_angles(self.params['num_targets'])
+
+
+        # here we rely on the fact the we used 180 + 90 in get_target_angles
         targetAngs = self.params['target_angles']
         self.target_angles = targetAngs  # in deg
 
@@ -1363,6 +1367,9 @@ class VisuoMotor:
 
                 self.logfile.write('\n\n' )
                 self.logfile.write(";".join(perfstrs) )
+                monetary_value_tot = self.reward_accrued * self.reward2EUR_coef # without rounding!
+                perfstrs[-1] = perfstrs[-1] + f'; reward_accrued={self.reward_accrued}; monetary_value_tot={monetary_value_tot}'
+
             self.drawTextMultiline( endstrs + [''] + perfstrs,
                                    font = self.myfont_popup,
                                     pos_label= 'center')
@@ -2143,7 +2150,7 @@ class VisuoMotor:
                             self.last_reach_too_slow = 1
                         tdif = time.time() - self.phase_start_times[self.current_phase]
                         print(f'Reach did not finish early, according to '
-                            '{self.params["early_reach_end_event"]}: tdif={tdif:.2f} sec')
+                            f'{self.params["early_reach_end_event"]}: tdif={tdif:.2f} sec')
                     else:
                         self.last_reach_too_slow = 0
 
@@ -2430,7 +2437,11 @@ class VisuoMotor:
         self.current_log.append(self.unpert_feedbackY)
         self.current_log.append(self.error_distance)  # Euclidean distance
 
-        self.current_log.append(self.target_coords[self.tgti_to_show])  # Euclidean distance
+        tx,ty = self.target_coords[self.tgti_to_show]
+        self.current_log.append(tx)
+        self.current_log.append(ty)
+
+
         # TODO: save area difference of traj
         # TODO: save angular coords?
         # TODO: trial within block?
@@ -2449,6 +2460,9 @@ class VisuoMotor:
         else:
             self.current_log.append(-1)
             self.current_log.append(-1)
+
+        # add rwd
+        self.current_log.append(self.reward)
 
         self.current_log.append(self.current_time - self.initial_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
