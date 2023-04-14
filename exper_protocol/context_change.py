@@ -27,7 +27,11 @@ def fnuniquify(path):
         counter += 1
     return path
 
-
+def gget(d,k,defv):
+    v = d.get(k,defv)
+    if v is None:
+        v = defv
+    return v
 
 def trial_info2trgtpl(ti, phase):
     spec_phases = [ 'BUTTON_PRESS' ]
@@ -71,6 +75,11 @@ class VisuoMotor:
     def add_param(self, name, value):
         self.params.update({name: value})
         self.paramfile.write(name + ' = ' + str(value) + '\n')
+
+    def copy_param(self, d, name, defval):
+        v = gget(d, name, defval)
+        self.add_param(name, v)
+        print('v = ',v)
 
     def add_param_comment(self, comment):
         self.paramfile.write(comment + '\n')
@@ -198,14 +207,19 @@ class VisuoMotor:
         # can be 'no'
         self.add_param('autmatic_joystick_center_calib_adjust', 'end_ITI')
 
+
+        self.copy_param(info, 'noise_fb', 0)
+
         k = 'smooth_traj_home'
         # for mouse with noise_fb 5 I was using 22
-        v = info.get(k,8)
-        self.add_param(k,v)
+        self.copy_param(info, k,8)
+        #v = info.get(k,8)
+        #self.add_param(k,v)
 
         k = 'smooth_traj_feedback_when_home'
-        v = info.get(k,8)
-        self.add_param(k,v)
+        self.copy_param(info, k,8)
+        #v = info.get(k,8)
+        #self.add_param(k,v)
 
         ####################################################
         #################  durations
@@ -278,8 +292,6 @@ class VisuoMotor:
 
         ######################  Rendering params
 
-        v = info.get('noise_fb', 0)
-        self.add_param('noise_fb', v)
 
         self.add_param('motor_prep_show_target',1)
         #self.add_param('motor_prep_show_cursor','no')
@@ -686,6 +698,7 @@ class VisuoMotor:
         np.random.seed(self.seed)
 
         was_repet = True
+        verbose_repeating_void = 1
         while was_repet:
             ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
             if self.params['allow_context_conseq_repetition']:
@@ -699,7 +712,8 @@ class VisuoMotor:
                     if vfti1 == vfti2:
                         was_repet = True
                         # break from this and return to outer while
-                        print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
+                        if verbose_repeating_void:
+                            print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
                         break
                 vfti0 = vfti_seq_noperm[ct_inds[0] ]
                 if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
@@ -2783,6 +2797,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
     parser.add_argument('--noise_fb',    type=int)
     parser.add_argument('--smooth_traj_home',  type=int)
+    parser.add_argument('--smooth_traj_feedback_when_home',  type=int)
 
 
     args = parser.parse_args()
