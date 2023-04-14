@@ -30,7 +30,12 @@ def fnuniquify(path):
 
 
 def trial_info2trgtpl(ti, phase):
-    tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
+    spec_phases = [ 'BUTTON_PRESS' ]
+    spec_phases = [ 'BREAK', 'TRAINING_START', 'TRAINING_END', 'PAUSE' ]
+    if phase in spec_phases:
+        tpl = ('','','', phase )
+    else:
+        tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
     return tpl
 
 def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 0):
@@ -869,19 +874,42 @@ class VisuoMotor:
         #n_pauses = (num_context_repeats *  2/8)
         n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
 
+
+        self.MEG_start_trigger = 252
+        self.MEG_stop_trigger = 253
+
+        phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
+            'REST', 'GO_CUE_WAIT_AND_SHOW',
+            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS' ]
+
+        if self.params['rest_after_return']:
+             phases_trigger_coded += ['RETURN']
+
+        if self.params['feedback_type'] == 'offline':
+             phases_trigger_coded += ['TARGET', 'FEEDBACK']
+        else:
+             phases_trigger_coded += [ 'TARGET_AND_FEEDBACK']
+
+
+        # 'TARGET':20, 'FEEDBACK': 35,
+
         # I want list of tuples -- target id, visual feedback type, phase
         # (needed for trigger)
         self.CONTEXT_TRIGGER_DICT = {}
         CTD_to_export = {}
-        trigger = self.phase2trigger['PAUSE'] + 40   # to get 100
+        # 0,
+        #trigger = self.phase2trigger['PAUSE'] + 40   # to get 100
+        trigger = 1   # to get 100
         for ti in self.trial_infos:
-            for phase in self.phase2trigger.keys():
+            for phase in phases_trigger_coded:
                 tpl = trial_info2trgtpl(ti, phase)
                 if tpl not in self.CONTEXT_TRIGGER_DICT:
                     self.CONTEXT_TRIGGER_DICT[ tpl ] = trigger
                     s = f'{tpl[0]},{tpl[1]},{tpl[2]},{tpl[3]}'
                     CTD_to_export[s  ] = trigger
                     trigger += 1
+
+                    assert trigger < self.MEG_start_trigger
 
 
         import json
@@ -931,8 +959,6 @@ class VisuoMotor:
         #self.trial_infos = self.trial_infos[:2]
 
 
-        self.MEG_start_trigger = 252
-        self.MEG_stop_trigger = 253
         ## Start MEG recordings
         #port.setData(0)
         #time.sleep(0.1)
@@ -2231,10 +2257,10 @@ class VisuoMotor:
 
                 #self.feedbackX, self.feedbackY = \
                 #        self.apply_visuomotor_pert((self.cursorX, self.cursorY), vft)
+                # TODO: perhaps move this outside "else"
                 self.feedbackX, self.feedbackY = \
                     self.alter_feedback(
                     (self.cursorX, self.cursorY), vft, trial_info['trial_type'])
-
 
                 self.trajfbX += [ self.feedbackX ]
                 self.trajfbY += [ self.feedbackY ]
@@ -2244,6 +2270,7 @@ class VisuoMotor:
                 d = (self.feedbackX - self.target_coords[self.tgti_to_show][0])**2 + \
                     (self.feedbackY - self.target_coords[self.tgti_to_show][1])**2
                 self.error_distance = np.sqrt(float(d))
+                #####
 
                 if self.params['hit_when_passing'] and hit_cond:
                     # hit color
@@ -2652,7 +2679,7 @@ class VisuoMotor:
             ax2 = self.HID_controller.get_axis(1)
             if max(abs(ax1),abs(ax2) ) > 0.15:
                 raise ValueError(('You have to start the app with joystick'
-                    ' in the center position'))
+                                  f' in the center position. Now it is at ax1={ax1:.3f}, ax2={ax2:.3f}'))
             self.jaxcenter =  {'ax1':ax1, 'ax2':ax2} #{'ax1' :0}
 
         # MAIN LOOP

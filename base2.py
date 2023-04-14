@@ -301,6 +301,10 @@ def calc_target_coordinates_centered(target_angs):
 
 
 def calc_rad_angle_from_coordinates(X, Y, radius_ = None):
+    '''
+    angle counting from bottom direction CCW (i.e. right)
+    so 1,0 gives 90
+    '''
     if radius_ is None:
         radius_cur = radius_
     else:
@@ -593,3 +597,241 @@ def getXGBparams(n_jobs=None, tree_method='gpu_hist'):
          'eta':XGB_eta, 'subsample': 1 }
     add_clf_creopts.update(method_params)
     return add_clf_creopts
+
+def adjustTrajCoords(XY, tgtcur, home_position, params, 
+                     rot_origin='trajstart', auto_scale = 1,
+                     shift_home = 1):
+    '''
+    tgtcur and XY are in screen coords
+    '''
+    from exper_protocol.utils import screen2homec
+    fbXhc, fbYhc = screen2homec(XY[:,0], XY[:,1], home_position  )
+    fbXYhc = np.array( [fbXhc, fbYhc], dtype=float )
+
+    fb0pt = np.array( [fbXhc[0], fbYhc[0] ] , dtype=float)
+    if rot_origin == 'trajstart':
+        origin = fb0pt
+    elif rot_origin == 'home':
+        origin = np.zeros(2)
+    else:
+        raise ValueError('wrong')
+    tgtcur_adj = tgtcur - origin
+
+    d = np.linalg.norm( tgtcur - fb0pt  )
+    d0 = float(params['dist_tgt_from_home'])
+
+    ang_tgt = np.math.atan2(*tuple(tgtcur_adj) )
+
+    fbXYhc_ta = rot( *fbXYhc, ang_tgt, origin )
+    #fbXhc_ta, fbYhc_ta = fbXYhc_ta
+
+    tgtcur_ta = rot( *tgtcur, ang_tgt, origin )
+
+    rh = float( params['radius_home'])
+    dirx = rh * np.sin(ang_tgt) + origin[0]
+    diry = rh * np.cos(ang_tgt) + origin[1]
+    dirtgt0 = np.array( [dirx,diry] )
+
+    dirtgt_ta = rot(*dirtgt0, ang_tgt, origin) #- origin[0],0
+    #print('dirtgt_ta = ',dirtgt_ta, dirtgt0, ang_tgt, origin)
+    #return 0
+    dirtgt_ta[1] = np.sqrt( rh**2 - dirtgt_ta[0]**2 )
+
+    ds = np.sqrt( fbXhc**2 + fbYhc**2 )
+    leave_home_coef = 1.
+    inds_leavehome = np.where(ds > rh * leave_home_coef )[0]
+
+    if len(inds_leavehome) > 1:
+        ind_first_lh  = inds_leavehome[0]  # first index when fb traj is outside home
+        curveX, curveY   = fbXYhc_ta
+
+        if shift_home:
+            curveX,  curveY   = fbXYhc_ta  - origin[:,None] 
+            dirtgt_ta -= origin
+            tgtcur_ta -= origin
+
+        if auto_scale:
+            if shift_home:
+                curveX *= d0 / d 
+                curveY *= d0 / d 
+            else:
+                # I'd need to shfit before rescalign and then shift back
+                raise ValueError('not implemented')
+
+        fbXYlh_ta = fbXYhc_ta[:,ind_first_lh]
+    else:
+        curveX, curveY = None,None
+        ind_first_lh = None
+
+    return curveX, curveY, ind_first_lh, dirtgt_ta, tgtcur_ta
+
+
+def areaBetween(xs,ys, xs2, ys2, start ,end):
+    import shapely
+    assert shapely.__version__ == "2.0.1"
+    from shapely.algorithms.cga import signed_area
+    from shapely.geometry import LineString
+    if end is None:
+        endx_ = []
+        endy_ = []
+    else:
+        endx_ = list( end[:1] )
+        endy_ = list( end[1:] )
+    xs = np.hstack( [start[0] ] + list( xs ) + endx_ + list(xs2[::-1] )  + [ start[0] ] )
+    ys = np.hstack( [start[1] ] + list( ys ) + endy_ + list(ys2[::-1] )  + [ start[1] ] )
+    lr = LineString(np.c_[xs,ys])
+
+    #mp = shapely.validation.make_valid(shapely.geometry.Polygon(np.c_[xs, ys]))
+    #return mp.area
+    return signed_area(lr)
+
+def areaOne(xs,ys,start,end):
+    a = areaBetween(xs,ys,[],[], start,end)
+    return a
+
+def calcNormCoefSectorArea(params):
+    # 0.5 r**2 theta
+    full_sector_area = 0.5 * float(params['target_location_spread']) *(np.pi / 180) *\
+            float(params['dist_tgt_from_home'])**2
+    norm_coef = 10. / full_sector_area 
+    return norm_coef
+
+def areaBetweenTraj(dftraj1, dftraj2, home_position, 
+                    target_coords, params, invalid_val = np.nan,
+                    endpoint = 'last_point',
+                    ax = None):
+    #fbXY = dfcurtr[['feedbackX', 'feedbackY']].to_numpy()
+    '''
+    assumes all entires in dftrajs are valied (i.e. index 0 was stripped already
+    '''
+    import matplotlib.pyplot as plt
+    from exper_protocol.utils import screen2homec
+    target_coords_homec = screen2homec( *tuple(zip(*target_coords)), home_position  )
+    txc,tyc = target_coords_homec
+
+    rs = []
+    for dftraj in [dftraj1, dftraj2]:
+        if len(dftraj) == 0:
+            return np.nan
+        tgti = dftraj['tgti_to_show'].to_numpy()[0]
+        tgtcur = np.array(  [ txc[tgti], tyc[tgti] ] )
+
+        ofbXY = dftraj[['unpert_feedbackX', 'unpert_feedbackY']].to_numpy()
+        r = adjustTrajCoords(ofbXY, tgtcur, home_position, params, 
+                        rot_origin='trajstart', auto_scale = 1,
+                        shift_home = 1)
+        rs += [r]
+        if r[0] is None:
+            return invalid_val
+
+    xs, ys, ind_first_lh, tgtline_homec_crossing, \
+        tgt = rs[0]
+    xs = xs[ind_first_lh:]
+    ys = ys[ind_first_lh:]
+
+    xs2, ys2, ind_first_lh2, tgtline_homec_crossing2, \
+        tgt2 = rs[1]
+    xs2 = xs2[ind_first_lh2:]
+    ys2 = ys2[ind_first_lh2:]
+
+    #print(ys)
+    #print(ys2)
+
+    start = tgtline_homec_crossing
+    if endpoint == 'target':
+        end = tgt 
+    elif endpoint == 'last_point':
+        end = None
+    else:
+        raise ValueError(f'endpoint = {endpoint} not impl')
+
+    ab = areaBetween(xs,ys,xs2,ys2, start,end)
+
+    if ax is not None:
+        rt = float(params['radius_target'] )
+        rh = float( params['radius_home'])
+        xlim = (-170,170)
+        crc = plt.Circle(tgt, rt, color='blue', lw=2, fill=False,
+                         alpha=0.6)
+        ax.add_patch(crc)
+
+
+        ##################
+        # mark black first exit point
+        #ax.scatter( [fbXYlh_ta[0]], [fbXYlh_ta[1]] , alpha=0.8, c='k', s= 10)
+
+        # aligned ofb
+        ax.scatter(xs , ys, alpha=0.4,
+                   label='ofb ta (homec)',
+                   marker='*', s = 30, c='brown')
+
+        # aligned ofb
+        ax.scatter(xs2 , ys2 , alpha=0.4,
+                   label='ofb2 ta (homec)',
+                   marker='*', s = 30, c='green')
+
+        r = zip( tgtline_homec_crossing , tgt) 
+        ax.plot( *r, ls=':', label='tgtpath ta')
+
+        #################
+
+        #ax.scatter( *list(zip(dirtgt0)) , alpha=0.8, c='k', s= 10,
+        #           marker = 'x', label='dirtgt0')
+
+        #ax.scatter( *list(zip(dirtgt) ) , alpha=0.8, c='k', s= 24,
+        #           marker = '+', label='dirtgt shiftscaled')
+
+        #ax.scatter( *list(zip(dirtgt_ta)) , alpha=0.8, c='k', s= 10,
+        #           marker = '*', label='dirtgt_ta')
+
+        ############
+        crc = plt.Circle((0, 0), rh, color='r', lw=2, fill=False,
+                         alpha=0.6)
+        ax.add_patch(crc)
+
+        #################
+
+        vft1  = dftraj1['vis_feedback_type'].to_numpy()[0]
+        ti1   = dftraj1['trial_index'].to_numpy()[0]
+        tgti1 = dftraj1['tgti_to_show'].to_numpy()[0]
+
+        vft2  = dftraj2['vis_feedback_type'].to_numpy()[0]
+        ti2   = dftraj2['trial_index'].to_numpy()[0]
+        tgti2 = dftraj2['tgti_to_show'].to_numpy()[0]
+        #td = time_lh - dfcurtr["time"].to_numpy()[0]
+
+        #s = '\n'
+        #if addinfo is not None:
+        #    r = addinfo
+        #    for cols_ in titlecols:
+        #        for col in cols_:
+        #            s += f'{col}='
+        #            colv = r[col]
+        #            if isinstance(colv,float):
+        #                s += f'{colv:.2f}'
+        #            else:
+        #                s += f'{colv}'
+        #            s+='; '
+        #        s += '\n'
+        #    #s = f'\nerror={r["error_endpoint_ang"]:.1f}; trialwb={r["trialwb"]}; tt={r["trial_type"]}'
+        
+        ttl =  f'ti={ti1}; vft={vft1}; tgti={tgti1}\n' 
+        ttl += f'ti={ti2}; vft={vft2}; tgti={tgti2}\n' 
+        ttl += f'area={ab:.2f}'
+        ax.set_title(ttl)
+        ax.legend(loc='lower left')
+        ax.set_xlim(xlim)
+
+    return ab
+
+def rot(xs,ys, ang=20. * np.pi / 180., startpt =(0.,0.) ):
+    # ang is in radians
+    xs = np.array(xs, dtype = float) - startpt[0]
+    ys = np.array(ys, dtype = float) - startpt[1]
+    assert ang < 2 * np.pi + 1e-5, ang
+    xs2 = xs * np.cos(ang) - ys * np.sin(ang)
+    ys2 = xs * np.sin(ang) + ys * np.cos(ang)
+
+    xs2 += startpt[0]
+    ys2 += startpt[1]
+    return np.array( [xs2, ys2])

@@ -29,7 +29,8 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
     print('Angles counting CCW from right pointing Oy, mostly above home')
     return targetAngs
 
-def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
+def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home,
+                          consistent_with_app = True):
     '''
     called in class constructor
     returns in screen coords
@@ -46,15 +47,28 @@ def calc_target_positions(targetAngs, home_pos, dist_tgt_from_home):
         # half screen hight + sin * radius
         X = (np.cos(tgtAngRad) * dist_tgt_from_home)
         Y = (np.sin(tgtAngRad) * dist_tgt_from_home)
-        X,Y = homec2screen(X,Y, home_pos)
+
+
+        if consistent_with_app:
+            X += home_pos[0]
+            Y += home_pos[1]
+        else:
+            # this would more logical but inconsistent with the code in context
+            # change
+            X,Y = homec2screen(X,Y, home_pos)
         target_coords.append((X,Y) )
 
     return target_coords
 
 def calc_err_eucl(feedbackXY, target_coords, tgti_to_show):
+    '''
+    tuple as input
+    '''
     feedbackX, feedbackY = feedbackXY
-    d = (feedbackX -target_coords[tgti_to_show][0])**2 + \
-        (feedbackY -target_coords[tgti_to_show][1])**2
+    a = feedbackX -target_coords[tgti_to_show][0]
+    b = feedbackY -target_coords[tgti_to_show][1]
+    #print(a,b)
+    d = a**2 + b**2
     error_distance = np.sqrt(float(d))
     return error_distance
 

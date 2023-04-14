@@ -291,6 +291,15 @@ X = X[non_hit]
 X = X[:, :, wh]
 Y = np.array(analysis_value)
 Y = Y[:, non_hit].T
+#
+
+#values_for_es = [target_angs[targets_stable],      0
+#                target_angs[prev_targets_stable],  1
+#                movement_stable,                   2
+#                prev_movement_stable,              3
+#                prev_errors_stable]                4
+
+
 #es = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))/Y_es[4]
 #corr = ((Y_es[0]-Y_es[2]) - (Y_es[1]-Y_es[3]))
 # Classic decoding
