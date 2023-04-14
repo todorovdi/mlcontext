@@ -79,7 +79,6 @@ class VisuoMotor:
     def copy_param(self, d, name, defval):
         v = gget(d, name, defval)
         self.add_param(name, v)
-        print('v = ',v)
 
     def add_param_comment(self, comment):
         self.paramfile.write(comment + '\n')
@@ -227,20 +226,26 @@ class VisuoMotor:
 
         self.add_param_comment('# Time inside the home position'
                                'before trial starts (seconds)')
-        self.add_param('time_at_home', 0.5)
+        self.copy_param(info, 'time_at_home', 0.5)
         self.add_param_comment('# Time for feedback (seconds)')
         #self.add_param('time_feedback', 0.25)
         self.add_param_comment('# if online feedback, duration'
                                'of reach  (seconds)')
-        if self.debug:
-            self.add_param('time_feedback', 2.)
+
+        k = 'time_feedback'
+        v = info.get(k, None)
+        if v is not None:
+            self.add_param(k, v)
         else:
-            # shorter time for mouse
-            if self.params['controller_type'] == 'mouse':
-                self.add_param('time_feedback', 0.95)
+            if self.debug:
+                self.add_param(k, 2.)
             else:
-                #self.add_param('time_feedback', 1.15)
-                self.add_param('time_feedback', 0.75)
+                # shorter time for mouse
+                if self.params['controller_type'] == 'mouse':
+                    self.add_param(k, 0.95)
+                else:
+                    #self.add_param(k, 1.15)
+                    self.add_param(k, 0.75)
 
         # see  Haith 2015 JNeuro (used 0.3s and 1.5s) and Bracco 2018 (used
         # 1.5s)
@@ -248,20 +253,23 @@ class VisuoMotor:
         # completely otherwise similarity will be less)
         self.add_param_comment('# time between the target appearance (w/o cursor visible) and the movement start (seconds)')
         #self.add_param('motor_prep_duration', 1.5)
-        self.add_param('motor_prep_duration', 0.5)
-        #self.add_param('motor_prep_duration', 5.5) # DEBUG MOTOR PREP
+        self.copy_param(info, 'motor_prep_duration', 0.5)
 
         self.add_param_comment('# Time for intertrial interval (seconds)')
-        #self.add_param('ITI_duration', 1.5)
-        self.add_param('ITI_duration', 2)
+        self.copy_param(info, 'ITI_duration', 0.5)
         self.add_param_comment('# Max jitter during ITI (seconds)')
         self.add_param('ITI_jitter', 0.1)
         #self.add_param_comment('# Show text?')
 
-        if self.debug:
-            self.add_param('pause_duration', 10)
+        k = 'pause_duration'
+        v = info.get(k, None)
+        if v is not None:
+            self.add_param('pause_duration', v)
         else:
-            self.add_param('pause_duration', 60)
+            if self.debug:
+                self.add_param('pause_duration', 10)
+            else:
+                self.add_param('pause_duration', 60)
 
         # in seconds
         self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
@@ -698,7 +706,9 @@ class VisuoMotor:
         np.random.seed(self.seed)
 
         was_repet = True
-        verbose_repeating_void = 1
+        verbose_repeats_remove = 0
+        num_first_veridical = 0
+        num_repet = 0
         while was_repet:
             ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
             if self.params['allow_context_conseq_repetition']:
@@ -712,15 +722,19 @@ class VisuoMotor:
                     if vfti1 == vfti2:
                         was_repet = True
                         # break from this and return to outer while
-                        if verbose_repeating_void:
+                        if verbose_repeats_remove:
                             print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
+                        num_repet += 1
                         break
                 vfti0 = vfti_seq_noperm[ct_inds[0] ]
                 if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
-                    print('First was veridical')
+                    if verbose_repeats_remove:
+                        print('First was veridical')
+                    num_first_veridical += 1
                     was_repet = True
                 if not was_repet:
                     print('no conseq context block repetitions')
+        print(f'Contest seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
 
 
         #print('ct_inds',ct_inds)
@@ -2441,7 +2455,7 @@ class VisuoMotor:
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
                     self.reset_traj()
-                print ('Start trial # ' + str(self.trial_index))
+                print (f'Start trial # {self.trial_index} / {len(self.trial_infos)}')
 
                 if self.trial_index < len(self.trial_infos):
                     trial_info2 = self.trial_infos[self.trial_index]
@@ -2798,6 +2812,11 @@ if __name__ == "__main__":
     parser.add_argument('--noise_fb',    type=int)
     parser.add_argument('--smooth_traj_home',  type=int)
     parser.add_argument('--smooth_traj_feedback_when_home',  type=int)
+    parser.add_argument('--time_feedback',  type=float)
+    parser.add_argument('--motor_prep_duration',  type=float)
+    parser.add_argument('--ITI_duration',  type=float)
+    parser.add_argument('--time_at_home',  type=float)
+    parser.add_argument('--pause_duration',  type=float)
 
 
     args = parser.parse_args()
