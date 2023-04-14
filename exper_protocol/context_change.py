@@ -42,29 +42,29 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
     # defloc -- angle from vertical line
     if num_targets == 3:
         assert target_location_pattern == 'fan'
-        targetAngs = np.array([defloc-spread,defloc,defloc + spread])
+        target_angles = np.array([defloc-spread,defloc,defloc + spread])
     elif num_targets == 2:
-        targetAngs = np.array([defloc-spread,defloc + spread])
+        target_angles = np.array([defloc-spread,defloc + spread])
     elif num_targets == 1:
-        targetAngs = np.array([defloc])
+        target_angles = np.array([defloc])
     elif num_targets == 4:
         if target_location_pattern == 'diamond':
             mult = 90 # in deg
-            targetAngs = np.arange(num_targets) * mult
+            target_angles = np.arange(num_targets) * mult
         elif target_location_pattern == 'fan':
             mult = spread # in deg
             m = num_targets * mult
-            targetAngs = np.arange(num_targets) * mult -  m / 2
+            target_angles = np.arange(num_targets) * mult -  m / 2
         else:
             raise ValueError(f'target_location_pattern = {target_location_pattern} not implemented')
     elif num_targets >= 4:
         mult = spread # in deg
         m = num_targets * mult
-        targetAngs = np.arange(num_targets) * mult -  m / 2
+        target_angles = np.arange(num_targets) * mult -  m / 2
 
-    targetAngs = targetAngs + (180 + 90)
+    target_angles = target_angles + (180 + 90)
     print('Angles counting CCW from right pointing Oy, mostly below home')
-    return targetAngs
+    return target_angles
 
 class VisuoMotor:
 
@@ -198,8 +198,14 @@ class VisuoMotor:
         # can be 'no'
         self.add_param('autmatic_joystick_center_calib_adjust', 'end_ITI')
 
-        self.add_param('smooth_traj_home',8)
-        self.add_param('smooth_traj_feedback',0)
+        k = 'smooth_traj_home'
+        # for mouse with noise_fb 5 I was using 22
+        v = info.get(k,8)
+        self.add_param(k,v)
+
+        k = 'smooth_traj_feedback_when_home'
+        v = info.get(k,8)
+        self.add_param(k,v)
 
         ####################################################
         #################  durations
@@ -238,9 +244,10 @@ class VisuoMotor:
         self.add_param('ITI_jitter', 0.1)
         #self.add_param_comment('# Show text?')
 
-        self.add_param('pause_duration', 60)
         if self.debug:
             self.add_param('pause_duration', 10)
+        else:
+            self.add_param('pause_duration', 60)
 
         # in seconds
         self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
@@ -271,6 +278,8 @@ class VisuoMotor:
 
         ######################  Rendering params
 
+        v = info.get('noise_fb', 0)
+        self.add_param('noise_fb', v)
 
         self.add_param('motor_prep_show_target',1)
         #self.add_param('motor_prep_show_cursor','no')
@@ -364,11 +373,11 @@ class VisuoMotor:
         #self.add_param('num_targets',4)
         #self.add_param('target_location_pattern', 'diamond')
         self.add_param('target_location_pattern', 'fan')
-        targetAngs = get_target_angles(self.params['num_targets'],
+        target_angles = get_target_angles(self.params['num_targets'],
                     self.params['target_location_pattern'],
                     self.params['target_location_spread'])
-        tas = list( map(lambda x: f'{x:.0f}', targetAngs) )
-        print('targetAngs = ',targetAngs)
+        tas = list( map(lambda x: f'{x:.0f}', target_angles) )
+        print('target_angles = ',target_angles)
         self.add_param('target_angles',tas)
 
         # giving 55 min
@@ -988,17 +997,17 @@ class VisuoMotor:
         '''
         called in class constructor
         '''
-        #targetAngs = [22.5+180, 67.5+180, 112.5+180, 157.5+180]
-        #targetAngs = get_target_angles(self.params['num_targets'])
+        #target_angles = [22.5+180, 67.5+180, 112.5+180, 157.5+180]
+        #target_angles = get_target_angles(self.params['num_targets'])
 
 
         # here we rely on the fact the we used 180 + 90 in get_target_angles
-        targetAngs = self.params['target_angles']
-        self.target_angles = targetAngs  # in deg
+        target_angles = self.params['target_angles']
+        self.target_angles = target_angles  # in deg
 
         # list of 2-tuples
         self.target_coords = []
-        for tgti,tgtAngDeg in enumerate(targetAngs):
+        for tgti,tgtAngDeg in enumerate(target_angles):
             tgtAngRad = float(tgtAngDeg)*(np.pi/180)
             # this will be given to pygame.draw.circle as 3rd arg
             # half screen width + cos * radius
@@ -1284,8 +1293,9 @@ class VisuoMotor:
         #zeroth element is invalid
         xy = (self.feedbackX, self.feedbackY)
         sml = min(smooth, len(self.trajfbX)-1 )
-        if sml > 1:
+        if sml > 2:
             xy = np.mean( self.trajfbX[-sml:] ), np.mean( self.trajfbY[-sml:] )
+            #print(sml, xy, (self.feedbackX, self.feedbackY ) )
         pygame.draw.circle(self._display_surf, self.color_feedback,
                         xy, radius, 0)
         return xy
@@ -1297,7 +1307,8 @@ class VisuoMotor:
             c = self.color_cursor_orig_debug
             r /= 2
 
-        if self.just_moved_home:
+        jmh = self.params['noise_fb'] < 1e-10
+        if self.just_moved_home and jmh:
             #return True
             x,y = self.home_position
             xy = (x,y)
@@ -1310,6 +1321,7 @@ class VisuoMotor:
             if sml > 2:
                 xy = np.mean( self.trajX[-sml:] ), np.mean( self.trajY[-sml:] )
                 #print(f'{self.current_phase}: Smoothed coords = {xy}')
+            #print(sml, xy, (x,y) )
 
         pygame.draw.circle(self._display_surf, c, xy , r, 0)
         if verbose:
@@ -1500,7 +1512,8 @@ class VisuoMotor:
                 if at_home_ext:
                     smooth = self.params['smooth_traj_home']
                     xy = self.drawCursorOrig(verbose=0, smooth = smooth)
-                if not at_home_ext:
+                #if not at_home_ext:
+                if not at_home:  # not at_home_ext
                     if self.params['rest_return_home_indication'] == 'text':
                         s = 'Return to the center'
                         if self.left_home_during_prep and \
@@ -1562,7 +1575,7 @@ class VisuoMotor:
                     self.drawHome()
                     at_home = self.is_home('unpert_cursor', 'radius_home')
                     if at_home:
-                        smooth = self.params['smooth_traj_feedback'] // 2
+                        smooth = self.params['smooth_traj_feedback_when_home'] 
                     else:
                         smooth = 0
                     self.drawCursorFeedback(smooth = smooth)
@@ -1835,7 +1848,7 @@ class VisuoMotor:
 
     def alter_feedback(self, coordinates, perturbation, alteration_type):
         if alteration_type in ['veridical', 'perturbation']:
-            return self.apply_visuomotor_pert(coordinates,
+            r = self.apply_visuomotor_pert(coordinates,
                                               perturbation)
         elif alteration_type == 'error_clamp':
             vec_ideal = np.array(self.target_coords[self.tgti_to_show]) - \
@@ -1847,9 +1860,20 @@ class VisuoMotor:
             vec = (float(lvf) / float(lvi)) * vec_ideal
             vec = vec.astype(int) + np.array(self.home_position)
             #print('EC ',coordinates, vec)
-            return tuple(vec)
+            r = tuple(vec)
         else:
             raise ValueError(f'wrong {alteration_type}')
+
+        return r
+
+    def applyNoise(self, coordinates, noise = None  ):
+        if noise is None:
+            noise = self.params['noise_fb'] 
+        r = coordinates
+        
+        if noise > 1e-10:
+            r = np.array(r) + np.random.uniform(-1,1) * noise
+        return r
 
     def apply_visuomotor_pert(self, coordinates, perturbation):
         '''
@@ -2014,16 +2038,17 @@ class VisuoMotor:
             else:
                 raise ValueError(self.params['joystick_angle2cursor_control_type'])
 
-            self.cursorX = int(  cursorX  )
-            self.cursorY = int(  cursorY  )
             # old
             #self.cursorX = int(round(((ax1 - jaxlims[0]) / jaxrng) *
             #                    (self.params['width'] - 0) + 0))
             #self.cursorY = int(round(((ax2 - jaxlims[0]) / jaxrng) *
             #                    (self.params['height'] - 0) + 0))
         else:
-            self.cursorX, self.cursorY = self.HID_controller.get_pos()
-            cursorX, cursorY = self.cursorX, self.cursorY
+            cursorX, cursorY = self.HID_controller.get_pos()
+            #cursorX, cursorY = self.cursorX, self.cursorY
+
+        self.cursorX = int(  cursorX  )
+        self.cursorY = int(  cursorY  )
 
         #float coords
         return cursorX, cursorY
@@ -2035,6 +2060,7 @@ class VisuoMotor:
         self.trajfbY   = []
         self.traj_jax1 = []  # joystick angles raw
         self.traj_jax2 = []
+        print('Reset traj')
 
     def reset_main_vars(self):
         self.feedbackX = 0
@@ -2052,12 +2078,11 @@ class VisuoMotor:
         it govers phase change
         '''
         prev_phase = self.current_phase
-        cursorX,cursorY = self.cursor_pos_update()
+        cursorX, cursorY = self.cursor_pos_update()
+        self.cursorX, self.cursorY = self.applyNoise( (cursorX,cursorY), self.params['noise_fb'] )
         # only if task is running (i.e. when task_start is True)
         self.trajX += [ cursorX ]
         self.trajY += [ cursorY ]
-
-        #print('alall')
 
         prev_trial_index = self.trial_index
         trial_info = self.trial_infos[self.trial_index]
@@ -2110,11 +2135,12 @@ class VisuoMotor:
                                     'motor_prep_duration')
 
             at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
-            self.reset_traj()
+            #self.reset_traj()
             if not at_home:
                 self.left_home_during_prep = 1
                 # we return to rest (NOT to ITI, so don't update trial counter)
                 self.current_phase = 'REST'
+                self.reset_traj()    # reset traj if leave home
             elif wait_finished:
                 self.left_home_during_prep = 0
                 if self.params['feedback_type'] == 'online':
@@ -2261,6 +2287,8 @@ class VisuoMotor:
                 self.feedbackX, self.feedbackY = \
                     self.alter_feedback(
                     (self.cursorX, self.cursorY), vft, trial_info['trial_type'])
+                # no noise here because noise is already applied to self.cursorX
+                #self.applyNoise( (self.feedbackX, self.feedbackY), self.params['noise_fb'] )
 
                 self.trajfbX += [ self.feedbackX ]
                 self.trajfbY += [ self.feedbackY ]
@@ -2302,6 +2330,7 @@ class VisuoMotor:
                 self.feedbackX, self.feedbackY = \
                     self.alter_feedback(
                     (self.cursorX, self.cursorY), vft, trial_info['trial_type'])
+                self.applyNoise( (self.feedbackX, self.feedbackY) )
 
                 # This variable saves the unperturbed, unprojected feedback
                 self.unpert_feedbackX, self.unpert_feedbackY = self.cursorX, self.cursorY
@@ -2363,6 +2392,7 @@ class VisuoMotor:
 
                 if self.params['return_home_after_pause']:
                     self.moveHome()
+                    self.reset_traj()
                 print ('Start Trial: ' + str(self.trial_index))
 
         elif (self.current_phase == 'ITI'):
@@ -2396,6 +2426,7 @@ class VisuoMotor:
 
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
+                    self.reset_traj()
                 print ('Start trial # ' + str(self.trial_index))
 
                 if self.trial_index < len(self.trial_infos):
@@ -2452,6 +2483,7 @@ class VisuoMotor:
                 # TODO: maybe here one needs to punish participant otherwise
                 # they won't return at all
                 self.moveHome()
+                self.reset_traj()
             #else:
             #    self.frame_counters["return"] += 1
         else:
@@ -2651,6 +2683,7 @@ class VisuoMotor:
                 self.params['radius_cursor'] = self.params['radius_cursor']+1
             if event.key == pygame.K_r:
                 self.moveHome()
+                self.reset_traj()
             if event.key == pygame.K_s:
                 self.save_scr()
             if (event.key == pygame.K_c) and (not self.task_started == 1) and\
@@ -2748,6 +2781,8 @@ if __name__ == "__main__":
     parser.add_argument('--test_end_task',    default=0,  type=int)
     parser.add_argument('--num_training',       type=int)
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
+    parser.add_argument('--noise_fb',    type=int)
+    parser.add_argument('--smooth_traj_home',  type=int)
 
 
     args = parser.parse_args()
