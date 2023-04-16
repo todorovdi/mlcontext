@@ -12,8 +12,8 @@ FLAGS="-rtvz$DRY_RUN_FLAG --progress"
 # for dry run
 #FLAGS="-rtvzn --progress"; echo "DRY RUN!!"
 #
-LOCAL=1
-REMOTE=0
+#LOCAL=1
+REMOTE=1
 
 if [ $REMOTE -gt 0 ]; then
   DIRECT_SSH=0

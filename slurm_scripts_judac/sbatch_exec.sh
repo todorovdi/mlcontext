@@ -11,8 +11,8 @@
 ##SBATCH --output=../../slurmout/out_%j.out   # Standard output and error log
 ###/p/project/icei-hbp-2020-0012
 
-#SBATCH --output=/p/project/icei-hbp-2020-0012/slurmout/ly_memerr_out_%A_%a.out   # Standard output and error log
-#SBATCH --error=/p/project/icei-hbp-2020-0012/slurmout/ly_memerr_out_%A_%a.out   # Standard output and error log
+#SBATCH --output=/p/project/icei-hbp-2022-0017/slurmout/ly_memerr_out_%A_%a.out   # Standard output and error log
+#SBATCH --error=/p/project/icei-hbp-2022-0017/slurmout/ly_memerr_out_%A_%a.out   # Standard output and error log
 
 ## hpc, htc or gpu.  Normally htc is stronger but waiting line is bigger
 #SBATCH --mem=15G                    # Memory in MB per default
@@ -36,15 +36,22 @@ ID=$SLURM_ARRAY_TASK_ID
 echo "$JOBID"_"$ID"
 #SHIFT_ID=0
 
-jutil env activate -p icei-hbp-2020-0012
+unset PYTHONPATH
+. $HOME/.bashrc
+unset PYTHONPATH
+mamba activate merr
+mamba deactivate
+mamba activate merr
+export PYTHONPATH="$CODE_MEMORY_ERRORS"
 
-module load Stages/2022
-module load GCC
-#module load R
-module load Python/3.9.6
-module load matplotlib
+#jutil env activate -p icei-hbp-2022-0017
+#module load Stages/2023
+#module load GCC
+##module load R
+#module load Python/3.9.6
+#module load matplotlib
 
-source $CODE_MEMORY_ERRORS/__workstart_HPC.sh
+#source $CODE_MEMORY_ERRORS/__workstart_HPC.sh
 
 # was needed on in2p3
 #HOME_DIR=/pbs/home/d/dtodorov

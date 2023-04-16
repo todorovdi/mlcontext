@@ -12,7 +12,7 @@ import seaborn as sns
 import pandas as pd
 from scipy.stats import ttest_rel
 sns.set_palette('colorblind')
-plt.style.use('seaborn')
+#plt.style.use('seaborn')
 color_palette = sns.color_palette("colorblind", 8).as_hex()
 colors = [color_palette[1], color_palette[7]]
 
@@ -20,8 +20,8 @@ SMALL_SIZE = 8
 MEDIUM_SIZE = 10
 BIGGER_SIZE = 12
 
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Tahoma']
+#plt.rcParams['font.family'] = 'sans-serif'
+#plt.rcParams['font.sans-serif'] = ['Tahoma']
 plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
 plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
 plt.rc('axes', labelsize=SMALL_SIZE)    # fontsize of the x and y labels
@@ -43,8 +43,12 @@ try:
     seed_excplicit = 1
 except NameError as e:
     seed_excplicit = 0
-    output_folder = f'spoc_home2_{hpass}'
-    save_folder = f'SPoC2_{hpass}_{analysis_name}'
+    #output_folder = f'spoc_home2_{hpass}'
+    #save_folder = f'SPoC2_{hpass}_{analysis_name}'
+
+    output_folder = f'spoc_home2_{hpass}_almost_orig'
+    save_folder = f'SPoC2_{hpass}_{analysis_name}_almost_orig'
+    print('          EXC')
 
 if not op.exists( op.join(path_fig, save_folder) ):
     os.mkdir(op.join(path_fig, save_folder) )
@@ -62,6 +66,9 @@ task = 'VisuoMotor'
 time_locked = 'target'
 #freqs = ['broad']
 environment = ['stable', 'random']
+if DEBUG:
+    environment = ['stable']
+
 rt = regression_type
 fnames_zero_size = []
 fnames_missing = []
@@ -81,21 +88,31 @@ for decoding_type in ['classic', 'b2b']:
 
             tmin_cur = -0.5
             tmax_cur = 0
-            fname_full = genFnSliding(results_folder, env,regression_type,
-                time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
-
-            if not os.path.exists(fname_full):
-                print(f'ERROR: {fname_full} does not exist, skipping')
-                fnames_missing.append(fname_full)
-                continue
+            if 'almost_orig' not in output_folder:
+                fname_full = genFnSliding(results_folder, env,regression_type,
+                    time_locked,analysis_name,freq_name,tmin_cur,tmax_cur)
+                if not os.path.exists(fname_full):
+                    print(f'ERROR: {fname_full} does not exist, skipping')
+                    fnames_missing.append(fname_full)
+                    continue
+                else:
+                    f = np.load(fname_full)
+                    print(f'INFO: loaded {fname_full}')
+                    fnames_cur.append(fname_full)
+                if decoding_type == 'classic':
+                    sc = f['scores']
+                elif decoding_type == 'b2b':
+                    sc = f['partial_scores']
             else:
-                f = np.load(fname_full)
-                print(f'INFO: loaded {fname_full}')
-                fnames_cur.append(fname_full)
-            if decoding_type == 'classic':
-                sc = f['scores']
-            elif decoding_type == 'b2b':
-                sc = f['partial_scores']
+                if decoding_type == 'classic':
+                    sct = 'scores'
+                elif decoding_type == 'b2b':
+                    sct = 'spatial_scores'
+                fn = f'{env}_{regression_type}_{sct}_{analysis_name}_{freq_name}.npy'
+                fname_full = pjoin(results_folder, fn)
+                sc = np.load(fname_full)
+                if sc.ndim > 1:
+                    sc = sc[:,0]  # take statistic
 
             if not sc.size:
                 print(f'WARNING: corrupted scores for {fname_full}')
@@ -139,15 +156,22 @@ for decoding_type in ['classic', 'b2b']:
             #    elif env == 'random':
             #        all_scores_random.append(sc)
     all_scores_stable = np.array(all_scores_stable)
-    all_scores_random = np.array(all_scores_random)
+    print(len(all_scores_stable),len(all_scores_random))
+    if DEBUG:
+        all_scores_random = all_scores_stable
+    else:
+        all_scores_random = np.array(all_scores_random)
+
+    print(all_scores_stable.shape,all_scores_random.shape)
 
     nb_sub = len(all_scores_random)
     scores_stable = np.ravel(all_scores_stable, order='F')
     scores_random = np.ravel(all_scores_random, order='F')
     scores = np.concatenate((scores_stable, scores_random), axis=0)
-    type = 2 * ([analyses[0]] * nb_sub + [analyses[1]] * nb_sub + [analyses[2]] *
-                nb_sub + [analyses[3]] * nb_sub)
+    type = 2 * ([analyses[0]] * nb_sub + [analyses[1]] * nb_sub +\
+            [analyses[2]] * nb_sub + [analyses[3]] * nb_sub)
     cond = ['Stable'] * 4 * nb_sub + ['Random'] * 4 * nb_sub
+    print(len(type), len(cond), len(scores) )
     try:
         data = pd.DataFrame({'Decoding Performance': scores,
                             'Condition': cond, 'Type': type})
@@ -157,6 +181,7 @@ for decoding_type in ['classic', 'b2b']:
         continue
 
     if not data.size:
+        print('EMTPY')
         continue
 
 

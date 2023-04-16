@@ -189,6 +189,7 @@ elif par['slide_windows_type'] == 'explicit':
         tmax = [float(tmax)]
     tminmax = zip(tmin,tmax)
 
+tminmax = list(tminmax)
 # to save to the final file
 par['tminmax'] = tminmax
 
@@ -412,7 +413,9 @@ if (raw is None) or ( (not loaded_flt_raw) and \
 
 #groupby
 
+#############################################################
 ##################################    Start calc
+#############################################################
 for tmin_cur,tmax_cur in tminmax:
     bsl = None
 

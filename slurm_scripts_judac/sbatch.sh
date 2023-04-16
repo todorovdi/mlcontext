@@ -26,8 +26,9 @@ echo "$JOBID"_"$ID"
 #SHIFT_ID=0
 
 
-HOME_DIR=/pbs/home/d/dtodorov
-CODE_DIR=/pbs/home/d/dtodorov/memerr/code
+#remnants from pbs
+#HOME_DIR=/pbs/home/d/dtodorov
+#CODE_DIR=/pbs/home/d/dtodorov/memerr/code
 source $HOME_DIR/.bashrc
 
 echo "DATA_MEMORY_ERRORS_STAB_AND_STOCH=$DATA_MEMORY_ERRORS_STAB_AND_STOCH"

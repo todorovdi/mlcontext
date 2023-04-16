@@ -322,7 +322,7 @@ for tmin_cur,tmax_cur in tminmax:
         if do_classic_dec:
             print(f'-------- Start classic decoding '
                 f'est_parallel_across_dims={est_parallel_across_dims} for {n_jobs} jobs')
-            scoring = make_scorer(scorer_spearman)
+            #scoring = make_scorer(scorer_spearman)
             scores = list()
             # over all dims
             def _est_run(est,X,y,cv,scoring,n_jobs):

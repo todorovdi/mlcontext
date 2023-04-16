@@ -533,16 +533,16 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
     if df_inds is None:
         df_inds = behav_df.index
 
-    dis = np.diff(behav_df.index.values)
-    np.max( dis ) == np.max( dis ) and np.max( dis ) == 1
+    # dis = np.diff(behav_df.index.values)
+    # np.max( dis ) == np.max( dis ) and np.max( dis ) == 1
 
     targets_locs_cur      = np.array(behav_df.loc[df_inds,'target_locs'])
     target_inds      = np.array(behav_df.loc[df_inds,'target_inds'])
     org_feedback_cur      = np.array(behav_df.loc[df_inds,'org_feedback'])
     feedback_cur      = np.array(behav_df.loc[df_inds,'feedback'])
     # after enforcing consistencey
-    environment_cur  = np.array(behav_df.loc[df_inds,'environment'])
-    #feedback     = np.array(behav_d.locf['feedback'])
+    # environment_cur  = np.array(behav_df.loc[df_inds,'environment'])
+    # feedback     = np.array(behav_d.locf['feedback'])
     feedbackX_cur    = np.array(behav_df.loc[df_inds, 'feedbackX'])
     feedbackY_cur    = np.array(behav_df.loc[df_inds, 'feedbackY'])
     movement_cur     = np.array(behav_df.loc[df_inds, 'org_feedback'])

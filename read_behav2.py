@@ -250,10 +250,12 @@ behav_df = df({'trials': range(nb_trials),
 fname = op.join(path_data, subject, 'behavdata',
                 f'err_sens_{task}.npz')
 # save inside
-#r = computeErrSens(behav_df, subject, fname=fname)
+r = computeErrSens(behav_df, subject, fname=fname)
+print(fname)
 
 fname = op.join(path_data, subject, 'behavdata',
                 f'behav_{task}_df.pkl')
+print(fname)
 behav_df.to_pickle(fname)
 
 #         all_trials_duration.append(np.mean(trial_duration))
