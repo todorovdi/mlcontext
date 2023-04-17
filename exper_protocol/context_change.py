@@ -256,7 +256,7 @@ class VisuoMotor:
         self.copy_param(info, 'motor_prep_duration', 0.5)
 
         self.add_param_comment('# Time for intertrial interval (seconds)')
-        self.copy_param(info, 'ITI_duration', 0.5)
+        self.copy_param(info, 'ITI_duration', 2)
         self.add_param_comment('# Max jitter during ITI (seconds)')
         self.add_param('ITI_jitter', 0.1)
         #self.add_param_comment('# Show text?')
@@ -276,11 +276,12 @@ class VisuoMotor:
         self.add_param('MEG_trigger_duration', 1000 / 1000)
 
 
-        if self.debug:
-            self.add_param('training_text_show_duration', 0.4)
-        else:
-            self.add_param('training_text_show_duration', 4)
-            #self.add_param('training_text_show_duration', 0.3)
+        self.copy_param(info, 'training_text_show_duration', 4)
+        #if self.debug:
+        #    self.add_param('training_text_show_duration', 0.4)
+        #else:
+        #    self.add_param('training_text_show_duration', 4)
+        #    #self.add_param('training_text_show_duration', 0.3)
 
 
         # not used for now
@@ -1473,7 +1474,8 @@ class VisuoMotor:
                 if self.params['ITI_show_home'] and not \
                         (self.params['hit_notif'] == 'home_color_change' or \
                         self.params['miss_notif'] == 'home_color_change'):
-                    self.drawHome()
+                    self.drawHome() 
+                    #print('ITI draw home 1')
 
                 tdif = time.time() - \
                     self.phase_start_times[self.current_phase]
@@ -1487,12 +1489,14 @@ class VisuoMotor:
                         self.drawTgt( 1 + 1.2 * \
                             np.sin((tdif/self.params['perf_feedback_duration']) * np.pi))
                     elif self.params['hit_notif'] == 'home_color_change':
+                        #print('self.params[hit_notif] == home_color_change' )
                         tdifdif = tdif - self.params['perf_notif_start_delay']
                         if (tdifdif >= 0) and (tdifdif <= self.params['perf_feedback_duration']):
                             self.color_home = self.color_hit
                         else:
                             self.color_home = self.color_home_def
                         self.drawHome()
+                        #print('ITI draw home 2', tdifdif)
                     elif self.params['hit_notif'] != 'no':
                         raise ValueError(f'wrong hit notif {self.params["hit_notif"]}')
                 else:
@@ -2817,6 +2821,8 @@ if __name__ == "__main__":
     parser.add_argument('--ITI_duration',  type=float)
     parser.add_argument('--time_at_home',  type=float)
     parser.add_argument('--pause_duration',  type=float)
+    parser.add_argument('--training_text_show_duration',  type=float)
+ 
 
 
     args = parser.parse_args()
