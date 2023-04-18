@@ -323,7 +323,7 @@ def calc_rad_angle_from_coordinates(X, Y, radius_ = None):
 
 
 class B2B(BaseEstimator):
-    def __init__(self, G, H, n_splits=30, each_fit_is_parallel=True, n_jobs=None):
+    def __init__(self, G, H, n_splits=30, each_fit_is_parallel=True, n_jobs=None, random_state_split = None, ensemble = None):
         self.n_splits = n_splits
         self.G = G
         self.H = H
@@ -331,10 +331,16 @@ class B2B(BaseEstimator):
             from config2 import n_jobs
         self.n_jobs = n_jobs
         self.each_fit_is_parallel = each_fit_is_parallel
+        self.random_state_split = random_state_split
+        self.ensemble = ensemble
+        assert not ( ( self.random_state_split is not None ) and ( self.ensemble is not None )  )
 
     def fit(self, X, Y):
         from joblib import Parallel, delayed
-        ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5)
+        if self.ensemble is None:
+            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = random_state_split)
+        else:
+            ensemble = self.ensemble
 
         split = ensemble.split(X, Y)
         if self.each_fit_is_parallel:
@@ -346,6 +352,8 @@ class B2B(BaseEstimator):
                 #H_hat = self.H.fit(Y[H_set], Y_hat[H_set]).coef_
                 H_hats.append(H_hat)
             self.E_ = np.mean(H_hats, 0)
+
+            self.H_hats = H_hats
         else:
             print(f'B2B start parllel (across splits) with {self.n_jobs} jobs')
             H_hats = Parallel(n_jobs=self.n_jobs)(
@@ -353,6 +361,8 @@ class B2B(BaseEstimator):
                     for (G_set, H_set) in split)
             H_hats = np.array(H_hats)
             self.E_ = np.mean(H_hats, 0)
+
+            self.H_hats = H_hats
 
         return self
 
@@ -384,32 +394,53 @@ def _b2b_fit_one_split2(X,Y,G_set,H_set,G,H):
 
 # this one cycles over dims so within a dim it does not make sense to
 # parallelize perhaps
-def _b2b_fit_one_split(X,Y,G_set,H_set,G,H):
+def _b2b_fit_one_split(isplit, X,Y,G_set,H_set,G,H):
+    #print(f'_b2b_fit_one_split: isplit = {isplit};')
     #Y_hats = [0] * dim
     dim = Y.shape[1]
     Y_hats = np.zeros( Y.shape )
     # over all dims
     import mne
+    verbose = 0
     with mne.use_log_level('warning'):
+        # across dims, take corres Y dimension, fig G on X[G_set],y[G_set]
+        if verbose:
+            print(f'_b2b_fit_one_split: (isplit={isplit}) G_set = {G_set}\n')
         for dim_ind in range(dim):
             y = Y[:, dim_ind]
             Y_hat = G.fit(X[G_set], y[G_set]).predict(X)
             Y_hats[:,dim_ind] = Y_hat
+            if verbose:
+                print(f'_b2b_fit_one_split: (isplit={isplit}, {dim_ind}) y[G_set] = {y[G_set]}\n')
         #Y_hats = np.array(Y_hats).T
         #Y_hats = Y_hats.T
         H_hat = H.fit(Y[H_set], Y_hats[H_set]).coef_
+        if verbose:
+            print(f'_b2b_fit_one_split: (isplit={isplit}) H_set = {H_set}\n')
+            print(f'_b2b_fit_one_split: (isplit={isplit}) Y[H_set] = {Y[H_set]}\n')
+            print(f'_b2b_fit_one_split: (isplit={isplit}) Yshape={Y.shape}, Yhatsshape ={Y_hats.shape} \n')
+            print(f'_b2b_fit_one_split: (isplit={isplit}) H_hat={H_hat}\n')
 
     return H_hat
 
 
+def _b2b_fit_one_split_back(isplit, Y, Yhat, H_set, H): 
+    return H.fit(Y[H_set], Yhat[H_set]).coef_
+
 # this one cycles over dims so within a dim it does not make sense to
 # parallelize perhaps
-def _b2b_fit_one_split_one_dim(dimi,X,y,G_set,G):
+def _b2b_fit_one_split_one_dim(isplit,dimi,X,y,G_set,G):
     #Y_hats = [0] * dim
     #Y_hats = np.zeros( Y.shape )
     # over all dims
     #for dim_ind in range(dim):
     #y = Y[:, dim_ind]
+
+    verbose = 0
+    if verbose:
+        print(f'_b2b_fit_one_split_one_dim: (isplit={isplit}, {dimi}) G_set = {G_set}\n')
+        print(f'_b2b_fit_one_split_one_dim: (isplit={isplit}, {dimi}) y[G_set] = {y[G_set]}\n')
+
     import mne
     with mne.use_log_level('warning'):
         y_hat = G.fit(X[G_set], y[G_set]).predict(X)
@@ -420,10 +451,14 @@ def _b2b_fit_one_split_one_dim(dimi,X,y,G_set,G):
 
     #H_hat = H.fit(Y[H_set], Y_hats[H_set]).coef_
 
-    return dimi,y_hat
+    return isplit,dimi,y_hat
 
-def _b2b_fit_one_split_one_dim_back(Y,Y_hats,H_set,H):
+def _b2b_fit_one_split_one_dim_back(isplit, Y,Y_hats,H_set,H):
     import mne
+    verbose = 0
+    if verbose:
+        print(f'_b2b_fit_one_split_one_dim_back: (isplit={isplit}) H_set = {H_set}\n')
+        print(f'_b2b_fit_one_split_one_dim_back: (isplit={isplit}) Y[H_set] = {Y[H_set]}\n')
     with mne.use_log_level('warning'):
     #Y_hats = [0] * dim
     #Y_hats = np.zeros( Y.shape )
@@ -437,13 +472,18 @@ def _b2b_fit_one_split_one_dim_back(Y,Y_hats,H_set,H):
     #Y_hats = Y_hats.T
 
         H_hat = H.fit(Y[H_set], Y_hats[H_set]).coef_
+        verbose = 0
+        if verbose:
+            print(f'_b2b_fit_one_split_one_dim_back: (isplit={isplit}) Yshape={Y.shape}, Yhatsshape ={Y_hats.shape} \n')
+            print(f'_b2b_fit_one_split_one_dim_back: (isplit={isplit}) H_hat={H_hat}\n')
 
     return H_hat
 
 
 class B2B_SPoC(BaseEstimator):
     def __init__(self, G, H, n_splits=30, parallel_type = 'across_splits_and_dims',
-                 n_jobs=None):
+                 n_jobs=None, random_state_split = None, ensemble = None,
+                 back_each_dim_sep = 0):
         self.n_splits = n_splits
         self.G = G
         self.H = H
@@ -456,11 +496,21 @@ class B2B_SPoC(BaseEstimator):
         assert parallel_type in ['no','across_splits','across_splits_and_dims']
         self.parallel_type = parallel_type
 
+        self.random_state_split = random_state_split
+        self.ensemble = ensemble
+        self.parallel_backend = 'multiprocessing'
+        self.back_each_dim_sep = back_each_dim_sep
+        assert not ( ( self.random_state_split is not None ) and ( self.ensemble is not None )  )
+
 
     def fit(self, X, Y):
         import mne
         from joblib import Parallel, delayed
-        ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5)
+        if self.ensemble is None:
+            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = random_state_split)
+        else:
+            ensemble = self.ensemble
+
         dim = Y.shape[1]
 
         #mne.use_log_level('warning')
@@ -470,47 +520,74 @@ class B2B_SPoC(BaseEstimator):
         if self.parallel_type == 'no':
             print('B2B_SPoC start NOT parllel (across splits)')
             H_hats = list()
-            for G_set, H_set in split:
-                H_hat = _b2b_fit_one_split(X,Y,G_set,H_set,self.G,self.H)
+            for isplit,(G_set, H_set) in enumerate(split):
+                H_hat = _b2b_fit_one_split(isplit, X,Y,G_set,H_set,self.G,self.H)
                 H_hats.append(H_hat)
             self.E_ = np.mean(H_hats, 0)
+
+            self.H_hats = H_hats
         else:
             if self.parallel_type == 'across_splits':
                 print(f'B2B_SPoC start parllel (across splits) with {self.n_jobs} jobs')
-                H_hats = Parallel(n_jobs=self.n_jobs)(
-                    delayed(_b2b_fit_one_split)( X,Y,G_set,H_set,self.G,self.H  ) \
-                        for (G_set, H_set) in split)
+                H_hats = Parallel(n_jobs=self.n_jobs, backend =self.parallel_backend)(
+                    delayed(_b2b_fit_one_split)( isplit,X,Y,G_set,H_set,self.G,self.H  ) \
+                        for isplit,(G_set, H_set) in enumerate(split) )
                 H_hats = np.array(H_hats)
                 self.E_ = np.mean(H_hats, 0)
+
+                self.H_hats = H_hats
             elif self.parallel_type == 'across_splits_and_dims':
                 import itertools
                 #a=[1,2,3]
                 #b=[4,5,6]
-                splits_x_dims = list( itertools.product( split, range(dim) ) )
+                split = list(split)
+                splits_x_dims = list( itertools.product( enumerate(split), range(dim) ) )
 
                 print(f'B2B_SPoC start parllel (across {len(splits_x_dims)} splits x dims) with {self.n_jobs} jobs')
-                r = Parallel(n_jobs=self.n_jobs)(
-                    delayed(_b2b_fit_one_split_one_dim)(dimi, X,Y[:,dimi],G_set,self.G  ) \
-                        for ((G_set, H_set),dimi) in splits_x_dims)
+                pl = Parallel(n_jobs=self.n_jobs, backend =self.parallel_backend)
+                r = pl( delayed(_b2b_fit_one_split_one_dim)(isplit, dimi, X, Y[:,dimi],G_set,self.G  ) \
+                        for ((isplit, (G_set, H_set_unused)), dimi) in splits_x_dims)
                 #return r
                 #rT = list( zip(*r) )
-                y_hat_per_dim = dim * [ [] ]
-                for dimi,y_hat in r:
+                #print('LEN (r) = ',len(r) )
+                #y_hat_per_dim = len(r) * [ [] ]
+
+                y_hat_per_dim = {}
+                for isplit,dimi,y_hat in r:
                     #if dimi not in y_hat_per_dim:
-                    y_hat_per_dim[dimi] += [ y_hat ]
+                    y_hat_per_dim[ (isplit, dimi) ] = y_hat.T 
 
-                for dimi,y_hats in enumerate(y_hat_per_dim):
-                    # we want dim dim to be the last one
-                    y_hat_per_dim[dimi] = np.array(y_hat_per_dim[dimi]).T
+                if self.back_each_dim_sep:
 
-                # now parallel across dims and other splits
-                H_hats = Parallel(n_jobs=self.n_jobs)(
-                    delayed(_b2b_fit_one_split_one_dim_back)\
-                    (Y,y_hat_per_dim[dimi],H_set,self.H  ) \
-                        for ((G_set, H_set),dimi) in splits_x_dims)
+                   # for dimi,y_hats in enumerate(y_hat_per_dim):
+                   #     # we want dim dim to be the last one
+                   #     y_hat_per_dim[dimi] = np.array(y_hat_per_dim[dimi]).T
 
-                H_hats = np.array(H_hats)
+                    # now parallel across dims and other splits
+                    H_hats = pl(
+                        delayed(_b2b_fit_one_split_one_dim_back)\
+                        (isplit, Y, y_hat_per_dim[isplit,dimi], H_set, self.H  ) \
+                            for ( (isplit, (G_set_unused, H_set) ),dimi) in splits_x_dims)
+
+                    H_hats = np.array(H_hats).reshape( ( len(split), dim, dim)  )
+                else:
+                    Y_hat_per_split = {}
+                    for isplit in range(len(split)):
+                        Y_hat_per_split[isplit] = []
+                        for dimi in range(dim):
+                            Y_hat_per_split[isplit] += [y_hat_per_dim[isplit,dimi]]
+                            #print( Y_hat_per_split[isplit] ))
+                        Y_hat_per_split[isplit] = np.vstack(Y_hat_per_split[isplit]).T
+                        #print('Y_hat_per_split[isplit].shape', Y_hat_per_split[isplit].shape)
+                        assert Y_hat_per_split[isplit].shape == Y.shape
+
+                    H_hats = pl( delayed(_b2b_fit_one_split_back)\
+                        (isplit, Y, Y_hat_per_split[isplit], H_set, self.H  ) \
+                            for  (isplit, (G_set_unused, H_set) ) in enumerate(split) )
+
                 self.E_ = np.mean(H_hats, 0)
+
+                self.H_hats = H_hats
 
         return self
 
