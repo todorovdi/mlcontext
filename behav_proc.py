@@ -1156,7 +1156,11 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
         v = int(v[:-2])
         k = k.replace('"','').replace(' ','')
         tt,vft,tgti,phase = k.split(',')
-        stage2pars[ v ] = tt,vft,int(tgti),phase
+        if len(tgti) > 0:
+            tgti = int(tgti)
+        else:
+            tgti = None
+        stage2pars[ v ] = tt,vft,tgti,phase
         if phase == phase_to_collect:
             phase2trigs[phase_to_collect] += [v]
         #print(line)

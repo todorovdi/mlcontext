@@ -27,6 +27,8 @@ from CalibrationGraphicsPygame import CalibrationGraphics
 
 from eyelink_helpers import *
 
+# at CRNL we have EyeLink 1000 Plus
+
 class VisuoMotorMEG(VisuoMotor):
 
     def initialize_parameters(self, info):
@@ -57,7 +59,7 @@ class VisuoMotorMEG(VisuoMotor):
 
 
 
-        self.instuctions_eyelink_calib_str = (f"To calibrate eyetracker, press 'c'\n")
+        self.instuctions_eyelink_calib_str = (f"To calibrate eyetracker, press 'e'\n")
         self.phase_after_restart = 'REST'
 
         # redefine
@@ -92,23 +94,24 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.dummy_eyelink_counter = self.params['FPS'] * 1
 
-        # TODO start with instr for calib
-        # change to calib on keypress
-        # after calib change to task instructions
+        # Q do I switch to REST or to ITI from break (currently to REST)?
 
-        # TODO: choose pause to turn into break 
+        # Q: what do we do with eyetracker during the break? -- apparently nothing unless we feel it's really necessary
 
-        # Q: what do we do with eyetracker during the break?
-        # TODO: how to align eyelink with other data?
         # Q: how will EL_calibration work if called from on_render? Will is disrupt the rest of the loop?
+        # Q Coum: when to call eyeAvailable()?  -- apres calibration
+        # Q Coum: when to call doTrackerSetup?
 
-        # Q: when to call eyeAvailable()?
+        # Q Coum: how to use his conda env?
+
+        # TODO: how to align eyelink with other data? -- Romain says its automatic because signal goes to MEG
+
         # Q: sendCommand vs sendMessage?
         # Q send COmmand 'calibration_area_proportion ? And validation_area as well
         # Q send command clear screen
         # Q send command draw filled box
         
-        # diff between msecDelay and pumpDelay?
+        # Q: diff between msecDelay and pumpDelay?
 
 
         # todo?: need to write param file differently. -- not really, because I use only come phases to code triggers and they don't include calibration anyway
@@ -1652,7 +1655,7 @@ class VisuoMotorMEG(VisuoMotor):
                 self.playSound()
                 time.sleep(self.params['delay_exit_break_after_keypress']) # in sec
                 self.restartTask(very_first = 0, phase = self.phase_after_restart  )
-            if (event.key == pygame.K_c) and (not self.task_started == 1):
+            if (event.key == pygame.K_e) and (not self.task_started == 1):
                 self.current_phase = 'EYELINK_CALIBRATION'
             if (event.key == pygame.K_j) and (not self.task_started == 1) and\
                     (self.params['controller_type'] == 'joystick' ):

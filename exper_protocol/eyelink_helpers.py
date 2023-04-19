@@ -202,7 +202,29 @@ def EL_calibration(el_tracker, full_screen):
     # Request Pylink to use the Pygame window we opened above for calibration
     pylink.openGraphicsEx(genv)
 
-    #el_tracker.doTrackerSetup() #?
+    # I am not sure, maybe  pylink.openGraphicsEx(genv) already does it
+    # no, actually, apparently it does not 
+    try:
+        # it launches eyelink software on host PC which waits for 'C' to be pressed
+        el_tracker.doTrackerSetup()
+    except RuntimeError as err:
+        print('ERROR:', err)
+        el_tracker.exitCalibration()
+
+
+    # determine which eye(s) is/are available
+    # 0- left, 1-right, 2-binocular
+    eye_used = el_tracker.eyeAvailable()
+    if eye_used == 1:
+        el_tracker.sendMessage("EYE_USED 1 RIGHT")
+    elif eye_used == 0 or eye_used == 2:
+        el_tracker.sendMessage("EYE_USED 0 LEFT")
+        eye_used = 0
+    else:
+        print("Error in not getting the eye information!")
+        return pylink.TRIAL_ERROR
+    
+    return eye_used
 
 def EL_abort(el_tracker):
     """Ends recording """
@@ -267,17 +289,6 @@ def EL_disconnect(dummy_mode, edf_file):
 # # Allocate some time for the tracker to cache some samples
 # pylink.pumpDelay(100)
 # 
-# # determine which eye(s) is/are available
-# # 0- left, 1-right, 2-binocular
-# eye_used = self.el_tracker.eyeAvailable()
-# if eye_used == 1:
-#     self.el_tracker.sendMessage("EYE_USED 1 RIGHT")
-# elif eye_used == 0 or eye_used == 2:
-#     self.el_tracker.sendMessage("EYE_USED 0 LEFT")
-#     eye_used = 0
-# else:
-#     print("Error in getting the eye information!")
-#     return pylink.TRIAL_ERROR
 # 
 # # ------- your task ---------
 # 
