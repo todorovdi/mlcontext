@@ -438,10 +438,12 @@ for tmin_cur,tmax_cur in tminmax:
             getAnalysisVarnames(time_locked, control_type)
     vars_to_decode_b2b = [vars_to_decode_b2b_tmp, vars_to_decode_b2b_def]
 
+    #behav_df_cur['non_hit'] = True;  print('DEBUG VER OF NONHIT!!!!')
+
     behav_df_cur, vndef2vn = computeErrSensVersions(behav_df_cur,
         env_to_run,block_names_cur,pertvals_cur,gseqcs_cur,tgt_inds_cur,
         dists_rad_from_prevtgt_cur,dists_trial_from_prevtgt_cur,
-        error_type = error_type, allow_duplicating = False,
+        error_type = error_type, allow_duplicating = False, coln_nh='non_hit',
         addvars=vars_to_decode_b2b_tmp, time_locked = time_locked)
     assert len(behav_df_cur) == len(behav_df_full)
 

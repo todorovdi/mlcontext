@@ -42,6 +42,28 @@ def trial_info2trgtpl(ti, phase):
         tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
     return tpl
 
+def trial_info2trgtpl_upd(ti, phase, spec_phases, spec_tt):
+
+    tt = ti['trial_type']
+
+    if tt in spec_tt:
+        if phase in spec_tt[tt]:
+            tpl = (tt,'','', phase )
+        else:
+            tpl = None
+    else:
+        if phase in spec_phases:
+            tpl = ('','','', phase )
+        else:
+            tpl = (tt, ti['vis_feedback_type'], ti['tgti'], phase)
+
+    #if phase in spec_phases:
+    #    tpl = ('','','', phase )
+    #else:
+    #    tpl = (tt, ti['vis_feedback_type'], ti['tgti'], phase)
+
+    return tpl
+
 def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 0):
     # defloc -- angle from vertical line
     if num_targets == 3:
@@ -65,6 +87,8 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
         mult = spread # in deg
         m = num_targets * mult
         target_angles = np.arange(num_targets) * mult -  m / 2
+    else:
+        raise ValueError(f'Wrong num_targets = {num_targets}')
 
     target_angles = target_angles + (180 + 90)
     print('Angles counting CCW from right pointing Oy, mostly below home')
@@ -99,7 +123,9 @@ class VisuoMotor:
         else:
             self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id +
                              '_' + self.timestr)
-        self.paramfile = open(self.filename + '.param', 'w')
+        param_fn = self.filename + '.param'
+        self.paramfile = open(param_fn, 'w')
+        print('Param file = ',param_fn)
         self.logfile = open(self.filename + '.log', 'w')
         # for debug mostly
         self.trigger_logfile = open(self.filename + '_trigger.log', 'w')
@@ -276,6 +302,7 @@ class VisuoMotor:
         self.add_param('MEG_trigger_duration', 1000 / 1000)
 
 
+        # both TRAINING_START', 'TRAINING_END
         self.copy_param(info, 'training_text_show_duration', 4)
         #if self.debug:
         #    self.add_param('training_text_show_duration', 0.4)
@@ -318,7 +345,7 @@ class VisuoMotor:
         self.add_param('diode_height', 50)
 
         # for behav task it is 0
-        self.add_param('show_diode' , 0)
+        self.copy_param(info, 'show_diode' , 0)
 
         # text notification about leaving home at rest
         self.add_param('notify_early_move', 0)
@@ -436,7 +463,9 @@ class VisuoMotor:
         self.add_param('randomize_tgt_initial_veridical', 1)
 
     def __init__(self, info, task_id='',
-                 use_true_triggers = 1, debug=False, seed= None, start_fullscreen = 0):
+                 use_true_triggers = 1, debug=False, 
+                 seed= None, start_fullscreen = 0,
+                save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1):
         self.debug = (debug != 'no') # affects fullscreen or not and other things
         self.debug_type = debug
 
@@ -704,7 +733,7 @@ class VisuoMotor:
             self.seed = seed
 
         self.add_param('seed',seed)
-        np.random.seed(self.seed)
+        np.random.seed( int(self.seed) )
 
         was_repet = True
         verbose_repeats_remove = 0
@@ -886,9 +915,6 @@ class VisuoMotor:
 
         # DEBUG TEST EC
         test_trial_ind = info.get('test_trial_ind',3)
-
-        #test_trial_ind = 3
-
         if test_trial_ind >= 0:
             assert test_trial_ind > self.params['num_training']
             if info['test_err_clamp'] and test_trial_ind >= 0:
@@ -916,62 +942,64 @@ class VisuoMotor:
         self.MEG_start_trigger = 252
         self.MEG_stop_trigger = 253
 
-        phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
-            'REST', 'GO_CUE_WAIT_AND_SHOW',
-            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS' ]
+        if save_tigger_and_trial_infos_paramfile:
+            phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
+                'REST', 'GO_CUE_WAIT_AND_SHOW',
+                'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS' ]
 
-        if self.params['rest_after_return']:
-             phases_trigger_coded += ['RETURN']
+            if self.params['rest_after_return']:
+                 phases_trigger_coded += ['RETURN']
 
-        if self.params['feedback_type'] == 'offline':
-             phases_trigger_coded += ['TARGET', 'FEEDBACK']
-        else:
-             phases_trigger_coded += [ 'TARGET_AND_FEEDBACK']
-
-
-        # 'TARGET':20, 'FEEDBACK': 35,
-
-        # I want list of tuples -- target id, visual feedback type, phase
-        # (needed for trigger)
-        self.CONTEXT_TRIGGER_DICT = {}
-        CTD_to_export = {}
-        # 0,
-        #trigger = self.phase2trigger['PAUSE'] + 40   # to get 100
-        trigger = 1   # to get 100
-        for ti in self.trial_infos:
-            for phase in phases_trigger_coded:
-                tpl = trial_info2trgtpl(ti, phase)
-                if tpl not in self.CONTEXT_TRIGGER_DICT:
-                    self.CONTEXT_TRIGGER_DICT[ tpl ] = trigger
-                    s = f'{tpl[0]},{tpl[1]},{tpl[2]},{tpl[3]}'
-                    CTD_to_export[s  ] = trigger
-                    trigger += 1
-
-                    assert trigger < self.MEG_start_trigger
+            if self.params['feedback_type'] == 'offline':
+                 phases_trigger_coded += ['TARGET', 'FEEDBACK']
+            else:
+                 phases_trigger_coded += [ 'TARGET_AND_FEEDBACK']
 
 
-        import json
-        s = json.dumps(CTD_to_export, indent=4)
-        self.paramfile.write( '# CTD_to_export \n' )
-        self.paramfile.write( '# trial param and phase 2 trigger values \n' )
-        self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
-        self.paramfile.write( s + '\n' )
-        self.paramfile.write( '# phase2trigger \n' )
-        s = json.dumps(self.phase2trigger, indent=4)
-        self.paramfile.write( s + '\n' )
+            # 'TARGET':20, 'FEEDBACK': 35,
 
-        self.paramfile.write( '# trial_infos = \n' )
-        for tc in range( len(self.trial_infos) ):
-            ti = self.trial_infos[tc]
-            s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
-                  ti['vis_feedback_type'], ti['special_block_type'] )
-            #print(s)
-            self.paramfile.write( f'# {s}\n' )
-        #s = json.dumps( {'trial_infos':list(enumerate(self.trial_infos) ) }
-        #               , indent=4)
-        #self.paramfile.write( s + '\n' )
+            # I want list of tuples -- target id, visual feedback type, phase
+            # (needed for trigger)
+            self.CONTEXT_TRIGGER_DICT = {}
+            CTD_to_export = {}
+            # 0,
+            #trigger = self.phase2trigger['PAUSE'] + 40   # to get 100
+            trigger = 1   # to get 100
+            for ti in self.trial_infos:
+                for phase in phases_trigger_coded:
+                    tpl = trial_info2trgtpl(ti, phase)
+                    if tpl not in self.CONTEXT_TRIGGER_DICT:
+                        self.CONTEXT_TRIGGER_DICT[ tpl ] = trigger
+                        s = f'{tpl[0]},{tpl[1]},{tpl[2]},{tpl[3]}'
+                        CTD_to_export[s  ] = trigger
+                        trigger += 1
 
-        self.paramfile.close()
+                        assert trigger < self.MEG_start_trigger
+
+
+            import json
+            s = json.dumps(CTD_to_export, indent=4)
+            self.paramfile.write( '# CTD_to_export \n' )
+            self.paramfile.write( '# trial param and phase 2 trigger values \n' )
+            self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
+            self.paramfile.write( s + '\n' )
+            self.paramfile.write( '# phase2trigger \n' )
+            s = json.dumps(self.phase2trigger, indent=4)
+            self.paramfile.write( s + '\n' )
+
+            self.paramfile.write( '# trial_infos = \n' )
+            for tc in range( len(self.trial_infos) ):
+                ti = self.trial_infos[tc]
+                s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
+                      ti['vis_feedback_type'], ti['special_block_type'] )
+                #print(s)
+                self.paramfile.write( f'# {s}\n' )
+            #s = json.dumps( {'trial_infos':list(enumerate(self.trial_infos) ) }
+            #               , indent=4)
+            #self.paramfile.write( s + '\n' )
+
+        if parafile_close:
+            self.paramfile.close()
 
 
         duration_params = ['ITI_duration' , 'motor_prep_duration',
@@ -979,13 +1007,13 @@ class VisuoMotor:
         durtot = 0.
         for durpar in duration_params:
             durtot += self.params[durpar]
-        durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
+        self.durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
                 n_pauses * self.params['pause_duration']
 
         # print first trial infos
         #if self.debug:
         print(f'In total we have {len(self.trial_infos)} trials, of them {n_pauses} pauses ')
-        print(f'Expected trial duration = {durtot} sec, total = {durtot_all} sec (={durtot_all/60:.1f} min)')
+        print(f'Expected trial duration = {durtot} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min)')
         # 4.1 sec
         for tc in range( min(30, len(self.trial_infos ) ) ):
             ti = self.trial_infos[tc]
@@ -1940,7 +1968,7 @@ class VisuoMotor:
 
         rotang_rad = rotang_deg*(np.pi/180)
         #perturbAngle = perturbation*(np.pi/180)
-        my_coords = [-1, -1]
+        my_coords = [-1., -1.]
         # subtract center
         # home position but float
         my_coords[0] = float( coordinates[0] - self.home_position[0] )
@@ -2244,7 +2272,7 @@ class VisuoMotor:
                       f'radius_reached={radius_reached}, hit_cond={hit_cond}')
 
                 if self.debug:
-                    self.save_scr(trial_info, prefix='keypress')
+                    self.save_scr(trial_info, prefix='endreach')
 
                 if reach_finished and hit_cond:
                     full_success = 1
@@ -2406,7 +2434,7 @@ class VisuoMotor:
 
         elif (self.current_phase == 'BREAK'):
             if (self.free_from_break):
-                self.current_phase = 'ITI'
+                self.current_phase = 'REST'
 
 
         elif (self.current_phase == 'PAUSE'):
@@ -2717,7 +2745,7 @@ class VisuoMotor:
                 self.moveHome()
                 self.reset_traj()
             if event.key == pygame.K_s:
-                self.save_scr()
+                self.save_scr(prefix='keypress')
             if (event.key == pygame.K_c) and (not self.task_started == 1) and\
                     (self.params['controller_type'] == 'joystick' ):
                 self.current_phase = self.calib_seq[0]
