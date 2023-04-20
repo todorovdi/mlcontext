@@ -42,9 +42,9 @@ def trial_info2trgtpl(ti, phase):
         tpl = (ti['trial_type'], ti['vis_feedback_type'], ti['tgti'], phase)
     return tpl
 
-def trial_info2trgtpl_upd(ti, phase, spec_phases, spec_tt):
+def trial_info2trgtpl_upd(trial_info, phase, spec_phases, spec_tt):
 
-    tt = ti['trial_type']
+    tt = trial_info['trial_type']
 
     if tt in spec_tt:
         if phase in spec_tt[tt]:
@@ -55,7 +55,7 @@ def trial_info2trgtpl_upd(ti, phase, spec_phases, spec_tt):
         if phase in spec_phases:
             tpl = ('','','', phase )
         else:
-            tpl = (tt, ti['vis_feedback_type'], ti['tgti'], phase)
+            tpl = (tt, trial_info['vis_feedback_type'], trial_info['tgti'], phase)
 
     #if phase in spec_phases:
     #    tpl = ('','','', phase )
@@ -107,7 +107,7 @@ class VisuoMotor:
     def add_param_comment(self, comment):
         self.paramfile.write(comment + '\n')
 
-    def initialize_parameters(self, info):
+    def initialize_parameters(self, info, subdir = 'data'):
         # self.debug = False
         self.params = {}
         self.task_id = 'context_change'
@@ -115,7 +115,6 @@ class VisuoMotor:
         self.session_id = info['session']
         self.timestr = time.strftime("%Y%m%d_%H%M%S")
 
-        subdir = 'data'
         if not os.path.exists(subdir):
             os.makedirs(subdir)
         if self.debug:
@@ -220,6 +219,7 @@ class VisuoMotor:
         #self.add_param('radius_target', 24)
         self.add_param('radius_target', 20)
 
+        self.copy_param(info, 'verbose_trigger', 0)
 
         # to minimize change of screen content
         self.add_param('ITI_show_home',1)
@@ -284,7 +284,7 @@ class VisuoMotor:
         self.add_param_comment('# Time for intertrial interval (seconds)')
         self.copy_param(info, 'ITI_duration', 2)
         self.add_param_comment('# Max jitter during ITI (seconds)')
-        self.add_param('ITI_jitter', 0.1)
+        self.copy_param(info, 'ITI_jitter', 0.1)
         #self.add_param_comment('# Show text?')
 
         k = 'pause_duration'
@@ -298,7 +298,8 @@ class VisuoMotor:
                 self.add_param('pause_duration', 60)
 
         # in seconds
-        self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
+        #self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
+        self.add_param('trigger_duration',     50   / 1000)  # Coumarane says 50 works
         self.add_param('MEG_trigger_duration', 1000 / 1000)
 
 
@@ -434,6 +435,8 @@ class VisuoMotor:
         #self.add_param('block_len_max',10)
         #self.add_param('n_context_appearences',4)
 
+        self.copy_param(info, 'conseq_veridical_allowed', 1)
+
         # 3 pert, 3 targets
         self.add_param('block_len_min',6)
         self.add_param('block_len_max',11)
@@ -465,12 +468,18 @@ class VisuoMotor:
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
                  seed= None, start_fullscreen = 0,
-                save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1):
+                save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1,
+                subdir='data' ):
+
+        if not os.path.exists(subdir):
+            print(f'Creating subdir={subdir}')
+            os.makedirs(subdir)
+
         self.debug = (debug != 'no') # affects fullscreen or not and other things
         self.debug_type = debug
 
         self.start_fullscreen = start_fullscreen
-        self.initialize_parameters(info)
+        self.initialize_parameters(info, subdir=subdir)
         #self.use_true_triggers = self.params['use_true_triggers']
         self.use_true_triggers = use_true_triggers
         if (self.use_true_triggers):
@@ -708,6 +717,7 @@ class VisuoMotor:
         self.reset_traj()
 
         ###########################
+        print(f'Starting context seq generation')
 
         self.scale_params = {'scale-':self.params['scale_neg'],
                              'scale+':self.params['scale_pos']}
@@ -735,6 +745,7 @@ class VisuoMotor:
         self.add_param('seed',seed)
         np.random.seed( int(self.seed) )
 
+
         was_repet = True
         verbose_repeats_remove = 0
         num_first_veridical = 0
@@ -749,7 +760,11 @@ class VisuoMotor:
                 for i in range(len(ct_inds) - 1):
                     vfti1 = vfti_seq_noperm[ct_inds[i] ]
                     vfti2 = vfti_seq_noperm[ct_inds[i+1] ]
-                    if vfti1 == vfti2:
+                    repet_cond = vfti1 == vfti2
+                    if not self.params['conseq_veridical_allowed']:
+                        if (vfti1[0],vfti2[0]) == ('veridical','veridical'):
+                            repet_cond = True
+                    if repet_cond:
                         was_repet = True
                         # break from this and return to outer while
                         if verbose_repeats_remove:
@@ -764,7 +779,7 @@ class VisuoMotor:
                     was_repet = True
                 if not was_repet:
                     print('no conseq context block repetitions')
-        print(f'Contest seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
+        print(f'Context seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
 
 
         #print('ct_inds',ct_inds)
@@ -917,17 +932,20 @@ class VisuoMotor:
         test_trial_ind = info.get('test_trial_ind',3)
         if test_trial_ind >= 0:
             assert test_trial_ind > self.params['num_training']
+            bi = self.trial_infos[test_trial_ind-1]['block_ind']
             if info['test_err_clamp'] and test_trial_ind >= 0:
                 dspec = {'vis_feedback_type':'veridical', 'tgti':0,
                         'trial_type': 'error_clamp',
-                        'special_block_type': 'error_clamp_sandwich' }
+                        'special_block_type': 'error_clamp_sandwich',
+                         'block_ind': bi  }
                 self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
                     self.trial_infos[test_trial_ind:]
 
             # DEBUG TEST PAUSE
             if info['test_pause'] and test_trial_ind >= 0:
                 dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                             'trial_type': 'pause', 'special_block_type': None }
+                             'trial_type': 'pause', 'special_block_type': None,
+                         'block_ind': bi }
                 self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
                     self.trial_infos[test_trial_ind:]
 
@@ -1047,6 +1065,7 @@ class VisuoMotor:
                 self.trigger = parallel.ParallelPort(address=self.trigger_port)
 
 
+            # very first trigger 
             self.send_trigger(0)
 
 
@@ -1260,9 +1279,11 @@ class VisuoMotor:
         self._display_surf.blit(text_render, pos)
         return ldt
 
-    def drawReturnCircle(self):
+    def drawReturnCircle(self, verbose = 0):
         dist = np.sqrt((self.cursorX - self.home_position[0])**2  +
-                    (self.cursorY - self.home_position[0])**2)
+                    (self.cursorY - self.home_position[1])**2)
+        if verbose and ( int( time.time() * 1000 ) % 100 < 10 ):
+            print(f'Return dist {self.cursorX:.0f},{self.cursorY:.0f} form {self.home_position} => {dist}')
         thickness = 3
         #thickness = 2  # too thin
 
@@ -2000,7 +2021,7 @@ class VisuoMotor:
         d = math.sqrt(math.pow(point[0]-circle_center[0], 2) +
                       math.pow(point[1]-circle_center[1], 2))
         if verbose:
-            print(d, circle_radius)
+            print('point_in_circle',point, d, circle_radius)
         return d < circle_radius
 
     def timer_check(self, phase, parname, thr = None, use_frame_counter = False, verbose=0):
@@ -2020,8 +2041,13 @@ class VisuoMotor:
         return r
 
     def is_home(self, coords_label = 'unpert_cursor',
-                param_name = 'radius_return', mult=1., pos = None):
+                param_name = 'radius_return', mult=1., pos = None,
+                verbose=0):
+        if verbose:
+            print('at_home = ',at_home)
+
         if self.just_moved_home:
+            print('at_home: jmh')
             return True
         if coords_label == 'unpert_cursor':
             pos = (self.cursorX, self.cursorY)
@@ -2031,7 +2057,7 @@ class VisuoMotor:
             raise ValueError('wrong coords label')
 
         at_home = self.point_in_circle(self.home_position, pos,
-                                self.params[param_name] * mult, verbose=0)
+                                self.params[param_name] * mult, verbose=verbose)
         return at_home
 
     def cursor_pos_update(self):
@@ -2850,6 +2876,7 @@ if __name__ == "__main__":
     parser.add_argument('--time_at_home',  type=float)
     parser.add_argument('--pause_duration',  type=float)
     parser.add_argument('--training_text_show_duration',  type=float)
+    parser.add_argument('--verbose_trigger',  type=float)
  
 
 

@@ -31,21 +31,24 @@ from eyelink_helpers import *
 
 class VisuoMotorMEG(VisuoMotor):
 
-    def initialize_parameters(self, info):
-        VisuoMotor.initialize_parameters(self, info)
+    def initialize_parameters(self, info, subdir):
+        VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
         self.add_param('dummy_mode', 1)
+        self.copy_param(info, 'maxMEGrec_dur', 20 * 60)
+ 
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
                  seed= None, start_fullscreen = 0):
         info['show_diode'] = 1
+        info['conseq_veridical_allowed'] = 0
+
         VisuoMotor.__init__(self, info, task_id, use_true_triggers, debug,
                             seed, start_fullscreen,
                             save_tigger_and_trial_infos_paramfile = 0,
-                            parafile_close = 0)
+                            parafile_close = 0, subdir='dataMEG')
 
-        self.params['delay_exit_break_after_keypress'] = 3.
 
         self.el_tracker = EL_init(self.params['dummy_mode'] )
         self.edf_file = open_edf_file(self.el_tracker, info)
@@ -60,7 +63,11 @@ class VisuoMotorMEG(VisuoMotor):
 
 
         self.instuctions_eyelink_calib_str = (f"To calibrate eyetracker, press 'e'\n")
-        self.phase_after_restart = 'REST'
+        #self.phase_after_restart = 'REST'
+        self.phase_after_restart = 'TRAINING_END'
+        self.first_phase_after_start = 'TRAINING_START'
+        self.params['delay_exit_break_after_keypress'] = 0.2 # if first_phase_after_start is REST, we might need it couple of sec
+        #self.params['delay_exit_break_after_keypress'] = 3. # if first_phase_after_start is REST, we might need it couple of sec
 
         # redefine
         self.phase2trigger = {'JOYSTICK_CALIBRATION_LEFT':3,
@@ -70,15 +77,15 @@ class VisuoMotorMEG(VisuoMotor):
                              'JOYSTICK_CALIBRATION_CENTER':7,
                              'TRAINING_START':8,
                              'TRAINING_END':9,
-                              'REST':10, 'RETURN':15,
-                              'GO_CUE_WAIT_AND_SHOW':25,
-                              'TARGET':20, 'FEEDBACK': 35,
-                              'TARGET_AND_FEEDBACK':30,
-                           'ITI':40, 'BREAK':50, 'PAUSE':60,
-                              'BUTTON_PRESS':70,
-                              'EYELINK_CALIBRATION_PRE':71,
-                              'EYELINK_CALIBRATION':72,
-                              'TASK_INSTRUCTIONS':73,
+                              'REST':10, 'RETURN':11,
+                              'GO_CUE_WAIT_AND_SHOW':12,
+                              'TARGET':13, 'FEEDBACK': 14,
+                              'TARGET_AND_FEEDBACK':15,
+                           'ITI':16, 'BREAK':17, 'PAUSE':18,
+                              'BUTTON_PRESS':19,
+                              'EYELINK_CALIBRATION_PRE':20,
+                              'EYELINK_CALIBRATION':21,
+                              'TASK_INSTRUCTIONS':22,
                               }
 
 
@@ -93,6 +100,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_phase = "EYELINK_CALIBRATION_PRE"
 
         self.dummy_eyelink_counter = self.params['FPS'] * 1
+        self.dummy_eyelink_counter = self.params['FPS'] * 0.2
 
         # Q do I switch to REST or to ITI from break (currently to REST)?
 
@@ -127,7 +135,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         ############################################################
 
-        maxMEGrec_dur = 20 * 60
+        maxMEGrec_dur = self.params['maxMEGrec_dur']
         mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
         approx_pause_step = len(self.trial_infos)  // mult
         print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
@@ -155,12 +163,16 @@ class VisuoMotorMEG(VisuoMotor):
         # print(tistis)
         tinds_pauses_turn_breaks = tinds[tistis]
         print('Tinds_pauses_turn_breaks =', tinds_pauses_turn_breaks )
+        assert len(tinds_pauses_turn_breaks) < 4
 
         for tind in tinds_pauses_turn_breaks:
             self.trial_infos[tind]['trial_type'] = 'break'
 
         #raise ValueError('fd')
 
+        ###########################################
+        self.MEG_start_trigger = 252
+        self.MEG_stop_trigger = 253
 
         phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
             'REST', 'GO_CUE_WAIT_AND_SHOW',
@@ -188,12 +200,15 @@ class VisuoMotorMEG(VisuoMotor):
         CTD_to_export = {}
         # 0,
         #trigger = self.phase2trigger['PAUSE'] + 40   # to get 100
-        trigger = 1   # to get 100
+        trigger = np.max( list(self.phase2trigger.values() ) ) + 1   # to get 100
+        trigger = int(trigger) # otherwise int64 and json has problems
+        print('0  ', trigger)
         for tind, ti in enumerate(self.trial_infos):
             for phase in phases_trigger_coded:
-                tpl = trial_info2trgtpl_upd(ti, phase, self.spec_phases, self.spec_tt)
-                if (ti['trial_type'] in ['pause', 'break']) or (phase in ['BREAK', 'PAUSE'] ):
-                    print(tind, phase, tpl)
+                tpl = trial_info2trgtpl_upd(ti, phase, 
+                    self.spec_phases, self.spec_tt)
+                #if (ti['trial_type'] in ['pause', 'break']) or (phase in ['BREAK', 'PAUSE'] ):
+                #    print(tind, phase, tpl)
                 if tpl is None:
                     continue
                 if tpl not in self.CONTEXT_TRIGGER_DICT:
@@ -202,10 +217,12 @@ class VisuoMotorMEG(VisuoMotor):
                     CTD_to_export[s  ] = trigger
                     trigger += 1
 
-                    if ti['trial_type'] == 'break':
-                        print('    ' ,trigger, s)
+                    #if ti['trial_type'] == 'break':
+                    #    print('    ' ,trigger, s)
 
                     assert trigger < self.MEG_start_trigger
+
+        self.CONTEXT_TRIGGER_DICT_inv = dict(zip(self.CONTEXT_TRIGGER_DICT.values(), self.CONTEXT_TRIGGER_DICT.keys()))
 
 
         import json
@@ -245,14 +262,52 @@ class VisuoMotorMEG(VisuoMotor):
         #f2 = list(f2)
         #len(f2), f2
 
+    def send_trigger(self, value, add_info = None):
+        # We block it if it has sent something already
+        #if (self.trigger_countdown == -1):
+        overlap = False
+        if (self.trigger_value != 0):
+            overlap = True
+
+        cond_to_send = self.trigger_value == 0
+        cond_to_send = True
+        if cond_to_send:
+            if (self.use_true_triggers):
+                if self.params['trigger_device'] == 'inpout32':
+                    self.trigger.Out32(self.trigger_port, value)
+                elif self.params['trigger_device'] == 'parallel':
+                    self.trigger.setData(value)
+            self.trigger_value = value
+
+            # always write to trigger logfile
+            # initial_time is set in on_execute
+            td = self.current_time - self.initial_time
+            sa = f'; time={td}'
+            if add_info is not None:
+                sa += '; ' + str(add_info)
+            s = str(value) + sa + '\n'
+            if self.params['verbose_trigger']:
+                print('TRIGGER_logstring ',s[:-1] )  # -1 to strip newline
+                print('TRIGGER inv ', self.CONTEXT_TRIGGER_DICT_inv.get(value, None) )
+            self.trigger_logfile.write(s )
+
+        if overlap:
+            if self.params['verbose_trigger']:
+                print(f'!!!! TRIGGER value != 0, it is {self.trigger_value}; value req to be sent={value} addinfo={add_info} ')
+        # print("Sent trigger " + str(value))
+        # For how long the trigger is gonna be raised? (in ms)
+        if (value != 0):
+            td = self.params['trigger_duration']
+            #self.trigger_countdown = int(round(self.params['FPS']*(td/1000.0)))
+            self.phase_start_times['trigger'] = time.time()
 
     def send_trigger_cur_trial_info(self):
         ti = self.trial_infos[self.trial_index]
         tpl = trial_info2trgtpl_upd(ti, self.current_phase,
                                     self.spec_phases, self.spec_tt)
         if tpl is None:
-            print(ti, self.trial_index, self.current_phase )
-        self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], tpl )
+            print('send_trigger_cur_trial_info: ', ti, self.trial_index, self.current_phase , tpl)
+        self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], add_info={'trial_index':ti , 'tpl':tpl} )
 
 
     def playSound(self):
@@ -421,14 +476,15 @@ class VisuoMotorMEG(VisuoMotor):
                             s = 'You moved too early. ' + s
                         self.drawPopupText(s, pos = ('center', (0,-70) ) )
                     elif self.params['rest_return_home_indication'] == 'return_circle':
-                        self.drawReturnCircle()
+                        self.drawReturnCircle(verbose=0)
                     else:
                         raise ValueError(f"wrong indication value {self.params['rest_return_home_indication']}")
                     #print(f'---draw popup {s}: {self.cursorX}, {self.cursorY}')
                 self.drawHome()
 
             if self.current_phase == 'BREAK':
-                break_str = 'Pause longue commence'
+                break_str = 'Pause longue'
+                #if not self.free_from_break: # does not change anything
                 self.drawTextMultiline( [break_str] , 
                    font = self.myfont_popup,
                    pos_label= 'center')
@@ -735,18 +791,22 @@ class VisuoMotorMEG(VisuoMotor):
 
         ct = time.time()
         self.phase_start_times[self.current_phase] = ct
-        if self.current_phase == 'REST':
-            # TODO: are you sure we need to set it here?
-            self.phase_start_times['at_home'] = ct
-            self.send_trigger_cur_trial_info()
         self.moveHome()
         pygame.mouse.set_visible(0)
         self.reset_traj()
+        self.reset_main_vars()    # NEW
 
         self.send_trigger(self.MEG_start_trigger)
 
         self.MEG_rec_started = 1
         self.task_started = 1
+
+        if self.current_phase == 'REST':
+            # TODO: are you sure we need to set it here?
+            self.phase_start_times['at_home'] = ct
+
+        if self.current_phase in [self.phase_after_restart, self.first_phase_after_start]:
+            self.send_trigger_cur_trial_info()  # this way it will be send right after MEG start trigger. Maybe it is not good
 
         # arguments: sample_to_file, events_to_file, sample_over_link,
         # event_over_link (1-yes, 0-no)
@@ -1056,12 +1116,13 @@ class VisuoMotorMEG(VisuoMotor):
 
         prev_trial_index = self.trial_index
         trial_info = self.trial_infos[self.trial_index]
+        trial_type = trial_info['trial_type']
         ctxtpl = (trial_info['vis_feedback_type'], trial_info['tgti'] )
         vft, tgti = ctxtpl
 
         #print ( self.trial_infos[0]['tgti'] )
 
-        if (self.current_phase == 'REST'):
+        if (self.current_phase == 'REST'):# and (trial_type not in ['pause','break']) ):
             # if at home, increase counter
             at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
             if not at_home:
@@ -1076,7 +1137,7 @@ class VisuoMotorMEG(VisuoMotor):
             if at_home_enough:
                 if trial_info['trial_type'] == 'pause':
                     self.current_phase = 'PAUSE'
-                if trial_info['trial_type'] == 'break':
+                elif trial_info['trial_type'] == 'break':
                     self.current_phase = 'BREAK'
                     self.playSound()
                     self.free_from_break = 0
@@ -1093,13 +1154,7 @@ class VisuoMotorMEG(VisuoMotor):
 
                         self.reset_traj()
                         #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
-
-                        # self.trial_infos[self.trial_index, 0]
-                        # depending on whether random or stable change target
                         self.tgti_to_show = tgti
-                        # I don't need to put send trigger here because phase changes
-                        # so it will be detected below
-                        #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
                         self.color_photodiode = self.color_diode
 
         # motor preparation
@@ -1123,12 +1178,6 @@ class VisuoMotorMEG(VisuoMotor):
                     self.current_phase = 'TARGET'
                 #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
                 print(f'Start target and feedback display {trial_info}')
-
-                # self.trial_infos[self.trial_index, 0]
-                #self.tgti_to_show = tgti
-                # I don't need to put send trigger here because phase changes
-                # so it will be detected below
-                #self.send_trigger_cur_trial_info()   # send trigger after spending enough at home
                 self.color_photodiode = self.color_diode
 
         elif self.current_phase in ['TRAINING_START', 'TRAINING_END']:
@@ -1139,7 +1188,7 @@ class VisuoMotorMEG(VisuoMotor):
                 ct = time.time()
                 self.phase_start_times['at_home'] = ct
                 self.moveHome()
-                self.send_trigger_cur_trial_info()
+                #self.send_trigger_cur_trial_info()
                 self.reset_traj()
                 self.color_feedback = self.color_feedback_def
 
@@ -1360,7 +1409,7 @@ class VisuoMotorMEG(VisuoMotor):
                     trial_info2 = self.trial_infos[self.trial_index]
                     if trial_info['special_block_type'] == 'pretraining' and \
                         trial_info2['special_block_type'] != 'pretraining':
-                        self.just_finished_pretraining = 1
+                        #self.just_finished_pretraining = 1 # not used
                         print('Just finished pretraining')
                         self.current_phase = 'TRAINING_END'
                         self.reset_main_vars()
@@ -1429,15 +1478,17 @@ class VisuoMotorMEG(VisuoMotor):
             # do I need it?
             if self.current_phase == 'REST':
                 self.phase_start_times["at_home"] = time.time()
-            #self.send_trigger(self.current_phase_trigger)
-            if self.task_started == 1:
-                self.send_trigger_cur_trial_info()
+
 
             tdif = time.time() - self.phase_start_times[prev_phase]
 
             print(f'Phase change {prev_phase} -> {self.current_phase};  {prev_trial_index} -> {self.trial_index}')
             print(f"             {prev_phase} finished after {tdif:.3f} s")
             #print(f'   tgt = {self.tgti_to_show}')
+
+            #send trigger when phase changes. Send it after debug message
+            if self.task_started == 1:
+                self.send_trigger_cur_trial_info()
 
         if prev_trial_index != self.trial_index and self.trial_index < len(self.trial_infos):
 
@@ -1598,7 +1649,8 @@ class VisuoMotorMEG(VisuoMotor):
                 print('on_event: ',event)
 
         if event.type in [ pygame.JOYBUTTONDOWN, pygame.MOUSEBUTTONDOWN  ]:
-            self.send_trigger(self.phase2trigger['BUTTON_PRESS'] )
+            self.send_trigger(self.phase2trigger['BUTTON_PRESS'], 
+                              add_info = {'event.type': event.type }  )
 
         if (event.type == pygame.MOUSEMOTION) and self.just_moved_home:
             self.just_moved_home = 0
@@ -1618,6 +1670,11 @@ class VisuoMotorMEG(VisuoMotor):
                 self.free_from_break = 0
 
         if event.type == pygame.KEYDOWN:
+            self.send_trigger(self.phase2trigger['BUTTON_PRESS'], 
+                              add_info = {'event.type': event.type,
+                                          'event.key': event.key, 
+                                          'keyname': pygame.key.name(event.key)  } )
+
             if event.key == pygame.K_ESCAPE:
                 self.on_cleanup(-1)
             if event.key == pygame.K_F11 and pygame.mouse.get_focused():
@@ -1651,6 +1708,10 @@ class VisuoMotorMEG(VisuoMotor):
             # release from break
             if (event.key == pygame.K_g) and (not self.free_from_break):
                 self.free_from_break = 1
+                self._display_surf.fill(self.color_bg) # need to be here beacuase
+                # sleep will make on_render not be executed so 'pause commence' 
+                # will be for too long and I'd like it to disappear 
+                # after pressing g to let participant prepare
 
                 self.playSound()
                 time.sleep(self.params['delay_exit_break_after_keypress']) # in sec
@@ -1699,7 +1760,7 @@ class VisuoMotorMEG(VisuoMotor):
                 self.vars_update()
 
                 # count time since last trigger (to send trigger reset signal
-                # later)
+                # later) and reset it back to 0
                 if self.trigger_value in [self.MEG_start_trigger, self.MEG_stop_trigger]:
                     td = self.params['MEG_trigger_duration']
                 else:
@@ -1707,13 +1768,9 @@ class VisuoMotorMEG(VisuoMotor):
                 if self.trigger_value > 0 and (time.time() - self.phase_start_times['trigger']) > td:
                     self.trigger_value = 0
                     self.send_trigger(self.trigger_value)
-                #if (self.trigger_countdown > 0):
-                #    self.trigger_countdown -= 1
-                #elif (self.trigger_countdown == 0):
-                #    self.trigger_countdown = -1
-                #    # trigger reset
-                #    self.send_trigger(0)
+
                 self.update_log()
+
             elif (self.task_started == 2):
                 if self.trial_index == len(self.trial_infos):
                     if self.ctr_endmessage_show == self.ctr_endmessage_show_def:
@@ -1726,7 +1783,6 @@ class VisuoMotorMEG(VisuoMotor):
 
             #print(clock)
 
-
             self.on_render()
             # print(time.time()-self.current_time)
             msElapsed = self.clock.tick_busy_loop(self.params['FPS'])
@@ -1736,7 +1792,6 @@ class VisuoMotorMEG(VisuoMotor):
 
 
 if __name__ == "__main__":
-    #app = VisuoMotor()
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', default='no' )
     parser.add_argument('--fullscreen', default=0, type=int )
@@ -1759,9 +1814,14 @@ if __name__ == "__main__":
     parser.add_argument('--time_feedback',  type=float)
     parser.add_argument('--motor_prep_duration',  type=float)
     parser.add_argument('--ITI_duration',  type=float)
+    parser.add_argument('--ITI_jitter',  type=float)
     parser.add_argument('--time_at_home',  type=float)
     parser.add_argument('--pause_duration',  type=float)
     parser.add_argument('--training_text_show_duration',  type=float)
+    parser.add_argument('--verbose_trigger',  type=float)
+    parser.add_argument('--maxMEGrec_dur',  type=float)
+ 
+
  
 
 

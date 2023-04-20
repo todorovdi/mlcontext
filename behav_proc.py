@@ -1473,6 +1473,8 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
             r = addinfo
             for cols_ in titlecols:
                 for col in cols_:
+                    if col is None:
+                        continue
                     s += f'{col}='
                     colv = r[col]
                     if isinstance(colv,float):
