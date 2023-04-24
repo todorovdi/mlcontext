@@ -32,17 +32,23 @@ from eyelink_helpers import *
 class VisuoMotorMEG(VisuoMotor):
 
     def initialize_parameters(self, info, subdir):
+        info['show_diode'] = 1
+        info['conseq_veridical_allowed'] = 0
+        time_lh_estimate = 0.22 # pm 0.04
+        info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
+
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
         self.add_param('dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 20 * 60)
+        self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
+
+        #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
  
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
                  seed= None, start_fullscreen = 0):
-        info['show_diode'] = 1
-        info['conseq_veridical_allowed'] = 0
 
         VisuoMotor.__init__(self, info, task_id, use_true_triggers, debug,
                             seed, start_fullscreen,
@@ -154,7 +160,12 @@ class VisuoMotorMEG(VisuoMotor):
 
         f = filter( iscandpause,  enumerate(self.trial_infos) )
         f = list(f)
-        tinds = np.array (list(zip(*f))[0])
+        try:
+            tinds = np.array (list(zip(*f))[0])
+        except IndexError as e:
+            print(f'ERROR: Problem during setting pauses to breaks, len(iscandpause) = {len(f)}.'
+                  f' pause duration = {self.params["pause_duration"]}, durtot_all={self.durtot_all}')
+            exit(1)
 
         #print( tinds % approx_pause_step )
 
@@ -258,6 +269,10 @@ class VisuoMotorMEG(VisuoMotor):
                     self.trial_infos[test_trial_ind:]
 
 
+        ###########################################################
+        self.phase_start_times['movement_leave_home'] = -1
+        self.already_left_home_during_move_cur_trial = False
+
         #f2 = filter( lambda x: x['trial_type'] == 'break', self.trial_infos )
         #f2 = list(f2)
         #len(f2), f2
@@ -311,6 +326,7 @@ class VisuoMotorMEG(VisuoMotor):
 
 
     def playSound(self):
+        print("Play sound")
         pygame.mixer.init()
         oggfile = 'beep-06.mp3'
         pygame.mixer.music.load(oggfile)
@@ -965,45 +981,6 @@ class VisuoMotorMEG(VisuoMotor):
         cursorReachY = int(round(cursorReachY))
         return cursorReachX, cursorReachY
 
-
-    def point_in_circle(self, circle_center, point, circle_radius, verbose=False):
-        d = math.sqrt(math.pow(point[0]-circle_center[0], 2) +
-                      math.pow(point[1]-circle_center[1], 2))
-        if verbose:
-            print(d, circle_radius)
-        return d < circle_radius
-
-    def timer_check(self, phase, parname, thr = None, use_frame_counter = False, verbose=0):
-        # time.time() is time in second
-        if use_frame_counter:
-            raise ValueError('not impl')
-        else:
-            if thr is None:
-                assert parname is not None
-                thr = self.params[parname]
-            else:
-                assert parname is None
-            timedif = time.time() - self.phase_start_times[phase]
-            r =  ( timedif >= thr )
-            if verbose:
-                print('r = ',r,'timedif = ',timedif, '  strt=', self.phase_start_times[phase], 'thr=',thr)
-        return r
-
-    def is_home(self, coords_label = 'unpert_cursor',
-                param_name = 'radius_return', mult=1., pos = None):
-        if self.just_moved_home:
-            return True
-        if coords_label == 'unpert_cursor':
-            pos = (self.cursorX, self.cursorY)
-        elif coords_label == 'feedback':
-            pos = (self.feedbackX, self.feedbackY)
-        else:
-            raise ValueError('wrong coords label')
-
-        at_home = self.point_in_circle(self.home_position, pos,
-                                self.params[param_name] * mult, verbose=0)
-        return at_home
-
     def cursor_pos_update(self):
         if self.params['controller_type'] == 'joystick':
             # from -1 to 1 -- not really. But below 1 in mod
@@ -1206,23 +1183,35 @@ class VisuoMotorMEG(VisuoMotor):
             #self.trajY += [ self.cursorY ]
 
             self.color_target = self.color_target_def
-
-            #reach_time_finished = (self.frame_counters["feedback_shown"] == \
-            #        self.params['FPS'] * self.params['time_feedback'])
-
             hit_cond = self.point_in_circle(self.target_coords[self.tgti_to_show],
                                     (self.feedbackX, self.feedbackY),
                                     self.params['radius_target'] +
                                     self.params['radius_cursor'] / 2.)
 
-            reach_time_finished = self.timer_check(self.current_phase,
-                                    'time_feedback')
+            if self.params['move_duration_fixation_type'] == 'fix_time_since_go_cue':
+                reach_time_finished = self.timer_check(self.current_phase,
+                                        'time_feedback')
+            elif self.params['move_duration_fixation_type'] == 'fix_time_after_leave_home':
+                at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
+                if (not at_home) and (not self.already_left_home_during_move_cur_trial):
+                    self.phase_start_times["movement_leave_home"] = time.time()
+                    self.already_left_home_during_move_cur_trial = True
+
+                if self.already_left_home_during_move_cur_trial:
+                    reach_time_finished = self.timer_check('movement_leave_home',
+                                            'time_feedback')
+                else:
+                    reach_time_finished = False
+            else:
+                raise ValueError('Wrong!')
+
             if reach_time_finished:
                 self.timer_check(self.current_phase,
                                     'time_feedback', verbose=1)
 
             rtc = self.params['reach_termination_condition']
 
+            # TODO: maybe put aboe code for calc reach_time_finisehd inside test_reach_finished?
             reach_finished, extinfo = self.test_reach_finished(ret_ext = 1)
             at_home,stopped,radius_reached = extinfo
             if rtc == 'time':
@@ -1478,6 +1467,9 @@ class VisuoMotorMEG(VisuoMotor):
             # do I need it?
             if self.current_phase == 'REST':
                 self.phase_start_times["at_home"] = time.time()
+
+                self.phase_start_times["movement_leave_home"] = -1
+                self.already_left_home_during_move_cur_trial = False
 
 
             tdif = time.time() - self.phase_start_times[prev_phase]
@@ -1798,7 +1790,7 @@ if __name__ == "__main__":
     parser.add_argument('--joystick',   default=1, type=int )
     parser.add_argument('--seed',   default=None )
     parser.add_argument('--participant', default='debug' )
-    parser.add_argument('--session', default='debugsession' )
+    #parser.add_argument('--session', default='debugsession' )
     parser.add_argument('--show_dialog', default=1, type=int )
     # can be  <int width>x<int hegiht>
     parser.add_argument('--screen_size', default='fixed', type=str )
@@ -1835,18 +1827,21 @@ if __name__ == "__main__":
     info = {}
 
     info['participant'] = par['participant']
-    info['session']     = par['session']
+    #info['session']     = par['session']
 
     show_dialog = par['show_dialog']
     if show_dialog:
         info['participant'] = ''
-        info['session'] = ''
+        #info['session'] = ''
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
             core.quit()
+
+        info['session'] = 'session1'
     else:
         info['participant'] = 'Dmitrii_test'
         info['session'] = 'session1'
+
 
     for p,v in par.items():
         if p not in ['participant', 'session']:

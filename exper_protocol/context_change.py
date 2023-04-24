@@ -1588,8 +1588,9 @@ class VisuoMotor:
                 # if not very far from home, draw cursor
                 self.color_home = self.color_home_def
 
-                at_home_ext = self.is_home('unpert_cursor', 'radius_home_strict_inside', 2)
                 at_home =     self.is_home('unpert_cursor', 'radius_home_strict_inside', 1)
+                # mult by two
+                at_home_ext = self.is_home('unpert_cursor', 'radius_home_strict_inside', 2)
                 if at_home_ext:
                     smooth = self.params['smooth_traj_home']
                     xy = self.drawCursorOrig(verbose=0, smooth = smooth)
@@ -2025,6 +2026,7 @@ class VisuoMotor:
         return d < circle_radius
 
     def timer_check(self, phase, parname, thr = None, use_frame_counter = False, verbose=0):
+        # phase is actually just timer name, not necessarly valid phase name
         # time.time() is time in second
         if use_frame_counter:
             raise ValueError('not impl')
@@ -2037,16 +2039,16 @@ class VisuoMotor:
             timedif = time.time() - self.phase_start_times[phase]
             r =  ( timedif >= thr )
             if verbose:
-                print('r = ',r,'timedif = ',timedif, '  strt=', self.phase_start_times[phase], 'thr=',thr)
+                print(f'timer_check for phase={phase} r = {r}','timedif = ',timedif, '  strt=', self.phase_start_times[phase], 'thr=',thr)
         return r
 
     def is_home(self, coords_label = 'unpert_cursor',
                 param_name = 'radius_return', mult=1., pos = None,
                 verbose=0):
-        if verbose:
-            print('at_home = ',at_home)
+        #if verbose:
+        #    print('at_home = ',at_home)
 
-        if self.just_moved_home:
+        if self.just_moved_home and verbose:
             print('at_home: jmh')
             return True
         if coords_label == 'unpert_cursor':
