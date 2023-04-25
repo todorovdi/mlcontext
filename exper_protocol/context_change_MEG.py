@@ -1779,6 +1779,7 @@ class VisuoMotorMEG(VisuoMotor):
         #self.current_log.append(homecolor)
 
         self.current_log.append(self.current_time - self.initial_time)
+        self.current_log.append(self.current_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
 
         #
@@ -1900,7 +1901,6 @@ class VisuoMotorMEG(VisuoMotor):
             self._running = False
         self.clock = pygame.time.Clock()
         #clock = pygame.time.Clock()
-        self.initial_time = time.time()
         #if (self.params['use_eye_tracker']):
         #    EyeLink.tracker(self.params['width'], self.params['height'])
         self.initial_time = time.time()

@@ -197,7 +197,7 @@ def getLastInfo(fn, nread):
         ' feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY,'
          ' error_distance, target_coordX, target_coordY, '
          'feedbackX_when_crossing, feedbackY_when_crossing, '
-         'jax1, jax2, reward, time')
+         'jax1, jax2, reward, time, time_abs')
     r = r.replace(' ','')
     colnames = r.split(',')
 
