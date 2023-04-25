@@ -34,12 +34,16 @@ class VisuoMotorMEG(VisuoMotor):
     def initialize_parameters(self, info, subdir):
         info['show_diode'] = 1
         info['conseq_veridical_allowed'] = 0
+
+
+        info['conseq_veridical_allowed'] = 1
         time_lh_estimate = 0.22 # pm 0.04
         info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
+        info['trigger_device'] = 'parallel'
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
-        self.add_param('dummy_mode', 1)
+        self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 20 * 60)
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
 
@@ -55,6 +59,9 @@ class VisuoMotorMEG(VisuoMotor):
                             save_tigger_and_trial_infos_paramfile = 0,
                             parafile_close = 0, subdir='dataMEG')
 
+        self.start_fullscreen = 1
+
+        assert self.params['trigger_device'] == 'parallel'
 
         self.el_tracker = EL_init(self.params['dummy_mode'] )
         self.edf_file = open_edf_file(self.el_tracker, info)
@@ -65,6 +72,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.el_tracker.setOfflineMode()
 
         EL_config(self.el_tracker, self.params['dummy_mode'])
+
 
 
 
@@ -296,7 +304,10 @@ class VisuoMotorMEG(VisuoMotor):
 
             # always write to trigger logfile
             # initial_time is set in on_execute
-            td = self.current_time - self.initial_time
+            #self.current_time = time.time()
+            #td = self.current_time - self.initial_time
+            # TODO: trigger startt time
+            td = -1
             sa = f'; time={td}'
             if add_info is not None:
                 sa += '; ' + str(add_info)
@@ -333,7 +344,9 @@ class VisuoMotorMEG(VisuoMotor):
         pygame.mixer.music.play()
 
     def on_init(self):
-        pygame.init()
+        r = pygame.init()
+        print('init pygame ',r)
+        pygame.display.set_mode((100,100), display = 0)
 
         self.playSound()
 
@@ -349,6 +362,7 @@ class VisuoMotorMEG(VisuoMotor):
         else:
             display = 0
 
+        #display = 1
         if self.debug:
             self._display_surf = pygame.display.set_mode(self.size, display = display)
         else:
@@ -1797,10 +1811,13 @@ if __name__ == "__main__":
     parser.add_argument('--test_err_clamp', default=0, type=int)
     parser.add_argument('--test_pause',    default=0,  type=int)
     parser.add_argument('--test_break',    default=0,  type=int)
+    parser.add_argument('--dummy_mode',     type=int)
     parser.add_argument('--test_end_task',    default=0,  type=int)
     parser.add_argument('--num_training',       type=int)
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
     parser.add_argument('--noise_fb',    type=int)
+    parser.add_argument('--use_true_triggers', default=0,  type=int)
+ 
     parser.add_argument('--smooth_traj_home',  type=int)
     parser.add_argument('--smooth_traj_feedback_when_home',  type=int)
     parser.add_argument('--time_feedback',  type=float)
@@ -1813,10 +1830,6 @@ if __name__ == "__main__":
     parser.add_argument('--verbose_trigger',  type=float)
     parser.add_argument('--maxMEGrec_dur',  type=float)
  
-
- 
-
-
     args = parser.parse_args()
     par = vars(args)
 
@@ -1858,7 +1871,7 @@ if __name__ == "__main__":
     start_fullscreen = 0
     #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
     #                 start_fullscreen = 0)
-    app = VisuoMotorMEG(info, use_true_triggers=0, debug=par['debug'],
+    app = VisuoMotorMEG(info, use_true_triggers=info['use_true_triggers'], debug=par['debug'],
                      seed=seed, start_fullscreen=par['fullscreen'])
     app.on_execute()
 

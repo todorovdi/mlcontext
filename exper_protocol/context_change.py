@@ -221,6 +221,8 @@ class VisuoMotor:
 
         self.copy_param(info, 'verbose_trigger', 0)
 
+        self.copy_param(info, 'trigger_device', None)
+
         # to minimize change of screen content
         self.add_param('ITI_show_home',1)
 
@@ -1060,8 +1062,9 @@ class VisuoMotor:
                 self.trigger_port = 0x378
                 self.trigger = windll.inpout32
             elif self.params['trigger_device'] == 'parallel':
-                import parallel
-                self.trigger_port = '0x3FE8'
+                #import parallel
+                from psychopy import parallel
+                self.trigger_port = '0x378'
                 self.trigger = parallel.ParallelPort(address=self.trigger_port)
 
 
