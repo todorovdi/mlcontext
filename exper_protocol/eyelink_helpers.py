@@ -35,6 +35,9 @@ def open_edf_file(el_tracker, info):
     else:
         subjN = ''
     edf_file = f"EL_{subjN}_{s}.edf"
+
+
+    print(f'open_edf_file: using file {edf_file}')
     #edf_file = f"eyelink_dat_{subj}_{self.settings.current_session}.edf"
     #edf_file = "eL_file.edf"
     try:
@@ -53,6 +56,7 @@ def open_edf_file(el_tracker, info):
 
 def EL_config(el_tracker, dummy_mode):
     """ Configure the tracker"""
+    print('EL_config')
 
     # Get the software version:  1-EyeLink I, 2-EyeLink II, 3/4-EyeLink 1000,
     # 5-EyeLink 1000 Plus, 6-Portable DUO
@@ -100,13 +104,14 @@ def EL_config(el_tracker, dummy_mode):
     # if the default outermost targets are not all visible in the bore.
     # The default <x, y display proportion> is 0.88, 0.83 (88% of the display
     # horizontally and 83% vertically)
-    # Coum vals
-    #el_tracker.sendCommand('calibration_area_proportion 0.88 0.60')
-    #el_tracker.sendCommand('validation_area_proportion 0.88 0.60')
 
-    # Coum code
-    el_tracker.sendCommand('calibration_area_proportion 0.88 0.83')
-    el_tracker.sendCommand('validation_area_proportion 0.88 0.83')
+    # orig code
+    #el_tracker.sendCommand('calibration_area_proportion 0.88 0.83')
+    #el_tracker.sendCommand('validation_area_proportion 0.88 0.83')
+
+    # Coum vals. The second coord is lower in order to avoid overlapping with photodiode
+    el_tracker.sendCommand('calibration_area_proportion 0.88 0.60')
+    el_tracker.sendCommand('validation_area_proportion 0.88 0.60')
 
     # Optional: online drift correction.
     # See the EyeLink 1000 / EyeLink 1000 Plus User Manual
@@ -125,6 +130,7 @@ def EL_config(el_tracker, dummy_mode):
 # beg of each trial
 # Q: what does drift correct do? Does it take time?
 def EL_driftCorrect(el_tracker, dummy_mode):
+    print('EL_driftCorrect')
     if not dummy_mode:
         while True:  # exit when succeed
             if (not el_tracker.isConnected()) or el_tracker.breakPressed():
@@ -142,6 +148,7 @@ def EL_driftCorrect(el_tracker, dummy_mode):
 
 def EL_calibration(el_tracker, full_screen):
     """ Set up a graphic environment for calibration/"""
+    print('EL_calibration')
 
     # Step 4: set up a graphics environment for calibration
     #
@@ -211,9 +218,10 @@ def EL_calibration(el_tracker, full_screen):
         print('ERROR:', err)
         el_tracker.exitCalibration()
 
-
+def EL_getEyeInfo(el_tracker):
     # determine which eye(s) is/are available
     # 0- left, 1-right, 2-binocular
+    print('EL_getEyeInfo: Trying to get eye information')
     eye_used = el_tracker.eyeAvailable()
     if eye_used == 1:
         el_tracker.sendMessage("EYE_USED 1 RIGHT")
@@ -227,6 +235,7 @@ def EL_calibration(el_tracker, full_screen):
     return eye_used
 
 def EL_abort(el_tracker):
+    print('EL_abort')
     """Ends recording """
 
     # Stop recording
@@ -236,6 +245,7 @@ def EL_abort(el_tracker):
         el_tracker.stopRecording()
 
 def EL_disconnect(dummy_mode, edf_file):
+    print('EL_disconnect')
     if dummy_mode:
         return
 

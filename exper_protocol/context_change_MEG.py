@@ -34,49 +34,83 @@ class VisuoMotorMEG(VisuoMotor):
     def initialize_parameters(self, info, subdir):
         info['show_diode'] = 1
         info['conseq_veridical_allowed'] = 0
+        info['conseq_veridical_allowed'] = 1   # faster
 
+        #time_lh_estimate = 0.22 # pm 0.04
+        #info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
+        #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
 
-        info['conseq_veridical_allowed'] = 1
-        time_lh_estimate = 0.22 # pm 0.04
-        info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
         info['trigger_device'] = 'parallel'
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
-        self.copy_param(info, 'dummy_mode', 1)
-        self.copy_param(info, 'maxMEGrec_dur', 20 * 60)
-        self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
 
-        #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
+        self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
+        self.copy_param(info, 'dummy_mode', 1)
+        self.copy_param(info, 'maxMEGrec_dur', 11 * 60)
+
+    def insertBreaks(self):
+        maxMEGrec_dur = self.params['maxMEGrec_dur']
+        mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
+        approx_pause_step = len(self.trial_infos)  // mult
+        print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
+
+        N = self.params['spec_trial_modN']
+        def iscandpause(x): 
+            # 1 because enumerate
+            bi = x[1]['block_ind']
+            r = x[1]['trial_type'] == 'pause'
+        #     if r:
+        #         print(bi)
+            r = r and ((bi > 2) and (bi % N == 4))
+            r = r and (x[0] > approx_pause_step - self.params[ 'block_len_max'])
+            return r
+            
+
+        f = filter( iscandpause,  enumerate(self.trial_infos) )
+        f = list(f)
+        try:
+            tinds = np.array (list(zip(*f))[0])
+        except IndexError as e:
+            print(f'ERROR: Problem during setting pauses to breaks, len(iscandpause) = {len(f)}.'
+                  f' pause duration = {self.params["pause_duration"]}, durtot_all={self.durtot_all}')
+            exit(1)
+
+        #print( tinds % approx_pause_step )
+
+        assert np.all(np.diff(tinds) > 0 )
+        tistis = np.sort( np.argsort(tinds % approx_pause_step)[:mult - 1] )
+        # print(tistis)
+        tinds_pauses_turn_breaks = tinds[tistis]
+        print('Tinds_pauses_turn_breaks =', tinds_pauses_turn_breaks )
+
+        for tind in tinds_pauses_turn_breaks:
+            self.trial_infos[tind]['trial_type'] = 'break'
+
+
+        n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
+        n_breaks = sum( [spec['trial_type'] == 'break' for spec in self.trial_infos] )
+        print(f'Num (non-break) pauses={n_pauses}, num breaks = {n_breaks}')
  
 
-    def __init__(self, info, task_id='',
-                 use_true_triggers = 1, debug=False, 
-                 seed= None, start_fullscreen = 0):
+        tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break']
+        difftis_break = np.diff( np.hstack([0, tis_break]) )
+        difftis_break_dur = difftis_break * self.trial_dur_expected
+        print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
+        assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], 'Too long time distance between breaks'
 
-        VisuoMotor.__init__(self, info, task_id, use_true_triggers, debug,
-                            seed, start_fullscreen,
-                            save_tigger_and_trial_infos_paramfile = 0,
-                            parafile_close = 0, subdir='dataMEG')
 
-        self.start_fullscreen = 1
-
-        assert self.params['trigger_device'] == 'parallel'
-
+    def prepVars(self, insert_breaks = True):
         self.el_tracker = EL_init(self.params['dummy_mode'] )
         self.edf_file = open_edf_file(self.el_tracker, info)
 
-
         preamble_text = 'RECORDED BY %s' % os.path.basename(__file__)
-        self.el_tracker.sendCommand("add_file_preamble_text '%s'" % preamble_text)
+        self.el_tracker.sendCommand(f"add_file_preamble_text '{preamble_text}'" )
         self.el_tracker.setOfflineMode()
 
         EL_config(self.el_tracker, self.params['dummy_mode'])
 
-
-
-
-        self.instuctions_eyelink_calib_str = (f"To calibrate eyetracker, press 'e'\n")
+        self.instuctions_eyelink_calib_str = (f"Pour calibrer eyetracker, appulyez 'e'\n")
         #self.phase_after_restart = 'REST'
         self.phase_after_restart = 'TRAINING_END'
         self.first_phase_after_start = 'TRAINING_START'
@@ -91,16 +125,18 @@ class VisuoMotorMEG(VisuoMotor):
                              'JOYSTICK_CALIBRATION_CENTER':7,
                              'TRAINING_START':8,
                              'TRAINING_END':9,
-                              'REST':10, 'RETURN':11,
-                              'GO_CUE_WAIT_AND_SHOW':12,
-                              'TARGET':13, 'FEEDBACK': 14,
-                              'TARGET_AND_FEEDBACK':15,
-                           'ITI':16, 'BREAK':17, 'PAUSE':18,
-                              'BUTTON_PRESS':19,
-                              'EYELINK_CALIBRATION_PRE':20,
-                              'EYELINK_CALIBRATION':21,
-                              'TASK_INSTRUCTIONS':22,
+                             'REST':10, 'RETURN':11,
+                             'GO_CUE_WAIT_AND_SHOW':12,
+                             'TARGET':13, 'FEEDBACK': 14,
+                             'TARGET_AND_FEEDBACK':15,
+                              'ITI':16, 'BREAK':17, 'PAUSE':18,
+                             'BUTTON_PRESS':19,
+                             'EYELINK_CALIBRATION_PRE':20,
+                             'EYELINK_CALIBRATION':21,
+                             'TASK_INSTRUCTIONS':22,
                               }
+
+        self.phase2trigger_inv = dict(zip(self.phase2trigger.values(), self.phase2trigger.keys()))
 
 
         self.trigger2phase = dict((v, k) for k, v in self.phase2trigger.items())
@@ -113,8 +149,14 @@ class VisuoMotorMEG(VisuoMotor):
         # start phase
         self.current_phase = "EYELINK_CALIBRATION_PRE"
 
-        self.dummy_eyelink_counter = self.params['FPS'] * 1
         self.dummy_eyelink_counter = self.params['FPS'] * 0.2
+
+        test_trial_ind = info.get('test_trial_ind',3)
+        if info['test_break'] and (test_trial_ind >= 0):
+            dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+                         'trial_type': 'break', 'special_block_type': None }
+            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                self.trial_infos[test_trial_ind:]
 
         # Q do I switch to REST or to ITI from break (currently to REST)?
 
@@ -149,45 +191,13 @@ class VisuoMotorMEG(VisuoMotor):
 
         ############################################################
 
-        maxMEGrec_dur = self.params['maxMEGrec_dur']
-        mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
-        approx_pause_step = len(self.trial_infos)  // mult
-        print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
+        assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
+        f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
 
-        N = self.params['spec_trial_modN']
-        def iscandpause(x): 
-            # 1 because enumerate
-            bi = x[1]['block_ind']
-            r = x[1]['trial_type'] == 'pause'
-        #     if r:
-        #         print(bi)
-            r = r and ((bi > 2) and (bi % N == 4))
-            r = r and (x[0] > approx_pause_step - self.params[ 'block_len_max'])
-            return r
-            
 
-        f = filter( iscandpause,  enumerate(self.trial_infos) )
-        f = list(f)
-        try:
-            tinds = np.array (list(zip(*f))[0])
-        except IndexError as e:
-            print(f'ERROR: Problem during setting pauses to breaks, len(iscandpause) = {len(f)}.'
-                  f' pause duration = {self.params["pause_duration"]}, durtot_all={self.durtot_all}')
-            exit(1)
+        if insert_breaks:
+            self.insertBreaks()
 
-        #print( tinds % approx_pause_step )
-
-        assert np.all(np.diff(tinds) > 0 )
-        tistis = np.sort( np.argsort(tinds % approx_pause_step)[:mult - 1] )
-        # print(tistis)
-        tinds_pauses_turn_breaks = tinds[tistis]
-        print('Tinds_pauses_turn_breaks =', tinds_pauses_turn_breaks )
-        assert len(tinds_pauses_turn_breaks) < 4
-
-        for tind in tinds_pauses_turn_breaks:
-            self.trial_infos[tind]['trial_type'] = 'break'
-
-        #raise ValueError('fd')
 
         ###########################################
         self.MEG_start_trigger = 252
@@ -243,57 +253,191 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.CONTEXT_TRIGGER_DICT_inv = dict(zip(self.CONTEXT_TRIGGER_DICT.values(), self.CONTEXT_TRIGGER_DICT.keys()))
 
-
-        import json
-        s = json.dumps(CTD_to_export, indent=4)
-        self.paramfile.write( '# CTD_to_export \n' )
-        self.paramfile.write( '# trial param and phase 2 trigger values \n' )
-        self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
-        self.paramfile.write( s + '\n' )
-        self.paramfile.write( '# phase2trigger \n' )
-        s = json.dumps(self.phase2trigger, indent=4)
-        self.paramfile.write( s + '\n' )
-
-        self.paramfile.write( '# trial_infos = \n' )
-        for tc in range( len(self.trial_infos) ):
-            ti = self.trial_infos[tc]
-            s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
-                  ti['vis_feedback_type'], ti['special_block_type'] )
-            #print(s)
-            self.paramfile.write( f'# {s}\n' )
-
-
-        self.paramfile.close()
-
-        ############################################################
-
-
-        test_trial_ind = info.get('test_trial_ind',3)
-        if test_trial_ind >= 0:
-            if info['test_break'] and test_trial_ind >= 0:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':0,
-                             'trial_type': 'break', 'special_block_type': None }
-                self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                    self.trial_infos[test_trial_ind:]
-
-
         ###########################################################
         self.phase_start_times['movement_leave_home'] = -1
         self.already_left_home_during_move_cur_trial = False
 
-        #f2 = filter( lambda x: x['trial_type'] == 'break', self.trial_infos )
-        #f2 = list(f2)
-        #len(f2), f2
+        if sys.platform in ['linux', 'linux2', 'darwin']:
+            self.jaxcenter =  {'ax1':-0.04, 'ax2':-0.013} #{'ax1' :0}
+        elif sys.platform in ['win32', 'cygwin'] :
+            self.jaxcenter =  {'ax1':-0.07, 'ax2':-0.0065} #{'ax1' :0}
 
-    def send_trigger(self, value, add_info = None):
+        return CTD_to_export
+
+    def __init__(self, info, task_id='',
+                 use_true_triggers = 1, debug=False, 
+                 seed= None, start_fullscreen = 0):
+
+        subdir='dataMEG'
+        import pickle
+
+        last_fn_base = None
+        from utils import getLastInfo, getLastFname
+        
+
+        if par['continue_from_last'] is not None:
+            last_fn_base = getLastFname(subdir)
+
+            if last_fn_base is None:
+                raise ValueError('problem with loading last info')
+            else:
+                print(f'Loading last info from {last_fn_base}')
+
+        if last_fn_base is not None:
+            self.filename = last_fn_base
+        
+            
+
+            fnf = self.filename + '__params.pkl'
+            assert os.path.exists(fnf), fnf
+            with open(fnf, 'rb') as f:
+                self.params = pickle.load(f)
+
+            fnf = self.filename + '__phase2trigger_inv.pkl'
+            assert os.path.exists(fnf), fnf
+            with open(fnf, 'rb') as f:
+                self.phase2trigger_inv = pickle.load(f)
+
+            fnf = self.filename + '__trial_infos.pkl'
+            assert os.path.exists(fnf), fnf
+            with open(fnf, 'rb') as f:
+                # Read the file as JSON
+                #enum_trial_infos = json.load(f)
+                enum_trial_infos = pickle.load(f)
+            inds, trial_infos = zip(*enum_trial_infos)
+            self.trial_infos = trial_infos
+
+            nread = self.params['FPS'] * self.params['trial_dur_expected'] * 5
+            r = getLastInfo(self.filename, nread)
+            (last_phase, last_trial_ind, last_trial_block_ind, last_block_first_trial_ind,
+                last_pause, last_block,
+                reward_accrued_before_last_trial, reward_accrued_before_last_block)  = r
+    
+
+            seed = self.params['seed']
+            #from ../behav_proc import readParamFiles
+            # for phase2trigger_inv
+            #_, phase2trigger, phase2trigger_inv, stage2pars = readParamFiles(last_fn_base + '.param', '')
+
+            last_phase = self.phase2trigger_inv[last_phase]
+
+
+            self.trigger_logfile = open(self.filename + '_trigger.log', 'a')
+            self.logfile         = open(self.filename + '.log', 'a')
+
+            s = '##### Task restarted #####\n'
+            for logf in [ self.trigger_logfile, self.logfile]:
+                logf.write(s ) 
+
+            # TODO read log file to pandas, extract max of one phase, sum rewards
+            # TODO read log file, take prelast non special trial (it should be finished)
+            # can I do it without pandas?
+
+            #read params 
+            #read log
+ 
+        
+
+        # todo self.filename in initialize_parameters
+        VisuoMotor.__init__(self, info, task_id, use_true_triggers, debug,
+                            seed, start_fullscreen,
+                            save_tigger_and_trial_infos_paramfile = 0,
+                            parafile_close = 0, subdir=subdir,
+                            gen_trial_infos = (last_fn_base is None),
+                            init_params = (last_fn_base is None))
+        print(f'arg seed = {seed}', 'params seed = ',self.params['seed'], 'self seed = ',self.seed)
+
+        assert self.params['trigger_device'] == 'parallel'
+
+        if sys.platform in ['linux', 'linux2', 'darwin']:
+            assert not self.use_true_triggers
+        elif sys.platform in ['win32', 'cygwin'] :
+            assert self.use_true_triggers
+
+        CTD_to_export = self.prepVars(insert_breaks = (last_fn_base is None))
+
+        if par['continue_from_last'] == 'trial':
+            self.reward_accrued = reward_accrued_before_last_trial
+            self.trial_index = last_trial_ind
+
+            print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+        elif par['continue_from_last'] == 'block':
+            self.reward_accrued = reward_accrued_before_last_block
+            self.trial_index = last_block_first_trial_ind
+            print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+        elif par['continue_from_last'] == 'pause':
+            raise ValueError('Have to implement reward reward_accrued')
+            self.reward_accrued = None
+            self.trial_index = last_phase + 1
+            print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+        elif par['continue_from_last'] == 'break':
+            raise ValueError('Have to implement reward reward_accrued')
+            self.reward_accrued = None
+            self.trial_index = last_break + 1
+            print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+
+        if last_fn_base is None:
+            import json
+            s = json.dumps(CTD_to_export, indent=4)
+            self.paramfile.write( '# CTD_to_export \n' )
+            self.paramfile.write( '# trial param and phase 2 trigger values \n' )
+            self.paramfile.write( '# trial_type, vis feedback, tgti, phase \n' )
+            self.paramfile.write( s + '\n' )
+            self.paramfile.write( '# phase2trigger \n' )
+            s = json.dumps(self.phase2trigger, indent=4)
+            self.paramfile.write( s + '\n' )
+
+            self.paramfile.write( '# trial_infos = \n' )
+            for tc in range( len(self.trial_infos) ):
+                ti = self.trial_infos[tc]
+                s = '{} = {}, {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
+                      ti['vis_feedback_type'], ti['special_block_type'],
+                                                ti['block_ind']  )
+                #print(s)
+                self.paramfile.write( f'# {s}\n' )
+
+            self.paramfile.close()
+
+            ############################################################
+
+
+
+            import json
+            fnf = self.filename + '__trial_infos.pkl'
+            if os.path.exists(fnf):
+                print(f'Warning, {fnf} already exists!')
+            with open(fnf, 'wb') as f:
+                #json.dump(list( enumerate(self.trial_infos) ) , f, indent = 4)
+                pickle.dump( list( enumerate(self.trial_infos) ), f )
+
+            fnf = self.filename + '__CONTEXT_TRIGGER_DICT.pkl'
+            with open(fnf, 'wb') as f:
+                #json.dump(list( enumerate(self.trial_infos) ) , f, indent = 4)
+                pickle.dump( self.CONTEXT_TRIGGER_DICT, f )
+
+            fnf = self.filename + '__params.pkl'
+            with open(fnf, 'wb') as f:
+                assert self.params['seed'] is not None 
+                pickle.dump( self.params, f )
+
+            fnf = self.filename + '__phase2trigger_inv.pkl'
+            with open(fnf, 'wb') as f:
+                #json.dump(list( enumerate(self.trial_infos) ) , f, indent = 4)
+                pickle.dump( self.phase2trigger_inv, f )
+
+
+    def send_trigger(self, value, add_info = None, send_nonzero = False):
         # We block it if it has sent something already
         #if (self.trigger_countdown == -1):
         overlap = False
         if (self.trigger_value != 0):
             overlap = True
 
-        cond_to_send = self.trigger_value == 0
-        cond_to_send = True
+        if send_nonzero:
+            cond_to_send = (self.trigger_value == 0)
+        else:
+            cond_to_send = True
+
         if cond_to_send:
             if (self.use_true_triggers):
                 if self.params['trigger_device'] == 'inpout32':
@@ -306,7 +450,7 @@ class VisuoMotorMEG(VisuoMotor):
             # initial_time is set in on_execute
             #self.current_time = time.time()
             #td = self.current_time - self.initial_time
-            # TODO: trigger startt time
+            # TODO: trigger start time
             td = -1
             sa = f'; time={td}'
             if add_info is not None:
@@ -371,6 +515,84 @@ class VisuoMotorMEG(VisuoMotor):
             else:
                 self._display_surf = pygame.display.set_mode(self.size,  display = display)
         self._running = True
+
+    def on_phase_change(self, prev_phase, prev_trial_index):
+        self.el_tracker.sendMessage('phase change to %s' % self.current_phase)
+
+        self.phase_start_times[self.current_phase] = time.time()
+        # do I need it?
+        if self.current_phase == 'REST':
+            self.phase_start_times["at_home"] = time.time()
+
+            self.phase_start_times["movement_leave_home"] = -1
+            self.already_left_home_during_move_cur_trial = False
+
+
+        tdif = time.time() - self.phase_start_times[prev_phase]
+
+        print(f'Phase change {prev_phase} -> {self.current_phase};  (ti {prev_trial_index} -> {self.trial_index} )')
+        print(f"             {prev_phase} finished after {tdif:.3f} s")
+        #print(f'   tgt = {self.tgti_to_show}')
+
+        #send trigger when phase changes. Send it after debug message
+        if self.task_started == 1:
+            self.send_trigger_cur_trial_info()
+
+    def on_trial_change(self, prev_trial_index, prev_trial_info):
+        self.el_tracker.sendMessage('TRIALID %d' % self.trial_index)
+
+        trial_info2 = self.trial_infos[self.trial_index]
+        tc = time.time()
+        tdif = tc - self.phase_start_times['current_trial']
+        self.phase_start_times['current_trial'] = tc
+
+        print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
+        print(f'TIME: trial completed in {tdif:.2f} sec')
+        print(f'  prev trial = {prev_trial_info}')
+        print(f'  new trial  = {trial_info2}')
+
+        ## OPTIONAL--record_status_message : show some info on the Host PC
+        ## for illustration purposes, here we show an "example_MSG"
+        #el_tracker.sendCommand("record_status_message 'Block %d'" % block)
+        # TODO look
+        ## For illustration purpose,
+        ## send interest area messages to record in the EDF data file
+        ## here we draw a rectangular IA, for illustration purposes
+        ## format: !V IAREA RECTANGLE <id> <left> <top> <right> <bottom> [label]
+        ## for all supported interest area commands, see the Data Viewer Manual,
+        ## "Protocol for EyeLink Data to Viewer Integration"
+        # left = int(scn_width/2.0) - 60
+        # top = int(scn_height/2.0) - 60
+        # right = int(scn_width/2.0) + 60
+        # bottom = int(scn_height/2.0) + 60
+        # ia_pars = (1, left, top, right, bottom, 'screen_center')
+        # el_tracker.sendMessage('!V IAREA RECTANGLE %d %d %d %d %d %s' % ia_pars)
+        # imgload_msg = '!V IMGLOAD CENTER %s %d %d %d %d' % imgload_pars
+        # el_tracker.sendMessage('fix_onset')
+        # el_tracker.sendMessage('!V CLEAR 128 128 128')
+        # hor = (scn_width/2-20, scn_height/2, scn_width/2+20, scn_height/2)
+        # ver = (scn_width/2, scn_height/2-20, scn_width/2, scn_height/2+20)
+        # el_tracker.sendMessage('!V DRAWLINE 0 0 0 %d %d %d %d' % hor)
+        # el_tracker.sendMessage('!V DRAWLINE 0 0 0 %d %d %d %d' % ver)
+        ## record trial variables to the EDF data file, for details, see Data
+        ## Viewer User Manual, "Protocol for EyeLink Data to Viewer Integration"
+        #el_tracker.sendMessage('!V TRIAL_VAR condition %s' % cond)
+        #el_tracker.sendMessage('!V TRIAL_VAR image %s' % pic)
+        ## send a 'TRIAL_RESULT' message to mark the end of trial, see Data
+        ## Viewer User Manual, "Protocol for EyeLink Data to Viewer Integration"
+        #el_tracker.sendMessage('TRIAL_RESULT %d' % pylink.TRIAL_OK)
+
+
+        ## Set up the camera and calibrate the tracker, if not running in Dummy mode
+        #if not dummy_mode:
+        #    try:
+        #        el_tracker.doTrackerSetup()
+        #    except RuntimeError as err:
+        #        print('ERROR:', err)
+        #        el_tracker.exitCalibration()
+
+
+
 
     def on_render(self):
         '''
@@ -615,7 +837,7 @@ class VisuoMotorMEG(VisuoMotor):
             if self.current_phase == 'EYELINK_CALIBRATION':
                 phase_after_calib = 'TASK_INSTRUCTIONS'
                 # TODO: I am not sure if fullscreen here should be this or 
-                # I have to actually chekc whether I am fullscreen or not
+                # I have to actually check whether I am fullscreen or not
                 if self.params['dummy_mode']:
                     if self.dummy_eyelink_counter % 10 == 0:
                         print(f'Dummy eyelink calibration, dummy_eyelink_counter = {self.dummy_eyelink_counter}')
@@ -625,59 +847,12 @@ class VisuoMotorMEG(VisuoMotor):
                         self.current_phase = phase_after_calib 
                 else:
                     EL_calibration(self.el_tracker, self.start_fullscreen)
+                    EL_getEyeInfo(self.el_tracker)
+
                     #self.restartTask( very_first = 1, phase = phase_after_calib)
                     self.current_phase = phase_after_calib 
             elif self.current_phase in self.phase2dir:
-
-                self._display_surf.fill(self.color_bg)
-
-                if self.params['controller_type'] == 'joystick':
-                    ax1 = self.HID_controller.get_axis(0)
-                    ax2 = self.HID_controller.get_axis(1)
-                else:
-                    ax1,ax2 = None,None
-                val = None
-                isgood = False
-                if self.current_phase == 'JOYSTICK_CALIBRATION_LEFT':
-                    isgood = ax1 <= -0.3
-                    val = ax1
-                elif self.current_phase == 'JOYSTICK_CALIBRATION_RIGHT':
-                    isgood = ax1 >= 0.3
-                    val = ax1
-                elif self.current_phase == 'JOYSTICK_CALIBRATION_UP':
-                    isgood = ax2 <= -0.3
-                    val = ax2
-                elif self.current_phase == 'JOYSTICK_CALIBRATION_DOWN':
-                    isgood = ax2 >= 0.3
-                    val = ax2
-                isbad = not isgood
-                if self.current_phase in self.phase2dir:
-                    self.cursor_pos_update()
-                    self.trajX += [ self.cursorX ]
-                    self.trajY += [ self.cursorY ]
-                    self.traj_jax1 += [ax1]
-                    self.traj_jax2 += [ax2]
-
-                    side = self.phase2dir[self.current_phase]
-                    stopped = self.test_stopped_jax()
-                    if stopped and isbad:
-                        self.drawPopupText(f'please move {side}')
-                    else:
-                        self.drawPopupText(f'Calibrating joystick: please move maximum {side}')
-                        self.drawCursorOrig() # with diff color and size
-
-                    if stopped and (not isbad):
-                        self.jaxlims_d[side] = abs( val )
-                        print(f'   {self.current_phase}   {isbad}  {ax1},{ax2}'  )
-                        print(f'joystick calibration: set max {side} = {val:.2f}')
-
-                        i = self.calib_seq.index(self.current_phase)
-                        if (i + 1) < len(self.calib_seq):
-                            self.current_phase = self.calib_seq[i+1]
-                            self.reset_traj()
-                        else:
-                            print('joystick caliration finished ',self.jaxlims_d)
-                            self.current_phase = None
+                self.calibJoystick()
             elif self.current_phase == "TASK_INSTRUCTIONS":
                 self._display_surf.fill(self.color_bg)
  
@@ -995,6 +1170,57 @@ class VisuoMotorMEG(VisuoMotor):
         cursorReachY = int(round(cursorReachY))
         return cursorReachX, cursorReachY
 
+    def calibJoystick(self):
+        self._display_surf.fill(self.color_bg)
+
+        if self.params['controller_type'] == 'joystick':
+            ax1 = self.HID_controller.get_axis(0)
+            ax2 = self.HID_controller.get_axis(1)
+        else:
+            ax1,ax2 = None,None
+        val = None
+        isgood = False
+        if self.current_phase == 'JOYSTICK_CALIBRATION_LEFT':
+            isgood = ax1 <= -0.3
+            val = ax1
+        elif self.current_phase == 'JOYSTICK_CALIBRATION_RIGHT':
+            isgood = ax1 >= 0.3
+            val = ax1
+        elif self.current_phase == 'JOYSTICK_CALIBRATION_UP':
+            isgood = ax2 <= -0.3
+            val = ax2
+        elif self.current_phase == 'JOYSTICK_CALIBRATION_DOWN':
+            isgood = ax2 >= 0.3
+            val = ax2
+        isbad = not isgood
+        if self.current_phase in self.phase2dir:
+            self.cursor_pos_update()
+            self.trajX += [ self.cursorX ]
+            self.trajY += [ self.cursorY ]
+            self.traj_jax1 += [ax1]
+            self.traj_jax2 += [ax2]
+
+            side = self.phase2dir[self.current_phase]
+            stopped = self.test_stopped_jax()
+            if stopped and isbad:
+                self.drawPopupText(f'please move {side}')
+            else:
+                self.drawPopupText(f'Calibrating joystick: please move maximum {side}')
+                self.drawCursorOrig() # with diff color and size
+
+            if stopped and (not isbad):
+                self.jaxlims_d[side] = abs( val )
+                print(f'   {self.current_phase}   {isbad}  {ax1},{ax2}'  )
+                print(f'joystick calibration: set max {side} = {val:.2f}')
+
+                i = self.calib_seq.index(self.current_phase)
+                if (i + 1) < len(self.calib_seq):
+                    self.current_phase = self.calib_seq[i+1]
+                    self.reset_traj()
+                else:
+                    print('joystick caliration finished ',self.jaxlims_d)
+                    self.current_phase = None
+
     def cursor_pos_update(self):
         if self.params['controller_type'] == 'joystick':
             # from -1 to 1 -- not really. But below 1 in mod
@@ -1131,6 +1357,7 @@ class VisuoMotorMEG(VisuoMotor):
                 elif trial_info['trial_type'] == 'break':
                     self.current_phase = 'BREAK'
                     self.playSound()
+                    self.send_trigger(self.MEG_stop_trigger)
                     self.free_from_break = 0
                 else:
                     if self.params['prep_after_rest']:
@@ -1344,7 +1571,7 @@ class VisuoMotorMEG(VisuoMotor):
             #    str(self.trial_index+1), True, self.color_text)
 
         elif (self.current_phase == 'BREAK'):
-            if (self.free_from_break): # set somewhere esle
+            if (self.free_from_break): # set somewhere else
                 #self.current_phase = 'ITI' # would do trial index update, but requries allowing special trigger for it
 
                 self.current_phase = 'REST'
@@ -1387,6 +1614,12 @@ class VisuoMotorMEG(VisuoMotor):
                 self.reset_main_vars()
                 self.trial_index += 1
                 print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
+
+
+                if self.params['controller_type'] == 'joystick':
+                    ax1 = self.HID_controller.get_axis(0)
+                    ax2 = self.HID_controller.get_axis(1)
+                    print(f'  raw joystick coords: ax1 = {ax1}, ax2={ax2}')
 
                 if self.params['rest_after_return']:
                     self.current_phase = 'RETURN'
@@ -1475,89 +1708,16 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.current_phase_trigger = self.phase2trigger[self.current_phase]
         if self.current_phase != prev_phase:
-            self.el_tracker.sendMessage('phase change to %s' % self.current_phase)
-
-            self.phase_start_times[self.current_phase] = time.time()
-            # do I need it?
-            if self.current_phase == 'REST':
-                self.phase_start_times["at_home"] = time.time()
-
-                self.phase_start_times["movement_leave_home"] = -1
-                self.already_left_home_during_move_cur_trial = False
-
-
-            tdif = time.time() - self.phase_start_times[prev_phase]
-
-            print(f'Phase change {prev_phase} -> {self.current_phase};  {prev_trial_index} -> {self.trial_index}')
-            print(f"             {prev_phase} finished after {tdif:.3f} s")
-            #print(f'   tgt = {self.tgti_to_show}')
-
-            #send trigger when phase changes. Send it after debug message
-            if self.task_started == 1:
-                self.send_trigger_cur_trial_info()
+            self.on_phase_change(prev_phase, prev_trial_index)
 
         if prev_trial_index != self.trial_index and self.trial_index < len(self.trial_infos):
 
-            self.el_tracker.sendMessage('TRIALID %d' % self.trial_index)
-
-            ## OPTIONAL--record_status_message : show some info on the Host PC
-            ## for illustration purposes, here we show an "example_MSG"
-            #el_tracker.sendCommand("record_status_message 'Block %d'" % block)
-            # TODO look
-            ## For illustration purpose,
-            ## send interest area messages to record in the EDF data file
-            ## here we draw a rectangular IA, for illustration purposes
-            ## format: !V IAREA RECTANGLE <id> <left> <top> <right> <bottom> [label]
-            ## for all supported interest area commands, see the Data Viewer Manual,
-            ## "Protocol for EyeLink Data to Viewer Integration"
-            # left = int(scn_width/2.0) - 60
-            # top = int(scn_height/2.0) - 60
-            # right = int(scn_width/2.0) + 60
-            # bottom = int(scn_height/2.0) + 60
-            # ia_pars = (1, left, top, right, bottom, 'screen_center')
-            # el_tracker.sendMessage('!V IAREA RECTANGLE %d %d %d %d %d %s' % ia_pars)
-            # imgload_msg = '!V IMGLOAD CENTER %s %d %d %d %d' % imgload_pars
-            # el_tracker.sendMessage('fix_onset')
-            # el_tracker.sendMessage('!V CLEAR 128 128 128')
-            # hor = (scn_width/2-20, scn_height/2, scn_width/2+20, scn_height/2)
-            # ver = (scn_width/2, scn_height/2-20, scn_width/2, scn_height/2+20)
-            # el_tracker.sendMessage('!V DRAWLINE 0 0 0 %d %d %d %d' % hor)
-            # el_tracker.sendMessage('!V DRAWLINE 0 0 0 %d %d %d %d' % ver)
-            ## record trial variables to the EDF data file, for details, see Data
-            ## Viewer User Manual, "Protocol for EyeLink Data to Viewer Integration"
-            #el_tracker.sendMessage('!V TRIAL_VAR condition %s' % cond)
-            #el_tracker.sendMessage('!V TRIAL_VAR image %s' % pic)
-            ## send a 'TRIAL_RESULT' message to mark the end of trial, see Data
-            ## Viewer User Manual, "Protocol for EyeLink Data to Viewer Integration"
-            #el_tracker.sendMessage('TRIAL_RESULT %d' % pylink.TRIAL_OK)
-
-
-            ## Set up the camera and calibrate the tracker, if not running in Dummy mode
-            #if not dummy_mode:
-            #    try:
-            #        el_tracker.doTrackerSetup()
-            #    except RuntimeError as err:
-            #        print('ERROR:', err)
-            #        el_tracker.exitCalibration()
-
-            trial_info2 = self.trial_infos[self.trial_index]
-            tc = time.time()
-            tdif = tc - self.phase_start_times['current_trial']
-            self.phase_start_times['current_trial'] = tc
-
-            print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
-            print(f'TIME: trial completed in {tdif:.2f} sec')
-            print(f'  prev trial = {trial_info}')
-            print(f'  new trial  = {trial_info2}')
-
-
-
+            # at this stage trial_info is related to the prev trial, not to the new one
+            self.on_trial_change(prev_trial_index, trial_info)
 
         ## needed because apparently mouse position is not reset immediately
         #if self.just_moved_home:
         #    self.just_moved_home = 0
-
-
 
     def update_log(self):
         # logging
@@ -1621,8 +1781,8 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_log.append(self.current_time - self.initial_time)
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
 
-    #
-    #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time
+        #
+        #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time
 
 
 
@@ -1829,12 +1989,26 @@ if __name__ == "__main__":
     parser.add_argument('--training_text_show_duration',  type=float)
     parser.add_argument('--verbose_trigger',  type=float)
     parser.add_argument('--maxMEGrec_dur',  type=float)
+
+    parser.add_argument('--continue_from_last', default=None, type=str)
  
     args = parser.parse_args()
     par = vars(args)
 
     assert par['debug'] in ['no', 'render_extra_info', 'render_final']
     assert ( par['screen_size'] in ['fixed', 'auto']) | ( par['screen_size'].find('x') > 0 )
+
+    if 'continue_from_last' in par:
+      assert par['continue_from_last']  in [None, 'trial', 'block', 'break', 'pause']
+
+      # TODO: find most recent logfile, raed params from it
+      # TODO: save reward accrued (or calc based on saved reward)
+      # don't do init params then, set trial_index and some other vars
+      # reset_traj
+      #  reward_accrued = 0
+      #  restartTask ()
+      # TODO: determine last trial
+      # Q: Save in a different log file or same? Better difffernt. Then set nameing rule. And merge in the end
 
 
     info = {}
@@ -1868,7 +2042,14 @@ if __name__ == "__main__":
     else:
         seed = None
     print(f'seed = {seed}')
-    start_fullscreen = 0
+
+    
+    if sys.platform in ['linux', 'linux2', 'darwin']:
+        assert not par['fullscreen'], 'On linux os macos (assume debug) please run NOT fullscreen'                    
+    elif sys.platform in ['win32', 'cygwin'] :
+        assert par['fullscreen'], 'On windows (assume actual experiment) please run un fullscreen'
+        os.environ['SDL_VIDEODRIVER'] = 'windib'  # for pygame to work
+
     #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
     #                 start_fullscreen = 0)
     app = VisuoMotorMEG(info, use_true_triggers=info['use_true_triggers'], debug=par['debug'],

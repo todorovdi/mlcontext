@@ -12,13 +12,14 @@ import numpy as np
 import math
 from os.path import join as pjoin
 from itertools import product  # ,repeat
-import argparse
+import argparse         
+import glob
 # import pylink
 # import EyeLink
 #from utils import get_target_angles
 
 def fnuniquify(path):
-    'uniqify filename'
+    'uniqify filename for screenshots'
     filename, extension = os.path.splitext(path)
     counter = 1
 
@@ -106,6 +107,8 @@ class VisuoMotor:
 
     def add_param_comment(self, comment):
         self.paramfile.write(comment + '\n')
+
+    #def set_vars():
 
     def initialize_parameters(self, info, subdir = 'data'):
         # self.debug = False
@@ -467,11 +470,113 @@ class VisuoMotor:
 
         self.add_param('randomize_tgt_initial_veridical', 1)
 
+    def genContextSeq(self, v0 = 0, verbose=0 ):
+        #self.pert_block_types = ['rot-15', 'rot15', 'rot30', 'rot60', 'rot90',
+        #               'scale-', 'scale+', 'reverse_x'  ]
+        # 'scale-&rot-15','scale-&rot30'
+
+        target_inds = np.arange(len(self.target_coords) )
+        vfti_seq0 = list( product( self.vis_feedback_types, target_inds ) )
+        n_contexts = len(vfti_seq0)
+        vfti_seq_noperm = vfti_seq0 * self.params['n_context_appearences']
+
+        if v0:
+            was_repet = True
+            verbose_repeats_remove = 0
+            num_first_veridical = 0
+            num_repet = 0
+            while was_repet:
+                ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
+                if self.params['allow_context_conseq_repetition']:
+                    break
+                else:
+                    # check for repetitions
+                    was_repet = False
+                    for i in range(len(ct_inds) - 1):
+                        vfti1 = vfti_seq_noperm[ct_inds[i] ]
+                        vfti2 = vfti_seq_noperm[ct_inds[i+1] ]
+                        repet_cond = vfti1 == vfti2
+                        if not self.params['conseq_veridical_allowed']:
+                            if (vfti1[0],vfti2[0]) == ('veridical','veridical'):
+                                repet_cond = True
+                        if repet_cond:
+                            was_repet = True
+                            # break from this and return to outer while
+                            if verbose_repeats_remove:
+                                print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
+                            num_repet += 1
+                            break
+                    vfti0 = vfti_seq_noperm[ct_inds[0] ]
+                    if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
+                        if verbose_repeats_remove:
+                            print('First was veridical')
+                        num_first_veridical += 1
+                        was_repet = True
+                    if not was_repet:
+                        print('no conseq context block repetitions')
+            print(f'Context seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
+        else:
+            prohibit_vft_conseq = []
+            if not self.params['conseq_veridical_allowed']:
+                prohibit_vft_conseq =  [ ('veridical', 'veridical') ]
+            
+            num_context_left = dict( zip( np.arange(n_contexts), [self.params['n_context_appearences'] ] * n_contexts) )
+            nleft = np.sum( list(num_context_left.values() ) )
+            ct_inds = []
+            ii = 0
+            while nleft > 0:
+                add = True
+                ii += 1
+                ctxi = np.random.randint(0, n_contexts)
+                vft,tgti = vfti_seq0[ctxi]
+                if verbose:
+                    print(ctxi, vft,tgti, nleft)
+
+                if num_context_left[ ctxi ] == 0:
+                    if verbose:
+                        print('skip 1')
+                        if ii > 1000:
+                            print(num_context_left)
+                    add = False
+                if (len(ct_inds) == 0)  and (self.params['num_training'] > 1) and (vft == 'veridical'):
+                    if verbose:
+                        print('skip 2')
+                    add = False
+                elif (len(ct_inds) > 1):
+                    if  ct_inds[-1] == ctxi:
+                        if verbose:
+                            print('skip 3')
+                        add = False
+                    if not self.params['conseq_veridical_allowed']: 
+                        vft_prev, tgti_prev = vfti_seq0[ct_inds[-1] ]
+                        if (vft,vft_prev) == ('veridical','veridical'):
+                            if verbose:
+                                print('skip 4')
+                            add = False
+                if not add:
+                    if ii > 2000:
+                        print('Reset generation')
+                        num_context_left = dict( zip( np.arange(n_contexts), [self.params['n_context_appearences'] ] * n_contexts) )
+                        nleft = np.sum( list(num_context_left.values() ) )
+                        ii = 0
+                        ct_inds = []
+                    continue
+
+                if verbose:
+                    print(ctxi, vft,tgti, 'added')
+                ct_inds += [ctxi]
+                num_context_left[ ctxi ] -= 1
+                nleft = np.sum( list(num_context_left.values() )  )
+        
+        vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
+
+        return vfti_seq, ct_inds
+
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
                  seed= None, start_fullscreen = 0,
                 save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1,
-                subdir='data' ):
+                subdir='data', gen_trial_infos = True, init_params = True ):
 
         if not os.path.exists(subdir):
             print(f'Creating subdir={subdir}')
@@ -481,7 +586,9 @@ class VisuoMotor:
         self.debug_type = debug
 
         self.start_fullscreen = start_fullscreen
-        self.initialize_parameters(info, subdir=subdir)
+        # resets params
+        if init_params:
+            self.initialize_parameters(info, subdir=subdir)
         #self.use_true_triggers = self.params['use_true_triggers']
         self.use_true_triggers = use_true_triggers
         if (self.use_true_triggers):
@@ -711,7 +818,7 @@ class VisuoMotor:
 
         self.error_distance = 0 # distance between current feedback and current target
 
-        self.block_stack = []
+        #self.block_stack = []
         #self.counter_random_block = 0
 
         self.free_from_break = 0
@@ -721,207 +828,201 @@ class VisuoMotor:
         ###########################
         print(f'Starting context seq generation')
 
+        #special_trial_block_types = ['error_clamp_sandwich', 'error_clamp_pair']
+        #trial_type = ['veridical', 'perturbation', 'error_clamp', 'pause']
+
+        # TODO: manage seed here, make it participant or date depenent explicitly
+        if 'seed' not in self.params:
+            if seed is None:
+                #print(time.time() )
+                self.seed = int( (time.time() - 1677000000 ) * 100  )
+                print(f'seed (new) = {self.seed}')
+            else:
+                self.seed = seed
+                print(f'seed (preset arg) = {self.seed}')
+
+            self.add_param('seed',self.seed)
+        else:
+            self.seed = self.params['seed']
+            print(f'seed (preset param) = {self.seed}')
+            assert seed is not None
+
+        
+        np.random.seed( int(self.seed) )
+
         self.scale_params = {'scale-':self.params['scale_neg'],
                              'scale+':self.params['scale_pos']}
         self.pert_block_types = self.params['pert_block_types'].split(',')
-        #self.pert_block_types = ['rot-15', 'rot15', 'rot30', 'rot60', 'rot90',
-        #               'scale-', 'scale+', 'reverse_x'  ]
-        # 'scale-&rot-15','scale-&rot30'
         self.vis_feedback_types = self.pert_block_types + ['veridical']
-        special_trial_block_types = ['error_clamp_sandwich', 'error_clamp_pair']
-        trial_type = ['veridical', 'perturbation', 'error_clamp', 'pause']
+        if gen_trial_infos:
+            vfti_seq, ct_inds = self.genContextSeq(verbose=0)
 
-        target_inds = np.arange(len(self.target_coords) )
-        vfti_seq0 = list( product( self.vis_feedback_types, target_inds ) )
-        n_contexts = len(vfti_seq0)
-        vfti_seq_noperm = list(vfti_seq0) * self.params['n_context_appearences']
+            self.vfti_seq = vfti_seq
+            #print('ct_inds',ct_inds)
+            n_blocks = len(self.vfti_seq)
 
-        # TODO: manage seed here, make it participant or date depenent explicitly
-        if seed is None:
-            #print(time.time() )
-            self.seed = int( (time.time() - 1677000000 ) * 100  )
-            print(f'seed = {self.seed}')
-        else:
-            self.seed = seed
+            # per context, block lengths (in trials)
+            ns_context_repeat = np.random.randint( self.params['block_len_min'], self.params['block_len_max'],
+                                                  size=n_blocks )
 
-        self.add_param('seed',seed)
-        np.random.seed( int(self.seed) )
+            #n_blocks = n_contexts * self.params['n_context_appearences']
+            #seq0 = np.tile( np.arange(n_contexts), self.params['n_context_appearences'])
+            #context_seq = np.random.permutation(seq0)
 
+            def genSpecTrialSubblock(pause_trial,
+                                  error_clamp_pair, error_clamp_sandwich,
+                                  d, bi):
+                # d is "normal" trial around which we create special ones
+                trial_infos = []
+                # inplace
+                if pause_trial:
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'pause', 'special_block_type': None }
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                if error_clamp_sandwich:
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'error_clamp',
+                         'special_block_type': 'error_clamp_sandwich' }
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                    #
+                    dspec = d.copy()
+                    dspec['special_block_type'] = 'error_clamp_sandwich'
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                    #
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'error_clamp',
+                         'special_block_type': 'error_clamp_sandwich' }
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                if error_clamp_pair:
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'error_clamp',
+                         'special_block_type': 'error_clamp_pair' }
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                    #
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                         'trial_type': 'error_clamp',
+                         'special_block_type': 'error_clamp_pair' }
+                    dspec[ 'block_ind' ] = bi
+                    trial_infos += [dspec]
+                return trial_infos
 
-        was_repet = True
-        verbose_repeats_remove = 0
-        num_first_veridical = 0
-        num_repet = 0
-        while was_repet:
-            ct_inds = np.random.permutation(np.arange(len(vfti_seq_noperm) ) )
-            if self.params['allow_context_conseq_repetition']:
-                break
-            else:
-                # check for repetitions
-                was_repet = False
-                for i in range(len(ct_inds) - 1):
-                    vfti1 = vfti_seq_noperm[ct_inds[i] ]
-                    vfti2 = vfti_seq_noperm[ct_inds[i+1] ]
-                    repet_cond = vfti1 == vfti2
-                    if not self.params['conseq_veridical_allowed']:
-                        if (vfti1[0],vfti2[0]) == ('veridical','veridical'):
-                            repet_cond = True
-                    if repet_cond:
-                        was_repet = True
-                        # break from this and return to outer while
-                        if verbose_repeats_remove:
-                            print(f'Found repeating context {i},{i+1}:    {vfti1} == {vfti2} => re-generating block sequence')
-                        num_repet += 1
-                        break
-                vfti0 = vfti_seq_noperm[ct_inds[0] ]
-                if self.params['num_training'] > 1 and vfti0[0] == 'veridical':
-                    if verbose_repeats_remove:
-                        print('First was veridical')
-                    num_first_veridical += 1
-                    was_repet = True
-                if not was_repet:
-                    print('no conseq context block repetitions')
-        print(f'Context seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
+            ###############################
+            # Add pretraining
+            ###############################
+            self.trial_infos = [] # this is the sequence of trial types
+            for i in range(self.params['num_training']  ):
+                if self.params['randomize_tgt_initial_veridical']:
+                    tgti_cur = np.random.randint( self.params['num_targets'] )
+                else:
+                    tgti_cur = min( self.params['num_targets'] - 1, 1)
+                    #print('tgti_cur',tgti_cur)
 
-
-        #print('ct_inds',ct_inds)
-        self.vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
-        n_blocks = len(self.vfti_seq)
-        ns_context_repeat = np.random.randint( self.params['block_len_min'], self.params['block_len_max'],
-                                              size=n_blocks )
-
-        #n_blocks = n_contexts * self.params['n_context_appearences']
-        #seq0 = np.tile( np.arange(n_contexts), self.params['n_context_appearences'])
-        #context_seq = np.random.permutation(seq0)
-
-        def genSpecTrialSubblock(pause_trial,
-                              error_clamp_pair, error_clamp_sandwich,
-                              d, bi):
-            # d is "normal" trial around which we create special ones
-            trial_infos = []
-            # inplace
-            if pause_trial:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                     'trial_type': 'pause', 'special_block_type': None }
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-            if error_clamp_sandwich:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                     'trial_type': 'error_clamp',
-                     'special_block_type': 'error_clamp_sandwich' }
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-                #
-                dspec = d.copy()
-                dspec['special_block_type'] = 'error_clamp_sandwich'
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-                #
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                     'trial_type': 'error_clamp',
-                     'special_block_type': 'error_clamp_sandwich' }
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-            if error_clamp_pair:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                     'trial_type': 'error_clamp',
-                     'special_block_type': 'error_clamp_pair' }
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-                #
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                     'trial_type': 'error_clamp',
-                     'special_block_type': 'error_clamp_pair' }
-                dspec[ 'block_ind' ] = bi
-                trial_infos += [dspec]
-            return trial_infos
-
-        ###############################
-        # Add pretraining
-        ###############################
-        self.trial_infos = [] # this is the sequence of trial types
-        for i in range(self.params['num_training']  ):
-            if self.params['randomize_tgt_initial_veridical']:
-                tgti_cur = np.random.randint( self.params['num_targets'] )
-            else:
-                tgti_cur = min( self.params['num_targets'] - 1, 1)
-                #print('tgti_cur',tgti_cur)
-
-            d = {'vis_feedback_type':'veridical', 'tgti':tgti_cur,
-                    'trial_type': 'veridical',
-                 'special_block_type': 'pretraining', 'block_ind':-1 }
-            self.trial_infos += [d]
+                d = {'vis_feedback_type':'veridical', 'tgti':tgti_cur,
+                        'trial_type': 'veridical',
+                     'special_block_type': 'pretraining', 'block_ind':-1 }
+                self.trial_infos += [d]
 
 
 
 
-        # debug scale-
-        #d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
-        #        'trial_type': 'perturbation',
-        #     'special_block_type': None }
-        #self.trial_infos += [d] * 3
+            # debug scale-
+            #d = {'vis_feedback_type':'scale-', 'tgti':tgti_cur,
+            #        'trial_type': 'perturbation',
+            #     'special_block_type': None }
+            #self.trial_infos += [d] * 3
 
 
-        ## debug reverse
-        #d = {'vis_feedback_type':'reverse_x', 'tgti':tgti_cur,
-        #        'trial_type': 'perturbation',
-        #     'special_block_type': None }
-        #self.trial_infos += [d] * 3
-        ###################
+            ## debug reverse
+            #d = {'vis_feedback_type':'reverse_x', 'tgti':tgti_cur,
+            #        'trial_type': 'perturbation',
+            #     'special_block_type': None }
+            #self.trial_infos += [d] * 3
+            ###################
 
 
 
-        # TODO: care about whether pauses and clamps are parts of the block or
-        # not
-        #block_ind = 0
-        block_start_inds = []
-        for (bi, num_context_repeats), (vis_feedback_type, tgti) in\
-                zip( enumerate(ns_context_repeat), self.vfti_seq):
-            #r += [ (vis_feedback_type, tgti) ] * ncr
-            # NOTE: if I insert pauses later, it will be perturbed
-            block_start_inds += [ len( self.trial_infos ) ]
-            if vis_feedback_type == 'veridical':
-                ttype = vis_feedback_type
-            else:
-                ttype = 'perturbation'
-            d = {'vis_feedback_type':vis_feedback_type, 'tgti':tgti,
-                 'trial_type': ttype, 'special_block_type': None,
-                 'block_ind': bi}
+            # TODO: care about whether pauses and clamps are parts of the block or
+            # not
+            #block_ind = 0
+            block_start_inds = []
+            for (bi, num_context_repeats), (vis_feedback_type, tgti) in\
+                    zip( enumerate(ns_context_repeat), self.vfti_seq):
+                #r += [ (vis_feedback_type, tgti) ] * ncr
+                # NOTE: if I insert pauses later, it will be perturbed
+                block_start_inds += [ len( self.trial_infos ) ]
+                if vis_feedback_type == 'veridical':
+                    ttype = vis_feedback_type
+                else:
+                    ttype = 'perturbation'
+                d = {'vis_feedback_type':vis_feedback_type, 'tgti':tgti,
+                     'trial_type': ttype, 'special_block_type': None,
+                     'block_ind': bi}
 
-            pause_trial_middle, error_clamp_pair_middle,\
-                    error_clamp_sandwich_middle = 0,0,0
-            pause_trial_end, error_clamp_pair_end,\
-                    error_clamp_sandwich_end = 0,0,0
+                pause_trial_middle, error_clamp_pair_middle,\
+                        error_clamp_sandwich_middle = 0,0,0
+                pause_trial_end, error_clamp_pair_end,\
+                        error_clamp_sandwich_end = 0,0,0
 
 
-            #if self.debug:
-            #    pause_trial_middle, error_clamp_pair_middle,\
-            #            error_clamp_sandwich_middle = 0,1,0
+                #if self.debug:
+                #    pause_trial_middle, error_clamp_pair_middle,\
+                #            error_clamp_sandwich_middle = 0,1,0
 
-            if bi > 2: #or self.debug:
-                N = self.params['spec_trial_modN']
-                if bi % N == 0:
-                    pause_trial_middle       = 1
-                elif bi % N == 4:
-                    pause_trial_end          = 1
-                elif bi % N == 2:
-                    error_clamp_pair_end     = 1
-                elif bi % N in [6,1,3,5]:
-                    error_clamp_sandwich_end = 1
+                if bi > 2: #or self.debug:
+                    N = self.params['spec_trial_modN']
+                    if bi % N == 0:
+                        pause_trial_middle       = 1
+                    elif bi % N == 4:
+                        pause_trial_end          = 1
+                    elif bi % N == 2:
+                        error_clamp_pair_end     = 1
+                    elif bi % N in [6,1,3,5]:
+                        error_clamp_sandwich_end = 1
 
-            hd = num_context_repeats // 2
-            rhd = num_context_repeats - hd
-            self.trial_infos += [d] * hd
+                hd = num_context_repeats // 2
+                rhd = num_context_repeats - hd
+                self.trial_infos += [d] * hd
 
-            # insert in the middle
-            self.trial_infos += genSpecTrialSubblock(pause_trial_middle,
-                error_clamp_pair_middle, error_clamp_sandwich_middle,d,
-                                                  bi)
+                # insert in the middle
+                self.trial_infos += genSpecTrialSubblock(pause_trial_middle,
+                    error_clamp_pair_middle, error_clamp_sandwich_middle,d,
+                                                      bi)
 
-            self.trial_infos += [d] * rhd
+                self.trial_infos += [d] * rhd
 
-            self.trial_infos += genSpecTrialSubblock(pause_trial_end,
-                error_clamp_pair_end, error_clamp_sandwich_end,d, bi)
+                self.trial_infos += genSpecTrialSubblock(pause_trial_end,
+                    error_clamp_pair_end, error_clamp_sandwich_end,d, bi)
+
+
+
+            # DEBUG TEST EC
+            test_trial_ind = info.get('test_trial_ind',3)
+            if test_trial_ind >= 0:
+                assert test_trial_ind > self.params['num_training']
+                bi = self.trial_infos[test_trial_ind-1]['block_ind']
+                if info['test_err_clamp'] and test_trial_ind >= 0:
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+                            'trial_type': 'error_clamp',
+                            'special_block_type': 'error_clamp_sandwich',
+                             'block_ind': bi  }
+                    self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                        self.trial_infos[test_trial_ind:]
+
+                # DEBUG TEST PAUSE
+                if info['test_pause'] and test_trial_ind >= 0:
+                    dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
+                                 'trial_type': 'pause', 'special_block_type': None,
+                             'block_ind': bi }
+                    self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                        self.trial_infos[test_trial_ind:]
+
+                if info['test_end_task'] and test_trial_ind >= 0:
+                    self.trial_infos = self.trial_infos[:test_trial_ind]
 
 
         # TODO: estimate
@@ -930,37 +1031,23 @@ class VisuoMotor:
         expected_max_reward = len( self.trial_infos ) * success_rate_expected
         self.reward2EUR_coef = self.params['max_EUR_reward'] / expected_max_reward
 
-        # DEBUG TEST EC
-        test_trial_ind = info.get('test_trial_ind',3)
-        if test_trial_ind >= 0:
-            assert test_trial_ind > self.params['num_training']
-            bi = self.trial_infos[test_trial_ind-1]['block_ind']
-            if info['test_err_clamp'] and test_trial_ind >= 0:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':0,
-                        'trial_type': 'error_clamp',
-                        'special_block_type': 'error_clamp_sandwich',
-                         'block_ind': bi  }
-                self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                    self.trial_infos[test_trial_ind:]
-
-            # DEBUG TEST PAUSE
-            if info['test_pause'] and test_trial_ind >= 0:
-                dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
-                             'trial_type': 'pause', 'special_block_type': None,
-                         'block_ind': bi }
-                self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                    self.trial_infos[test_trial_ind:]
-
-            if info['test_end_task'] and test_trial_ind >= 0:
-                self.trial_infos = self.trial_infos[:test_trial_ind]
-
-
         #n_pauses = (num_context_repeats *  2/8)
         n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
 
-
         self.MEG_start_trigger = 252
         self.MEG_stop_trigger = 253
+
+
+        duration_params = ['ITI_duration' , 'motor_prep_duration',
+                           'time_feedback', 'time_at_home']
+        durtot = 0.
+        for durpar in duration_params:
+            durtot += self.params[durpar]
+        self.durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
+                n_pauses * self.params['pause_duration']
+        self.trial_dur_expected  = durtot
+        if 'trial_dur_expected' not in self.params:
+            self.add_param('trial_dur_expected', self.trial_dur_expected)
 
         if save_tigger_and_trial_infos_paramfile:
             phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
@@ -1010,8 +1097,8 @@ class VisuoMotor:
             self.paramfile.write( '# trial_infos = \n' )
             for tc in range( len(self.trial_infos) ):
                 ti = self.trial_infos[tc]
-                s = '{} = {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
-                      ti['vis_feedback_type'], ti['special_block_type'] )
+                s = '{} = {}, {}, {}, {}, {}'.format(tc, ti['trial_type'], ti['tgti'],
+                      ti['vis_feedback_type'], ti['special_block_type'], ti['block_ind'] )
                 #print(s)
                 self.paramfile.write( f'# {s}\n' )
             #s = json.dumps( {'trial_infos':list(enumerate(self.trial_infos) ) }
@@ -1022,23 +1109,23 @@ class VisuoMotor:
             self.paramfile.close()
 
 
-        duration_params = ['ITI_duration' , 'motor_prep_duration',
-                           'time_feedback', 'time_at_home']
-        durtot = 0.
-        for durpar in duration_params:
-            durtot += self.params[durpar]
-        self.durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
-                n_pauses * self.params['pause_duration']
+
+        self.durtot_all += 2 * self.params['training_text_show_duration'] 
+        # this is techincally not part of the task
+        #self.durtot_all += self.ctr_endmessage_show_def / self.params['FPS']
 
         # print first trial infos
         #if self.debug:
         print(f'In total we have {len(self.trial_infos)} trials, of them {n_pauses} pauses ')
-        print(f'Expected trial duration = {durtot} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min)')
+        print(f'Expected trial duration = {durtot} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message. Also, it assumes that all breaks have same duration as pauses')
+
+
         # 4.1 sec
+        print('First trial infos')
         for tc in range( min(30, len(self.trial_infos ) ) ):
             ti = self.trial_infos[tc]
             print(tc, ti['trial_type'], ti['tgti'],
-                  ti['vis_feedback_type'], ti['special_block_type'] )
+                  ti['vis_feedback_type'], ti['special_block_type'], ti['block_ind'] )
 
 
         # to debug end
