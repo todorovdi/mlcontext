@@ -155,6 +155,14 @@ def EL_driftCorrect(el_tracker, dummy_mode):
 def EL_calibration(el_tracker, full_screen):
     """ Set up a graphic environment for calibration/"""
     print('EL_calibration')
+    s0 = 'eyelink keyinfo:  '
+    print(s0 + 'press "c" to start calibation using Eyelink software ')
+    print(s0 + 'press <Enter> (or <Right> ?) to see the eye')
+    print(s0 + 'press <Space> to validate the first')
+    print(s0 + 'press "v" to validate after then end of the first calibration block')
+    print(s0 + 'press <Space> to validate the first again')
+    print(s0 + 'press <Enter> to finish')
+    print(s0 + 'press <Escape> to exit (or skip) calibration')
 
     # Step 4: set up a graphics environment for calibration
     #
@@ -250,7 +258,7 @@ def EL_abort(el_tracker):
         pylink.pumpDelay(100)
         el_tracker.stopRecording()
 
-def EL_disconnect(el_tracker,  edf_file, dummy_mode):
+def EL_disconnect(el_tracker,  edf_file, subj, dummy_mode):
     print('EL_disconnect')
     if dummy_mode:
         return
@@ -274,9 +282,8 @@ def EL_disconnect(el_tracker,  edf_file, dummy_mode):
 
         # Download the EDF data file from the Host PC to a local data folder
         # parameters: source_file_on_the_host, destination_file_on_local_drive
-        subject_number = 0
         import os
-        local_edf = os.path.join("results", "%s.edf" % subject_number)
+        local_edf = os.path.join("results", "%s.edf" % subj)
         try:
             el_tracker.receiveDataFile(edf_file, local_edf)
         except RuntimeError as error:

@@ -41,6 +41,7 @@ class VisuoMotorMEG(VisuoMotor):
         #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
 
         info['trigger_device'] = 'parallel'
+        info['home_position_loc'] = 'below_center'
 
         info['time_feedback'] = 0.7
         
@@ -52,7 +53,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.params['diode_width'] = 500
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
         self.copy_param(info, 'dummy_mode', 1)
-        self.copy_param(info, 'maxMEGrec_dur', 11 * 60)
+        self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
         self.copy_param(info, 'reset_trigger_auto', 1)
 
         
@@ -1069,7 +1070,8 @@ class VisuoMotorMEG(VisuoMotor):
             # record a message to mark the start of scanning
         except RuntimeError as error:
             print("Eyelink ERROR:", error)
-            EL_disconnect(self.el_tracker, self.edf_file, self.params['dummy_mode'])
+            EL_disconnect(self.el_tracker, self.edf_file, 
+                          self.subject_id, self.params['dummy_mode'])
 
 
     def test_stopped(self, stop_rad_px = 3):
@@ -1849,7 +1851,8 @@ class VisuoMotorMEG(VisuoMotor):
         self.trigger_logfile.close()
 
         EL_abort(self.el_tracker)
-        EL_disconnect(self.el_tracker, self.edf_file, self.params['dummy_mode'])
+        EL_disconnect(self.el_tracker, self.edf_file, 
+                       self.subject_id, self.params['dummy_mode'])
         pygame.quit()
         exit()
 
@@ -2100,6 +2103,10 @@ if __name__ == "__main__":
     elif sys.platform in ['win32', 'cygwin'] :
         assert par['fullscreen'], 'On windows (assume actual experiment) please run un fullscreen'
         os.environ['SDL_VIDEODRIVER'] = 'windib'  # for pygame to work
+
+        # NEW
+        os.environ['SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS'] = '1'  # for joystick to work when window is out of focus
+        
 
     #app = VisuoMotor(info, use_true_triggers=0, debug=1, seed=seed,
     #                 start_fullscreen = 0)

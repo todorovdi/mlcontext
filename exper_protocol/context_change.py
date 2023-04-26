@@ -334,6 +334,7 @@ class VisuoMotor:
 
         ######################  Rendering params
 
+        self.copy_param(info,'home_position_loc','center')
 
         self.add_param('motor_prep_show_target',1)
         #self.add_param('motor_prep_show_cursor','no')
@@ -651,8 +652,13 @@ class VisuoMotor:
         self.phase_start_times['current_trial'] = time.time()
 
 
-        self.home_position = (int(round(self.params['width']/2.0)),
+        if self.params['home_position_loc'] == 'center':
+            self.home_position = (int(round(self.params['width']/2.0)),
                               int(round(self.params['height']/2.0)))
+        elif self.params['home_position_loc'] == 'below_center':
+            self.home_position = (int(round(self.params['width']/2.0)),
+                              int(round(self.params['height'] * 0.65 )))
+            #self.params['height_for_cccomp']
 
         self.init_target_positions()  # does not draw anything, only calc
 
