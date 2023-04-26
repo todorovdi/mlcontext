@@ -42,13 +42,20 @@ class VisuoMotorMEG(VisuoMotor):
 
         info['trigger_device'] = 'parallel'
 
+        info['time_feedback'] = 0.7
+        
+
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
-
+        #24 ms delay photodiode
+        #self.params['diode_width'] = 1920
+        self.params['diode_width'] = 500
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
         self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)
-        self.copy_param(info, 'reset_trigger_auto', 0)
+        self.copy_param(info, 'reset_trigger_auto', 1)
+
+        
  
 
     def insertBreaks(self):
@@ -262,13 +269,14 @@ class VisuoMotorMEG(VisuoMotor):
         if sys.platform in ['linux', 'linux2', 'darwin']:
             self.jaxcenter =  {'ax1':-0.04, 'ax2':-0.013} #{'ax1' :0}
         elif sys.platform in ['win32', 'cygwin'] :
-            self.jaxcenter =  {'ax1':-0.07, 'ax2':-0.0065} #{'ax1' :0}
+            self.jaxcenter =  {'ax1':-0.029, 'ax2':-0.0825} #{'ax1' :0}
 
         return CTD_to_export
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
                  seed= None, start_fullscreen = 0):
+        self.initial_time = time.time()
 
         subdir='dataMEG'
         import pickle
@@ -327,7 +335,7 @@ class VisuoMotorMEG(VisuoMotor):
             self.trigger_logfile = open(self.filename + '_trigger.log', 'a')
             self.logfile         = open(self.filename + '.log', 'a')
 
-            s = '##### Task restarted #####\n'
+            s = '##### Script restarted #####\n'
             for logf in [ self.trigger_logfile, self.logfile]:
                 logf.write(s ) 
 
@@ -348,8 +356,11 @@ class VisuoMotorMEG(VisuoMotor):
                             gen_trial_infos = (last_fn_base is None),
                             init_params = (last_fn_base is None))
         print(f'arg seed = {seed}', 'params seed = ',self.params['seed'], 'self seed = ',self.seed)
-
+        #self.params['diode_width'] = 500
         assert self.params['trigger_device'] == 'parallel'
+
+        self.color_diode_off = self.color_bg
+        self.phase_after_pause = 'TRAINING_END'  
 
         if sys.platform in ['linux', 'linux2', 'darwin']:
             assert not self.use_true_triggers
@@ -493,7 +504,9 @@ class VisuoMotorMEG(VisuoMotor):
                                     self.spec_phases, self.spec_tt)
         if tpl is None:
             print('send_trigger_cur_trial_info: ', ti, self.trial_index, self.current_phase , tpl)
-        self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], add_info={'trial_index':self.trial_index , 'tpl':tpl} )
+            self.send_trigger( 0, add_info={'trial_index':self.trial_index , 'tpl':tpl} )
+        else:
+            self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], add_info={'trial_index':self.trial_index , 'tpl':tpl} )
 
 
     def playSound(self):
@@ -1017,12 +1030,16 @@ class VisuoMotorMEG(VisuoMotor):
         self.reset_traj()
         self.reset_main_vars()    # NEW
 
+        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        self.send_trigger(0)
+        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
 
         print('before sending ' ,time.time() - self.initial_time )
         self.send_trigger(self.MEG_start_trigger)
         print('after sending ' ,time.time() - self.initial_time )
         pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
         print('after waiting ' ,time.time() - self.initial_time )
+        self.send_trigger(0)
 
         self.MEG_rec_started = 1
         self.task_started = 1
@@ -1039,7 +1056,8 @@ class VisuoMotorMEG(VisuoMotor):
         # event_over_link (1-yes, 0-no)
         dummy_mode = self.params['dummy_mode']
         try:
-            EL_driftCorrect(self.el_tracker, dummy_mode)
+            # make it hang
+            #EL_driftCorrect(self.el_tracker, dummy_mode) # NEW commenting it
 
             self.el_tracker.setOfflineMode()
             self.el_tracker.sendMessage('MEG start trigger sent')
@@ -1051,7 +1069,7 @@ class VisuoMotorMEG(VisuoMotor):
             # record a message to mark the start of scanning
         except RuntimeError as error:
             print("Eyelink ERROR:", error)
-            EL_disconnect(self.el_tracker, dummy_mode)
+            EL_disconnect(self.el_tracker, self.edf_file, self.params['dummy_mode'])
 
 
     def test_stopped(self, stop_rad_px = 3):
@@ -1596,7 +1614,8 @@ class VisuoMotorMEG(VisuoMotor):
             if (self.free_from_break): # set somewhere else
                 #self.current_phase = 'ITI' # would do trial index update, but requries allowing special trigger for it
 
-                self.current_phase = 'REST'
+                #self.phase_after_pause = 'REST'
+                self.current_phase = self.phase_after_pause
                 self.trial_index += 1  
                 print ('Start Trial: ' + str(self.trial_index)) # ITI will do it 
 
@@ -1611,7 +1630,8 @@ class VisuoMotorMEG(VisuoMotor):
             #                              self.params['pause_duration'] )
             pause_finished = self.timer_check(self.current_phase, "pause_duration")
             if pause_finished:
-                self.current_phase = 'REST'
+                #self.current_phase = 'REST'
+                self.current_phase = self.phase_after_pause
                 #for ctr in self.frame_counters:
                 #    self.frame_counters[ctr] = 0
                 self.reset_main_vars()
@@ -1813,6 +1833,11 @@ class VisuoMotorMEG(VisuoMotor):
         '''
         at the end of on_execute
         '''
+
+        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        self.send_trigger(0)
+        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+
         self.send_trigger(self.MEG_stop_trigger)
         #time.sleep(0.05)
         pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
@@ -1824,8 +1849,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.trigger_logfile.close()
 
         EL_abort(self.el_tracker)
-        EL_disconnect(self.params['dummy_mode'],
-                      self.edf_file)
+        EL_disconnect(self.el_tracker, self.edf_file, self.params['dummy_mode'])
         pygame.quit()
         exit()
 
@@ -1907,6 +1931,7 @@ class VisuoMotorMEG(VisuoMotor):
 
                 self.playSound()
                 time.sleep(self.params['delay_exit_break_after_keypress']) # in sec
+
                 self.restartTask(very_first = 0, phase = self.phase_after_restart  )
             if (event.key == pygame.K_e) and (not self.task_started == 1):
                 self.current_phase = 'EYELINK_CALIBRATION'
@@ -1928,7 +1953,7 @@ class VisuoMotorMEG(VisuoMotor):
         #clock = pygame.time.Clock()
         #if (self.params['use_eye_tracker']):
         #    EyeLink.tracker(self.params['width'], self.params['height'])
-        self.initial_time = time.time()
+        #self.initial_time = time.time()
 
         if self.joystick_center_autocalib and self.params['controller_type'] == 'joystick':
             ax1 = self.HID_controller.get_axis(0)

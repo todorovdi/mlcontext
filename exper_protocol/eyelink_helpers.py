@@ -30,11 +30,17 @@ def open_edf_file(el_tracker, info):
     s = ''
     if len(subj) and ( subj != 'Dmitrii_test' ):
         print(subj)
-        subjN = subj[:-4]
-        assert subjN.isnumeric()
+        nn = 4
+        if len(subj) > nn:
+            subjN = subj[:-nn]
+        else:
+            subjN = subj
+        assert subj.isalnum()
     else:
         subjN = ''
     edf_file = f"EL_{subjN}_{s}.edf"
+    #maxlen = 8
+    #assert len(edf_file) < maxlen
 
 
     print(f'open_edf_file: using file {edf_file}')
@@ -244,12 +250,12 @@ def EL_abort(el_tracker):
         pylink.pumpDelay(100)
         el_tracker.stopRecording()
 
-def EL_disconnect(dummy_mode, edf_file):
+def EL_disconnect(el_tracker,  edf_file, dummy_mode):
     print('EL_disconnect')
     if dummy_mode:
         return
 
-    el_tracker = pylink.getEYELINK()
+    #el_tracker = pylink.getEYELINK()
     if el_tracker.isConnected():
 
         # Put tracker in Offline mode
@@ -268,6 +274,8 @@ def EL_disconnect(dummy_mode, edf_file):
 
         # Download the EDF data file from the Host PC to a local data folder
         # parameters: source_file_on_the_host, destination_file_on_local_drive
+        subject_number = 0
+        import os
         local_edf = os.path.join("results", "%s.edf" % subject_number)
         try:
             el_tracker.receiveDataFile(edf_file, local_edf)
