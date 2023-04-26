@@ -48,6 +48,8 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
         self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)
+        self.copy_param(info, 'reset_trigger_auto', 0)
+ 
 
     def insertBreaks(self):
         maxMEGrec_dur = self.params['maxMEGrec_dur']
@@ -356,6 +358,8 @@ class VisuoMotorMEG(VisuoMotor):
 
         CTD_to_export = self.prepVars(insert_breaks = (last_fn_base is None))
 
+
+
         if par['continue_from_last'] == 'trial':
             self.reward_accrued = reward_accrued_before_last_trial
             self.trial_index = last_trial_ind
@@ -375,6 +379,19 @@ class VisuoMotorMEG(VisuoMotor):
             self.reward_accrued = None
             self.trial_index = last_break + 1
             print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+
+        if last_fn_base is not None:
+            if self.trial_index >= self.params['num_training']:
+                self.phase_after_restart     = 'TRAINING_END'
+                self.first_phase_after_start = 'TRAINING_END'
+            else:
+                self.phase_after_restart     = 'TRAINING_END'
+                self.first_phase_after_start = 'TRAINING_START'
+
+                self.phase2text[ 'TRAINING_START' ]=\
+                    (r"Étape d'entraînement: " 
+                     f'faites {self.params["num_training"] - self.trial_index} '
+                    "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.")
 
         if last_fn_base is None:
             import json
@@ -449,9 +466,8 @@ class VisuoMotorMEG(VisuoMotor):
             # always write to trigger logfile
             # initial_time is set in on_execute
             #self.current_time = time.time()
-            #td = self.current_time - self.initial_time
+            td = time.time() - self.initial_time
             # TODO: trigger start time
-            td = -1
             sa = f'; time={td}'
             if add_info is not None:
                 sa += '; ' + str(add_info)
@@ -477,7 +493,7 @@ class VisuoMotorMEG(VisuoMotor):
                                     self.spec_phases, self.spec_tt)
         if tpl is None:
             print('send_trigger_cur_trial_info: ', ti, self.trial_index, self.current_phase , tpl)
-        self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], add_info={'trial_index':ti , 'tpl':tpl} )
+        self.send_trigger( self.CONTEXT_TRIGGER_DICT[tpl], add_info={'trial_index':self.trial_index , 'tpl':tpl} )
 
 
     def playSound(self):
@@ -1001,7 +1017,12 @@ class VisuoMotorMEG(VisuoMotor):
         self.reset_traj()
         self.reset_main_vars()    # NEW
 
+
+        print('before sending ' ,time.time() - self.initial_time )
         self.send_trigger(self.MEG_start_trigger)
+        print('after sending ' ,time.time() - self.initial_time )
+        pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
+        print('after waiting ' ,time.time() - self.initial_time )
 
         self.MEG_rec_started = 1
         self.task_started = 1
@@ -1012,6 +1033,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         if self.current_phase in [self.phase_after_restart, self.first_phase_after_start]:
             self.send_trigger_cur_trial_info()  # this way it will be send right after MEG start trigger. Maybe it is not good
+            print('after sendin cur trial info trigger ' ,time.time() - self.initial_time )
 
         # arguments: sample_to_file, events_to_file, sample_over_link,
         # event_over_link (1-yes, 0-no)
@@ -1792,7 +1814,8 @@ class VisuoMotorMEG(VisuoMotor):
         at the end of on_execute
         '''
         self.send_trigger(self.MEG_stop_trigger)
-        time.sleep(0.05)
+        #time.sleep(0.05)
+        pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
         self.MEG_rec_started = 0
 
         self.send_trigger(0)
@@ -1830,6 +1853,8 @@ class VisuoMotorMEG(VisuoMotor):
 
             # if task was not started and a button was pressed, start the task
             if self.task_started == 0:
+                # otherwise triggers will overlap
+                pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
                 self.restartTask(very_first = 1)
             # if task was started and a button was pressed, release break
             else:
@@ -1931,7 +1956,8 @@ class VisuoMotorMEG(VisuoMotor):
                     td = self.params['MEG_trigger_duration']
                 else:
                     td = self.params['trigger_duration']
-                if self.trigger_value > 0 and (time.time() - self.phase_start_times['trigger']) > td:
+                if (self.trigger_value > 0) and ((time.time() - self.phase_start_times['trigger']) > td ) \
+                        and self.params['reset_trigger_auto']:
                     self.trigger_value = 0
                     self.send_trigger(self.trigger_value)
 

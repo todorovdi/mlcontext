@@ -304,8 +304,8 @@ class VisuoMotor:
 
         # in seconds
         #self.add_param('trigger_duration',     75   / 1000)  # 50 was in Romain, 100 in Marine
-        self.add_param('trigger_duration',     50   / 1000)  # Coumarane says 50 works
-        self.add_param('MEG_trigger_duration', 1000 / 1000)
+        self.copy_param(info, 'trigger_duration',     50   / 1000)  # Coumarane says 50 works
+        self.copy_param(info, 'MEG_trigger_duration', 1000 / 1000)
 
 
         # both TRAINING_START', 'TRAINING_END
