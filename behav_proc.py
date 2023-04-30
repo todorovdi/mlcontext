@@ -1118,9 +1118,7 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
                 break
         phase2trigger = eval(''.join( lines[linei+1:endi+1] ).replace('\n',''))
 
-    k,v= zip(*list( phase2trigger.items() ) )
-    trigger2phase = dict( zip(v,k) )
-    print(trigger2phase)
+    trigger2phase = dict( zip(phase2trigger.values(),phase2trigger.keys()) )
 
     ##################   process param file
     triggerdict_start_line = '# trial param and phase 2 trigger values'
@@ -1153,7 +1151,7 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
         if line.startswith('}'):
             break
         k,v = line.split(':')
-        v = int(v[:-2])
+        v = int(v.replace(',','' ) )
         k = k.replace('"','').replace(' ','')
         tt,vft,tgti,phase = k.split(',')
         if len(tgti) > 0:
@@ -1723,16 +1721,207 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
             float(params['radius_home'] ) - float(params['radius_target'] )
     dfcc['traj_length_adj'] = dfcc['traj_length'] - trajlen_ideal
 
+def loadTriggerLog(fnf, CONTEXT_TRIGGER_DICT):
+    '''
+    fnf includes extension
+    '''
+    dftriglog = pd.read_csv(fnf, delimiter=';', names = ['trigger', 'time','addinfo'])
+
+    def f(row):
+        r = row['addinfo']
+        tind = -100
+        #print(r, type(r))
+        if (r is not None) and (not isinstance(r,float)):
+            r = eval(r)
+            tind = r.get('trial_index')
+        return tind
+    dftriglog['trial_index'] = dftriglog.apply(f,1)
+    dftriglog = dftriglog.query('trigger != 0').reset_index().drop(labels='index',axis=1)
+
+    CONTEXT_TRIGGER_DICT_inv = dict(zip(CONTEXT_TRIGGER_DICT.values(), CONTEXT_TRIGGER_DICT.keys()))
+
+    def f2(row):
+        r = None,None,None,None
+        ai = row.get('addinfo',None)
+        if ai is not None:
+            #print('ai',ai)
+            try:
+                ai = eval(ai)
+            except TypeError as e:
+                return r
+            tpl = ai.get('tpl',None)
+            #print(tpl)
+            if tpl is not None:
+                r = tpl
+                #CONTEXT_TRIGGER_DICT_inv[tpl]
+        return r
+    dftriglog[['trial_type', 'vis_feedback_type', 'tgti_to_show', 'phase']] = \
+        dftriglog.apply(f2,1, result_type='expand')
+    return dftriglog
+
+def printPretrialMistakesDiag(df, params):
+    # on which trials had participant leaving home during motor prep? And how many times?
+    df_notmid = df.query('subphase_relation != "middle"')
+    dfsz= df_notmid.groupby(['trial_index','phase','subphase_relation']).size()
+    print('Num leave home motor prep')
+    print(dfsz[dfsz > 1])
+
+    ph = 'REST'
+    szrest = df.query('phase == @ph').groupby('trial_index').size()
+    nframes_normal = np.min(szrest) + 1
+    print(f'for {ph} nframes_normal = ',nframes_normal)
+
+    # on which trials participant left home during REST or had to adjust position 
+    # in the beginning of the trial to return to rest? 
+    print( szrest[szrest> nframes_normal] / float(params['FPS']) )
+
+    return dfsz
+
+def set_streaks(df, inds = None, inplace=True):
+    '''
+    takes behav dataset for single subject and detects phase changes (including
+    those happening within trial including when same phase repeats more than once)
+    sets for every timeframe whether it is a beginning of the end of the phase
+    '''
+    if not inplace:
+        df = df.copy()
+    df['subphase_relation'] = 'middle'
+    if inds is not None:
+        df_ = df.loc[inds]
+    else:
+        df_ = df
+    
+    #df_['subphase_relation'] = 'middle'
+    ph = df_['phase'] 
+    #assert np.sum(rest_mask) > 0
+
+    csr = (ph != ph.shift()).cumsum()
+    df_['csr'] = csr
+    #print(csr.max())
+    number_of_rest_streaks = len( df_.groupby(csr).first() )#.query('phase == "REST"') )
+    #print(number_of_rest_streaks)
+
+    firstis = csr.to_frame().reset_index().groupby('phase').first()['index'].values  # first ind of 
+    lastis = csr.to_frame().reset_index().groupby('phase').last()['index'].values  # first ind of 
+
+    df.loc[firstis,'subphase_relation'] = 'first'
+    df.loc[lastis, 'subphase_relation'] = 'last'
+    #display(df_.loc[firstis, ['phase','csr','subphase_relation']])
+    
+    # useful to choose last streak of REST or GO_CUE
+    df['csr_neg_within_trial'] = df['csr'] - df.groupby('trial_index')['csr'].transform('max')
+    #df_.drop(labels=['csr'],axis=1)
+    return df, list(zip(firstis,lastis))
+
+def aggRows(df, coln_time, operation, grp = None, coltake='corresp', 
+            colgrp = 'trial_index' ):
+    # coln_time = 'time'
+    assert operation in ['min','max']
+    assert df[coln_time].diff().min() >= 0  # need monotnicity
+    assert coltake is not None
+
+    if grp is None:
+        grp = df.groupby(colgrp)
+
+    if coltake != 'corresp':
+        cns = [cn for cn in df.columns if cn != coln_time]
+        if operation == 'min':
+            coltake = 'first'
+        elif operation == 'max':
+            coltake = 'last'
+        agg_d = dict(zip(cns, len(cns) * [coltake]))
+        agg_d[coln_time] = operation
+        dfr = grp.agg(agg_d)
+    else:
+        if operation == 'min':
+            idx = grp[coln_time].idxmin()
+        elif operation == 'max':
+            idx = grp[coln_time].idxmax()
+        dfr = df.loc[idx]
+    return dfr
+
+def compareTriggers(df, dfev, dftriglog):
+    print('df contents')
+    #print(len( df_trst.query('phase == "REST"') ))
+
+    phase2best_neg_csr = {'REST':-3, 'GO_CUE_WAIT_AND_SHOW':-2 }
+    phases = df['phase'].unique()
+    #df.dtypes.values == np.dtype('O')
+    #phase_take_max = []
+    #cns = [cn for cn in df.columns if cn != 'time']
+    #agg_d = dict(zip(cns, len(cns) * ['first']))
+    #agg_d['time'] = 'min'
+    ##if phase in phase_take_max:
+    ##    agg_d['time'] = 'max'
+    ##else:
+    ##    agg_d['time'] = 'min'
+    ##{'time': 'min', **df.select_dtypes(include=['object']).apply(lambda x: x.iloc[0])}
+    grp_perti = df.groupby(['trial_index'])
+    #df_trst = grp_perti.agg(agg_d)
+    
+    operation = 'min'
+    coln_time = 'time'
+    df_trst = aggRows(df, coln_time, operation, grp = grp_perti )
+    print(len( df_trst ))
+
+    phase2df = {}
+    phase2dfev = {}
+    phase2dftriglog = {}
+    for phase in phases:    
+        if phase in phase2best_neg_csr.keys():
+            crs_neg_v = phase2best_neg_csr[phase]
+            # sel only last streak
+            #df_trst2 = df.query('phase == @phase and csr_neg_within_trial == @crs_neg_v '
+            #                         ' and subphase_relation == "first"')#[['csr_within_trial','phase']]
+            # sel all streaks
+            df_trst2 = df.query('phase == @phase '
+                                     ' and subphase_relation == "first"')#[['csr_within_trial','phase']]
+        else:
+            grp_perti2 = df.query('phase == @phase').groupby(['trial_index'])
+            df_trst2 = aggRows(df, coln_time, operation, grp = grp_perti2 )
+            #df_trst2 = grp_perti.agg(agg_d)
+
+
+        phase2df[phase] = df_trst2
+        phase2dfev[phase] = dfev.query('phase == @phase')
+        l2 = len(  phase2dfev[phase])
+
+        phase2dftriglog[phase] =  dftriglog.query('phase == @phase')
+        l3 = len(phase2dftriglog[phase])
+        print(f'{phase:20}, df len = {len( df_trst2 ):3}, dfev len = {l2:3} triglog len = ',l3)
+
+    ########
+
+    print('')
+    print('##############')
+    print('Differences of timing per phase between df and trigger timing')
+    for phase in phases: 
+        if phase == 'BREAK':
+            continue
+        dftmps = [phase2df[phase],phase2dfev[phase] ]#,phase2dftriglog[phase]]
+        vss = []
+        for dftmp in dftmps:
+            vs = dftmp['time_since_first_REST'].values
+            vss+=[vs]
+        dif = vss[0] - vss[1]
+        if len(dif):
+            print('{:20}, diff time log - meg min={:.4f}, max={:.4f}'.format( phase, np.min( dif), np.max( dif) ) )
+        else:
+            print(f'zero dif len for {phase}')
 
 
 def addBasicInfo(df, phase2trigger, params,
                 home_position, target_coords,
-                phase_to_collect = 'TARGET_AND_FEEDBACK'):
+                phase_to_collect = 'TARGET_AND_FEEDBACK', training_end_sep_trial = False):
     ############################################################
 
     assert df['subject'].nunique() == 1
 
-    c = df['current_phase_trigger'] == phase2trigger[phase_to_collect]
+    trigger2phase = dict( zip(phase2trigger.values(),phase2trigger.keys()) )
+    print(trigger2phase)
+    df['phase'] = df.apply(lambda row: trigger2phase[row['current_phase_trigger']], 1)
+
+    c = df['phase'] == phase_to_collect
     #subj = 'romain'
     #subj = 'dima2'
     #subj = 'coumarane'
@@ -1744,6 +1933,9 @@ def addBasicInfo(df, phase2trigger, params,
     # it DOES NOT include pauses
     dfc = df[c].copy().reset_index()
     assert len(dfc)
+
+
+    df, flpairs = set_streaks(df,inds = None) 
 
     #assert dfc['current_phase_trigger'].nunique() == 1
 
@@ -1808,12 +2000,17 @@ def addBasicInfo(df, phase2trigger, params,
     ##########################
 
     # selmax
+    # TODO: use agg instead of == time
     grp = dfc.groupby(['trial_index'])
     idx = grp['time'].transform(max) == dfc['time'] #.size()
-    #grp.
     dfcc = dfc.loc[idx]
+    # this should work better 
+    #dfcc = aggRows(dfc, 'time', 'max', grp, coltake == 'corresp') 
+
     # it DOES NOT include pauses
     dfcc = dfcc.reset_index()
+
+
     #dfcc['feedbackY']          = params['height'] - dfcc['feedbackY']
     #dfcc['cursorY']            = params['height'] - dfcc['cursorY']
     #dfcc['unpert_feedbackY']   = params['height'] - dfcc['unpert_feedbackY']
@@ -1928,10 +2125,14 @@ def addBasicInfo(df, phase2trigger, params,
     else:
         print(f'WARNING: {col} not in dfcc.columns')
 
-    # sanity check
+    # sanity check (that we have continuous trial increase)
     dfccdiff = dfcc['trial_index'].diff()
     dfccdiff = dfccdiff[~dfccdiff.isna()]
-    assert (dfccdiff <= 2).all()  # can have pauses where we get 2
+    if training_end_sep_trial:
+        checkval = 3
+    else:
+        checkval = 2
+    assert (dfccdiff <= checkval).all()  # can have pauses where we get 2
     #dfcc.loc[dfccdiff > 2]
 
     ###############
@@ -1955,11 +2156,12 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc = dfcc.reset_index()
 
 
-    # dfc -- row per screen update
+    # df  -- row per screen update, with streak relations, all phases
+    # dfc -- row per screen update, only TARGET_AND_FEEDBACK
     # dfcc -- row per trial
     # dfcpc -- row per pause
     # dfctc -- row per target change
-    return dfc, dfcc, dfcp, dfctc
+    return df, dfc, dfcc, dfcp, dfctc
 
 def plotTraj2(ax, dfcurtr, home_position, target_coords_homec, params,
         calc_area = False, show_dist_guides = False, verbose=0,
@@ -2424,3 +2626,45 @@ def multiplot(dfccos, dfcpcos, dfcos, ynames,
 
         if show_titles:
             ax.set_title(yname)
+
+def alignDfs(df1,cols1, df2,cols2, suff2 = '_2', verbose=0,
+             check_agreement = True):
+    print(len(df1), len(df2))
+    assert set(cols1) < set(df1.columns)
+    assert set(cols2) < set(df2.columns)
+    #s = set( df2.index.names ) & set(cols2)
+    names = list( df2.index.names )
+    if (set(names ) & set( df2.columns ) ) > set([]):
+        #print('fff')
+        df2mod = df2[cols2 + names ].copy().\
+            drop(columns=list( names )).reset_index().drop(columns= set(names) - set(cols2)  )
+        print(df2mod.columns)
+    else:
+        df2mod = df2[cols2].copy().reset_index()
+    rd = {}
+    for coln in df2.columns:
+        rd[coln] = coln + suff2
+    df2mod = df2mod.rename(columns=rd)
+    dfr = pd.concat([df1[cols1].reset_index(),df2mod],axis=1)
+    #cols = [x for pair in zip( cols1,df2mod.columns ) for x in pair]
+    cols_int = list( set(cols1) & set(cols2) )
+    cols_int_mod = [rd[col] for col in cols_int]
+
+    z = [['index']] + list(zip( cols_int,
+                 cols_int_mod ) )
+    #print(z)
+    #print(list(map(list,z ) ) ) 
+    cols = sum( list(map(list,z ) ), [] )
+    cols += list( set(cols1) - set(cols2) ) 
+    cols += [rd[col] for col in set(cols2) - set(cols1)  ]
+
+    print(cols)
+    dfr = dfr[cols ]
+    
+    if check_agreement:
+        for colnc in (set(cols1) & set(cols2)):
+            print(colnc)
+            inds = dfr[dfr[colnc] != dfr[colnc + suff2]].index
+            print(colnc, 'disagree at inds ',list(inds) )
+    return dfr
+
