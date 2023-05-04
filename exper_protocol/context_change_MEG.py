@@ -690,6 +690,8 @@ class VisuoMotorMEG(VisuoMotor):
         print(f'  prev trial = {prev_trial_info}')
         print(f'  new trial  = {trial_info2}')
 
+        self.log_flush()
+
         ## OPTIONAL--record_status_message : show some info on the Host PC
         ## for illustration purposes, here we show an "example_MSG"
         #el_tracker.sendCommand("record_status_message 'Block %d'" % block)
@@ -1951,12 +1953,13 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.current_log.append(self.current_time - self.initial_time)
         self.current_log.append(self.current_time)
+
+        #self.log_flush()
+        # columns are
+        #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time, abs_time
+
+    def log_flush(self):
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
-
-        #
-        #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time
-
-
 
     def on_cleanup(self, exit_type):
         '''
