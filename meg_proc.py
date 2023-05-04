@@ -48,6 +48,8 @@ def events2df(events, info, dat_time, trigger2phase, CONTEXT_TRIGGER_DICT, restm
     # indexing
     ph = dfev['phase']
 
+    # TODO: epochs plot for photodiode aligned to start of the mvt
+
     c0 = (ph == 'GO_CUE_WAIT_AND_SHOW') & (ph.shift(-1) == 'TARGET_AND_FEEDBACK')
     print(np.sum(c0))
     dfev['csr_GO_CUE_WAIT_AND_SHOW'] = c0.cumsum()

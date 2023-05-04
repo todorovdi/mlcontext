@@ -28,13 +28,14 @@ from CalibrationGraphicsPygame import CalibrationGraphics
 from eyelink_helpers import *
 
 # at CRNL we have EyeLink 1000 Plus
+# Ask Seb for 15 min!
 
 class VisuoMotorMEG(VisuoMotor):
 
     def initialize_parameters(self, info, subdir):
         info['show_diode'] = 1
-        info['conseq_veridical_allowed'] = 0
-        info['conseq_veridical_allowed'] = 1   # faster
+        #info['conseq_veridical_allowed'] = 0
+        info['conseq_veridical_allowed'] = 1   # Wolpert said we should allow
 
         #time_lh_estimate = 0.22 # pm 0.04
         #info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
@@ -43,7 +44,21 @@ class VisuoMotorMEG(VisuoMotor):
         info['trigger_device'] = 'parallel'
         info['home_position_loc'] = 'below_center'
 
-        info['time_feedback'] = 0.7
+        # estimates from beh experiment: 0.3 in the beginning, 0.2 in end 
+        expected_reaction_time = 0.25 
+        saefty_dur = 0.05
+        #info['time_feedback'] = 0.7
+        info['time_feedback'] = expected_reaction_time + saefty_dur + (0.75 - expected_reaction_time)
+
+        info['block_len_min'] = 7
+        info['block_len_max'] = 11 # NOT including. So largest will be 10
+        info['n_context_appearences'] = 11
+
+        info['special_trials'] = ['ECpair_prebreak']
+        # we had 20
+        # the larger the more task success, the fewer explicit (according to Li-Ann Leow
+        info['radius_target'] = 30
+
         
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
@@ -51,63 +66,129 @@ class VisuoMotorMEG(VisuoMotor):
         #24 ms delay photodiode
         #self.params['diode_width'] = 1920
         self.params['diode_width'] = 500
-        self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
+        #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
+        self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
+        self.copy_param(info, 'movement_duration_after_lh', 0.75 - expected_reaction_time )
+
+
         self.copy_param(info, 'dummy_mode', 1)
-        self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
+        self.copy_param(info, 'maxMEGrec_dur', 10 * 60)  # this is not counting pauses
         self.copy_param(info, 'reset_trigger_auto', 1)
 
-        
- 
+
+        self.add_param('expected_break_duration', 60.) # sec
 
     def insertBreaks(self):
-        maxMEGrec_dur = self.params['maxMEGrec_dur']
-        mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
-        approx_pause_step = len(self.trial_infos)  // mult
-        print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
+        if self.n_pauses > 0:
+            maxMEGrec_dur = self.params['maxMEGrec_dur']
+            mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
+            approx_pause_step = len(self.trial_infos)  // mult
+            print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
 
-        N = self.params['spec_trial_modN']
-        def iscandpause(x): 
-            # 1 because enumerate
-            bi = x[1]['block_ind']
-            r = x[1]['trial_type'] == 'pause'
-        #     if r:
-        #         print(bi)
-            r = r and ((bi > 2) and (bi % N == 4))
-            r = r and (x[0] > approx_pause_step - self.params[ 'block_len_max'])
-            return r
+            N = self.params['spec_trial_modN']
+            def iscandpause(x): 
+                # 1 because enumerate
+                bi = x[1]['block_ind']
+                r = x[1]['trial_type'] == 'pause'
+            #     if r:
+            #         print(bi)
+                r = r and ((bi > 2) and (bi % N == 4))
+                r = r and (x[0] > approx_pause_step - self.params[ 'block_len_max'])
+                return r
+                
+
+            f = filter( iscandpause,  enumerate(self.trial_infos) )
+            f = list(f)
+            try:
+                tinds = np.array (list(zip(*f))[0])
+            except IndexError as e:
+                print(f'ERROR: Problem during setting pauses to breaks, len(iscandpause) = {len(f)}.'
+                      f' pause duration = {self.params["pause_duration"]}, durtot_all={self.durtot_all}')
+                exit(1)
+
+            #print( tinds % approx_pause_step )
+
+            assert np.all(np.diff(tinds) > 0 )
+            tistis = np.sort( np.argsort(tinds % approx_pause_step)[:mult - 1] )
+            # print(tistis)
+            tinds_pauses_turn_breaks = tinds[tistis]
+            print('Tinds_pauses_turn_breaks =', tinds_pauses_turn_breaks )
+
+            for tind in tinds_pauses_turn_breaks:
+                self.trial_infos[tind]['trial_type'] = 'break'
+
+
+            n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
+            n_breaks = sum( [spec['trial_type'] == 'break' for spec in self.trial_infos] )
+
+            self.n_breaks = n_breaks
+            print(f'Num (non-break) pauses={n_pauses}, num breaks = {n_breaks}')
+     
+
+            tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break']
+            difftis_break = np.diff( np.hstack([0, tis_break]) )
+            difftis_break_dur = difftis_break * self.trial_dur_expected
+            print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
+            assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], 'Too long time distance between breaks'
+        else:
+            numtrials_between_breaks = int( self.params['maxMEGrec_dur'] / self.trial_dur_expected )
+            # annoying that insert in vim does not respect indent
             
-
-        f = filter( iscandpause,  enumerate(self.trial_infos) )
-        f = list(f)
-        try:
-            tinds = np.array (list(zip(*f))[0])
-        except IndexError as e:
-            print(f'ERROR: Problem during setting pauses to breaks, len(iscandpause) = {len(f)}.'
-                  f' pause duration = {self.params["pause_duration"]}, durtot_all={self.durtot_all}')
-            exit(1)
-
-        #print( tinds % approx_pause_step )
-
-        assert np.all(np.diff(tinds) > 0 )
-        tistis = np.sort( np.argsort(tinds % approx_pause_step)[:mult - 1] )
-        # print(tistis)
-        tinds_pauses_turn_breaks = tinds[tistis]
-        print('Tinds_pauses_turn_breaks =', tinds_pauses_turn_breaks )
-
-        for tind in tinds_pauses_turn_breaks:
-            self.trial_infos[tind]['trial_type'] = 'break'
+            tnext = self.params['maxMEGrec_dur']
+            while True:
+                # recalc block starts because we change trial infos every time
+                block_inds = np.array( [ ti['block_ind'] for ti in self.trial_infos ] )
+                block_inds_shifted = np.roll( block_inds, 1, axis=0) 
+                block_inds_shifted[0] = -100000
+                block_starts = np.where( block_inds != block_inds_shifted )[0]
 
 
-        n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
-        n_breaks = sum( [spec['trial_type'] == 'break' for spec in self.trial_infos] )
-        print(f'Num (non-break) pauses={n_pauses}, num breaks = {n_breaks}')
- 
+                # first time block start crosses boundary -- insert there douple EC and break
+                inds = np.where( (block_starts * self.trial_dur_expected) > tnext )[0]
+                #print(inds)
+                if len(inds) == 0:
+                    break
 
-        tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break']
-        difftis_break = np.diff( np.hstack([0, tis_break]) )
-        difftis_break_dur = difftis_break * self.trial_dur_expected
-        print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
-        assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], 'Too long time distance between breaks'
+                ind = block_starts[ inds[0] ]
+                if self.trial_infos[ind]['vis_feedback_type'] == 'veridical':
+                    if self.trial_infos[ind + 1]['vis_feedback_type'] == 'veridical':
+                        if self.trial_infos[ind - 1]['vis_feedback_type'] == 'veridical':
+                            if self.trial_infos[ind - 2]['vis_feedback_type'] == 'veridical':
+                                print( self.trial_infos[ind-2:ind+2] )
+                                raise ValueError('Need to regenerate block sequence, too many veridical in a row. Please restart the script')
+                        else:
+                            ind = ind - 1
+                    else:
+                        ind = ind + 1
+
+                if abs(ind - len(self.trial_infos) ) < 6:
+                    raise ValueError(f'Need to regenerate block sequence, break is too close to the end ind={ind}')
+
+                pre  = self.trial_infos[:ind]
+                # we include entire block that cross boundary in post
+                post = self.trial_infos[ind:]
+                last_pre = pre[-1]
+
+                ins = []
+                dspec = {'vis_feedback_type':'error_clamp', 'tgti':last_pre['tgti'],
+                     'trial_type': 'error_clamp',
+                    'special_block_type': 'error_clamp_pair', 'block_ind':last_pre['block_ind'] }
+                ins += 2 * [dspec]
+
+                dspec = {'vis_feedback_type':'vft_break', 'tgti':None,
+                         'trial_type': 'break', 'special_block_type': None , 'block_ind': -1000}
+                ins += [dspec]
+
+
+                self.trial_infos = pre + ins + post
+
+                n = numtrials_between_breaks
+                tnext += n * self.trial_dur_expected + self.params['training_text_show_duration']
+                #import pdb; pdb.set_trace()
+
+            self.n_breaks = sum( [spec['trial_type'] == 'break' for spec in self.trial_infos] )
+            print(f'We have {len(block_starts)} different blocks (inc {self.n_breaks} breaks as separate blocks).'
+                f' Mean block num trials is (almost) = {np.diff(block_starts).mean():.2f}')
 
 
     def prepVars(self, insert_breaks = True):
@@ -201,12 +282,20 @@ class VisuoMotorMEG(VisuoMotor):
 
         ############################################################
 
-        assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
-        f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
 
 
         if insert_breaks:
             self.insertBreaks()
+
+        # add two ECs to the end
+        ins = []
+        last_pre = self.trial_infos[-1]
+        print(last_pre)
+        dspec = {'vis_feedback_type':'error_clamp', 'tgti':last_pre['tgti'],
+             'trial_type': 'error_clamp',
+            'special_block_type': 'error_clamp_pair', 'block_ind':last_pre['block_ind'] }
+        ins += 2 * [dspec]
+        self.trial_infos = self.trial_infos + ins
 
 
         ###########################################
@@ -282,6 +371,7 @@ class VisuoMotorMEG(VisuoMotor):
         subdir='dataMEG'
         import pickle
 
+        # whether we restart from last or not
         last_fn_base = None
         from utils import getLastInfo, getLastFname
         
@@ -360,6 +450,24 @@ class VisuoMotorMEG(VisuoMotor):
         #self.params['diode_width'] = 500
         assert self.params['trigger_device'] == 'parallel'
 
+
+        CTD_to_export = self.prepVars(insert_breaks = (last_fn_base is None))
+
+
+        # recalc durtot_all
+        self.durtot_all =  (len(self.trial_infos ) - self.n_pauses) * self.trial_dur_expected 
+        if self.n_pauses > 0:
+            self.durtot_all += (self.n_pauses - self.n_breaks) * (self.params['pause_duration'] + self.params['training_text_show_duration']  ) # now we show text before exiting pause
+        self.durtot_all += self.n_breaks * ( self.params['expected_break_duration'] + self.params['training_text_show_duration'])
+        self.durtot_all += 2 * self.params['training_text_show_duration'] 
+
+        print(f'UPD: In total we have {len(self.trial_infos)} trials, of them {self.n_pauses} pauses and {self.n_breaks} breaks ')
+        print(f'UPD: Expected trial duration = {self.trial_dur_expected} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message')
+
+        assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
+        f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
+
+
         self.color_diode_off = self.color_bg
         self.phase_after_pause = 'TRAINING_END'  
 
@@ -368,7 +476,6 @@ class VisuoMotorMEG(VisuoMotor):
         elif sys.platform in ['win32', 'cygwin'] :
             assert self.use_true_triggers
 
-        CTD_to_export = self.prepVars(insert_breaks = (last_fn_base is None))
 
 
 
@@ -404,6 +511,8 @@ class VisuoMotorMEG(VisuoMotor):
                     (r"Étape d'entraînement: " 
                      f'faites {self.params["num_training"] - self.trial_index} '
                     "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.")
+                #self.phase2text['TRAINING_END': 'La tâche principale commence maintenant']
+                self.phase2text['TRAINING_END_AFTER_BREAK': 'La tâche recommence maintenant']
 
         if last_fn_base is None:
             import json
@@ -673,7 +782,11 @@ class VisuoMotorMEG(VisuoMotor):
                                        pos_label = 'upper_right')
 
             if self.current_phase in ['TRAINING_START', 'TRAINING_END']:
-                txt = self.phase2text[self.current_phase]
+                if self.trial_infos[self.current_trial - 1] == 'BREAK':
+                    phase_spec = 'TRAINING_END_AFTER_BREAK'
+                    txt = self.phase2text[phase_spec]
+                else:
+                    txt = self.phase2text[self.current_phase]
                 self.drawTextMultiline(txt.split('\n'), pos_label = 'center', font = self.myfont_popup )
             if self.current_phase == 'ITI':
                 if self.params['ITI_show_home'] and not \
@@ -765,11 +878,22 @@ class VisuoMotorMEG(VisuoMotor):
                 self.drawHome()
 
             if self.current_phase == 'BREAK':
-                break_str = 'Pause longue'
+
+
+                timedif = time.time() - self.phase_start_times[self.current_phase]
+                if (int(timedif) % 5 == 0):
+                    # this is for experimenter, not for participant
+                    print(f'ongoing break, {R} seconds passed')
+
+                break_str = 'Pause longue commence'
+                perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
+                            inc_last_reward = False)
                 #if not self.free_from_break: # does not change anything
-                self.drawTextMultiline( [break_str] , 
+                self.drawTextMultiline( [break_str] + [''] + perfstrs , 
                    font = self.myfont_popup,
-                   pos_label= 'center')
+                   pos_label= 'center', voffset_glob = -80)
+
+                self.drawProgressBar()
 
             if self.current_phase == 'PAUSE':
                 self.color_home = self.color_home_def
@@ -1471,9 +1595,10 @@ class VisuoMotorMEG(VisuoMotor):
                                     self.params['radius_target'] +
                                     self.params['radius_cursor'] / 2.)
 
-            if self.params['move_duration_fixation_type'] == 'fix_time_since_go_cue':
-                reach_time_finished = self.timer_check(self.current_phase,
+            reach_time_finished0 = self.timer_check(self.current_phase,
                                         'time_feedback')
+            if self.params['move_duration_fixation_type'] == 'fix_time_since_go_cue':
+                reach_time_finished = reach_time_finished0
             elif self.params['move_duration_fixation_type'] == 'fix_time_after_leave_home':
                 at_home = self.is_home('unpert_cursor', 'radius_home_strict_inside')
                 if (not at_home) and (not self.already_left_home_during_move_cur_trial):
@@ -1481,16 +1606,18 @@ class VisuoMotorMEG(VisuoMotor):
                     self.already_left_home_during_move_cur_trial = True
 
                 if self.already_left_home_during_move_cur_trial:
-                    reach_time_finished = self.timer_check('movement_leave_home',
-                                            'time_feedback')
+                    move_dur_after_lh_finished = self.timer_check('movement_leave_home',
+                                            'movement_duration_after_lh')
                 else:
-                    reach_time_finished = False
+                    move_dur_after_lh_finished = False
+                
+                reach_time_finished = reach_time_finished0 or move_dur_after_lh_finished
             else:
-                raise ValueError('Wrong!')
+                raise ValueError('Wrong val of param move_duration_fixation_type!')
 
-            if reach_time_finished:
-                self.timer_check(self.current_phase,
-                                    'time_feedback', verbose=1)
+            # if reach_time_finished:
+            #     self.timer_check(self.current_phase,
+            #                         'time_feedback', verbose=1)
 
             rtc = self.params['reach_termination_condition']
 

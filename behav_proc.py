@@ -19,6 +19,125 @@ trial_group_cols_all = ['trialwb',
  'trialwtgt_wpertstage_wb',
  'trialwtgt_wpertstage_we' ]
 
+# dfcc queries
+qs_notspec_not_afterpause = ('trial_index > @numtrain and trial_type != "error_clamp"'
+       ' and prev_trial_type != "pause"')
+
+qs_inside_sandwich = ('trial_index > @numtrain and trial_type != "error_clamp" '
+                     ' and special_block_type == "error_clamp_sandwich"')
+
+qs_notspec_not_sandwich_not_afterpause = ('trial_index > @numtrain and trial_type != "error_clamp"'
+        ' and special_block_type != "error_clamp_sandwich" and prev_trial_type != "pause"')
+
+spectrials = ["error_clamp", "pause", "break"]
+
+qs_notspec = ('trial_index > @numtrain '
+            ' and ~trial_type.isin(@spectrials)'
+        ' and special_block_type != "error_clamp_sandwich"')
+
+qs_notEC = ('trial_index > @numtrain and trial_type != "error_clamp"')
+
+
+qs_notspec_not_afterspec = ('trial_index > @numtrain and trial_type != "error_clamp"'
+                   ' and prev_trial_type not in @spectrials')
+
+canonical_context_pair_listnames = ['both_close','some_close','tgt_close',
+    'pert_close','pert_same','tgt_same']
+
+ #vfts = dfcc['vis_feedback_type'].unique()
+from collections.abc import Iterable
+
+def genCtxPairLists(dfcc):
+    tgtis = dfcc['tgti_to_show'].unique()
+    perts = dfcc['perturbation'].unique()
+
+    from itertools import product
+    all_ctx = list(product(perts,tgtis))
+    all_ctx_pairs = list( product(all_ctx,all_ctx) )
+    ctx_pairs_both_close = []
+    ctx_pairs_some_close = []
+    ctx_pairs_tgt_close  = []
+    ctx_pairs_pert_close = []
+    ctx_pairs_pert_same = []
+    ctx_pairs_tgt_same = []
+    for pair in all_ctx_pairs:
+        (pert1,tgti1),(pert2,tgti2) = pair
+        pc = abs(pert1 - pert2) <= 20
+        tc = abs(tgti1 - tgti2) <= 1
+        if tgti1 == tgti2:
+            ctx_pairs_tgt_same += [pair]
+        if pert1 == pert2:
+            ctx_pairs_pert_same += [pair]
+        if pc:
+            ctx_pairs_pert_close += [pair]
+        if tc:
+            ctx_pairs_tgt_close += [pair]
+        if tc and pc:
+            ctx_pairs_both_close += [pair]
+        if tc or pc:
+            ctx_pairs_some_close += [pair]
+        
+    canonical_context_pair_lists = dict(zip(canonical_context_pair_listnames,
+    [ctx_pairs_both_close, ctx_pairs_some_close, ctx_pairs_tgt_close ,
+    ctx_pairs_pert_close, ctx_pairs_pert_same, ctx_pairs_tgt_same] ))
+    return all_ctx, canonical_context_pair_lists
+
+#list( all_ctx_pairs )
+def getCtxPairProps(ctxpair, canonical_context_pair_lists):
+    if isinstance(ctxpair, tuple):
+        r = {}
+        for ln in canonical_context_pair_listnames:
+            if ctxpair is None:
+                r[ln] = None
+            else:
+                r[ln] = ctxpair in canonical_context_pair_lists[ln]            
+        return r
+    elif isinstance(ctxpair, Iterable):
+        r = []
+        for rr in ctxpair:
+            assert isinstance(rr,tuple)
+            r += [ getCtxPairProps(rr, canonical_context_pair_lists) ]
+        return pd.DataFrame(r)
+
+# otherwise we get too many. We need reset_index having been already applied
+def setContextSimilarityCols(dftmp, canonical_context_pair_lists):
+    assert np.sum( dftmp.index.duplicated() )  == 0
+    mx = dftmp.groupby(['subject','trial_index']).size().max() 
+    assert mx == 1, mx
+    
+    subjects = dftmp['subject'].unique()
+
+    pref = 'prev_ctx_'
+    for ln in canonical_context_pair_listnames:
+        dftmp[pref + ln] = None
+    for subj in subjects:
+        dfcc_tmp = dftmp.query(f'subject == "{subj}"')
+        assert len(dfcc_tmp) > 0
+        inds = dfcc_tmp.index
+
+        # maybe I could take 1: to skip first invalid after shift
+        tgtis = dfcc_tmp['tgti_to_show'].values[1:].astype(int)
+        perts = dfcc_tmp['perturbation'].values[1:].astype(int)
+        #bis   = dfcc_tmp['block_ind'].values[1:].astype(int)
+
+        prev_tgtis = dfcc_tmp['tgti_to_show'].shift(1).values[1:].astype(int)
+        prev_perts = dfcc_tmp['perturbation'].shift(1).values[1:].astype(int)
+        #prev_bis   = dfcc_tmp['block_ind'].shift(1).values[1:].astype(int)
+
+        ctx_pairs = list(zip( list(zip(prev_perts,prev_tgtis)) , list(zip(perts,tgtis)) ))
+        ctx_pairs = [((None,None),(None,None))] + ctx_pairs
+        #print(len(dfcc_tmp), len(ctx_pairs) )
+
+        pair_props = getCtxPairProps(ctx_pairs, canonical_context_pair_lists)
+        for ln in canonical_context_pair_listnames:
+            dftmp.loc[inds, pref + ln] = pair_props[ln].to_numpy() 
+            
+        #bs = [False]  + list(bis == prev_bis)
+        dftmp.loc[inds, 'prev_block_ind_diff'] = dfcc_tmp['block_ind'] - dfcc_tmp['block_ind'].shift(1)
+        
+
+
+
 def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
     fname = op.join(path_data, subj, 'behavdata',
                 f'behav_{task}_df.pkl' )
@@ -38,6 +157,7 @@ def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
 def addBehavCols(df_all, inplace=True, skip_existing = False,
                  dset = 'Romain_Exp2_Cohen'):
     '''
+    This is for NIH experiment
     inplace, does not change database lengths (num of rows)
     '''
     if not inplace:
@@ -761,8 +881,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         addargs = {}
     elif computation_ver == 'computeErrSens3':
         from error_sensitivity import computeErrSens3 as computeES
-        addargs = {'df_fulltraj': df_fulltraj,
-                   'trajPair2corr':trajPair2corr}
+        addargs = None # will be added later per subj
 
 
     p = itprod(envs_cur,block_names_cur,pertvals_cur,gseqcs_cur,tgt_inds_cur,
@@ -809,6 +928,15 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                     debug_break = 1
                     break
                 continue
+
+            if computation_ver == 'computeErrSens3':
+                if df_fulltraj is not None:
+                    addargs = {'df_fulltraj': \
+                               df_fulltraj.query(f'subject == "{subj}"'),
+                               'trajPair2corr':trajPair2corr}
+                else:
+                    addargs = {}
+
 
             for tsz in trial_shift_sizes:
                 escoln = 'err_sens'
@@ -893,6 +1021,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 break
         if debug_break:
             break
+        print('Subj = ',subj, 'computation finished successfully')
     print('computeErrSensVersions: Main calc finished successfully')
 
     df_all2 = pd.concat(dfs)
@@ -1163,9 +1292,15 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
             phase2trigs[phase_to_collect] += [v]
         #print(line)
 
-    params['width'] = int(params['width'])
-    params['height'] = int(params['height'])
-    params['dist_tgt_from_home'] = int(params['dist_tgt_from_home'])
+    intpars = ['width','height', 'num_training', 
+               'n_context_appearences']
+    for pn in intpars:
+        params[pn] = int(params[pn])
+
+    fpars = ['radius_home', 'radius_cursor', 'dist_tgt_from_home', 
+             'radius_target', 'FPS', 'time_feedback']
+    for pn in fpars:
+        params[pn] = float(params[pn])
 
     return params, phase2trigger, trigger2phase, stage2pars
 
@@ -1717,7 +1852,7 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
     coef_endpt_err  = 0.5
     dfcc['error_aug2'] = dfcc['error_intdist2'] + coef_endpt_err * dfcc['error_distance']
 
-    trajlen_ideal = float(params['dist_tgt_from_home'] ) - \
+    trajlen_ideal = params['dist_tgt_from_home']  - \
             float(params['radius_home'] ) - float(params['radius_target'] )
     dfcc['traj_length_adj'] = dfcc['traj_length'] - trajlen_ideal
 
@@ -1913,6 +2048,8 @@ def compareTriggers(df, dfev, dftriglog):
 def addBasicInfo(df, phase2trigger, params,
                 home_position, target_coords,
                 phase_to_collect = 'TARGET_AND_FEEDBACK', training_end_sep_trial = False):
+    #### 
+    # This is for context change experiment
     ############################################################
 
     assert df['subject'].nunique() == 1
@@ -2002,13 +2139,55 @@ def addBasicInfo(df, phase2trigger, params,
     # selmax
     # TODO: use agg instead of == time
     grp = dfc.groupby(['trial_index'])
-    idx = grp['time'].transform(max) == dfc['time'] #.size()
-    dfcc = dfc.loc[idx]
+    #idx = grp['time'].transform(max) == dfc['time'] #.size()
+    #dfcc = dfc.loc[idx]
     # this should work better 
-    #dfcc = aggRows(dfc, 'time', 'max', grp, coltake == 'corresp') 
+    dfcc = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp') 
 
     # it DOES NOT include pauses
-    dfcc = dfcc.reset_index()
+    dfcc = dfcc.reset_index(drop=True)
+
+
+    all_ctx, cpls = genCtxPairLists(dfcc)
+    setContextSimilarityCols(dfcc, cpls)
+    assert (~dfcc['prev_ctx_some_close'].isnull()).sum() > 0
+
+    numtrain = params['num_training']
+    ##################################   set ctx id and count appearances
+
+    def f(row):
+        try:
+            tgti = int( row['tgti_to_show'] )
+            pert = int( row['perturbation'] )
+            ctx = (pert, tgti)
+            ctxi = all_ctx.index(ctx)
+        except ValueError as e:
+            print(e,tgti,pert)
+            ctxi = -1000
+            
+        return ctxi
+
+    dfcc['ctxid'] = dfcc.apply(f,1)
+    assert not dfcc['ctxid'].isna().any()
+    assert np.sum(dfcc['ctxid'] < 0) == 0
+
+    dfcc['Nctx_app'] = -1000
+    #grp = dfcc_all_.query(qs_notspec).groupby(['subject','ctxid'])
+    grp = dfcc.query(qs_notspec).groupby(['ctxid'])
+    for g in grp.groups:
+        dfcc_tmp = dfcc.loc[grp.groups[g] ]
+        assert dfcc_tmp['time'].diff().max() > 0
+        # dont need +1 because I want to skip training block
+        r = (dfcc_tmp['block_ind'] != dfcc_tmp['block_ind'].shift(1)).cumsum() #+ 1
+        dfcc.loc[grp.groups[g], 'Nctx_app'] =  r
+        #print(g, r.max(), dfcc_tmp['block_ind'].unique())
+    assert np.max(dfcc['Nctx_app'] ) == params['n_context_appearences']
+
+
+    ##################################
+
+
+
 
 
     #dfcc['feedbackY']          = params['height'] - dfcc['feedbackY']
@@ -2668,3 +2847,34 @@ def alignDfs(df1,cols1, df2,cols2, suff2 = '_2', verbose=0,
             print(colnc, 'disagree at inds ',list(inds) )
     return dfr
 
+def getStartEndMultiSubj(df_, ynames = ['err_sens']):
+    grp = df_.groupby(['subject', 'block_ind'])
+
+    # note that we take here highly cleaned data mostly. So there can be sometimes only a couple of valid trials
+    # e.g. if particiapnt did not manage to leave the home during most of the block
+    df1 = grp['trial_index'].min().to_frame().rename(columns={'trial_index':'block_start_trial_index'})
+    df2 = grp['trial_index'].max().to_frame().rename(columns={'trial_index':'block_end_trial_index'})
+
+    #sts = grp['trial_index'].idxmin().to_frame().rename(columns={'trial_index':'block_start_trial_index'}) 
+
+    block_bounds = pd.concat( [df1, df2], axis=1)
+
+    # some dirty hacks. I shoudl be using  idxmin
+    sts = block_bounds.query('block_ind >= 0')['block_start_trial_index']._values
+    df_block_start = df_.loc[df_['trial_index'].isin(sts)]
+
+    ends = block_bounds.query('block_ind >= 0')['block_end_trial_index']._values
+    df_block_end = df_.loc[df_['trial_index'].isin(ends)]
+
+    df_block_start = df_block_start[['subject','block_ind', 'trial_type'] + ynames].set_index(['subject','block_ind'])
+    #ynames_mod = [yn + '_start' for yn in ynames]
+    #rd = dict(zip(ynames,ynames_mod))
+    #df_block_start = df_block_start.rename(columns=rd)
+    df_block_start['type'] = 'start'
+
+    df_block_end =   df_block_end[['subject','block_ind', 'trial_type'] + ynames].\
+        set_index(['subject','block_ind'])
+    df_block_end['type'] = 'end'
+
+    df_startend = pd.concat([df_block_start, df_block_end])
+    return df_startend

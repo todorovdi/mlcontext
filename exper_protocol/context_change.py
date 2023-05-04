@@ -12,7 +12,7 @@ import numpy as np
 import math
 from os.path import join as pjoin
 from itertools import product  # ,repeat
-import argparse         
+import argparse
 import glob
 # import pylink
 # import EyeLink
@@ -441,12 +441,15 @@ class VisuoMotor:
         #self.add_param('block_len_max',10)
         #self.add_param('n_context_appearences',4)
 
+        self.copy_param(info,'special_trials',
+            ['pause_block_middle','pause_block_end', 'ECpair_block_end',
+             'ECsandwich_block_end' ])
         self.copy_param(info, 'conseq_veridical_allowed', 1)
 
         # 3 pert, 3 targets
-        self.add_param('block_len_min',6)
-        self.add_param('block_len_max',11)
-        self.add_param('n_context_appearences',7)
+        self.copy_param(info, 'block_len_min',6)
+        self.copy_param(info, 'block_len_max',11)
+        self.copy_param(info, 'n_context_appearences',7)
 
         # alternative giving 55 min as well
         #self.add_param('block_len_min',10)
@@ -517,10 +520,11 @@ class VisuoMotor:
                         print('no conseq context block repetitions')
             print(f'Context seq regenerations: num_repeats = {num_repet}, num_first_veridical = {num_first_veridical}')
         else:
-            prohibit_vft_conseq = []
-            if not self.params['conseq_veridical_allowed']:
-                prohibit_vft_conseq =  [ ('veridical', 'veridical') ]
-            
+            # not used
+            #prohibit_vft_conseq = []
+            #if not self.params['conseq_veridical_allowed']:
+            #    prohibit_vft_conseq =  [ ('veridical', 'veridical') ]
+
             num_context_left = dict( zip( np.arange(n_contexts), [self.params['n_context_appearences'] ] * n_contexts) )
             nleft = np.sum( list(num_context_left.values() ) )
             ct_inds = []
@@ -548,7 +552,7 @@ class VisuoMotor:
                         if verbose:
                             print('skip 3')
                         add = False
-                    if not self.params['conseq_veridical_allowed']: 
+                    if not self.params['conseq_veridical_allowed']:
                         vft_prev, tgti_prev = vfti_seq0[ct_inds[-1] ]
                         if (vft,vft_prev) == ('veridical','veridical'):
                             if verbose:
@@ -568,13 +572,13 @@ class VisuoMotor:
                 ct_inds += [ctxi]
                 num_context_left[ ctxi ] -= 1
                 nleft = np.sum( list(num_context_left.values() )  )
-        
+
         vfti_seq = [vfti_seq_noperm[i] for i in ct_inds] # I don't want to convert to numpy here
 
         return vfti_seq, ct_inds
 
     def __init__(self, info, task_id='',
-                 use_true_triggers = 1, debug=False, 
+                 use_true_triggers = 1, debug=False,
                  seed= None, start_fullscreen = 0,
                 save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1,
                 subdir='data', gen_trial_infos = True, init_params = True ):
@@ -691,6 +695,11 @@ class VisuoMotor:
             print(self.HID_controller)
         else:
             self.HID_controller = pygame.mouse
+
+
+        self.scr_endreach = 0  # TODO make param
+        if self.params['controller_type'] == 'joystick':
+            assert not self.scr_endreach   # to not slow down
 
         # fonts
         self.foruser_font_size = 24
@@ -853,7 +862,7 @@ class VisuoMotor:
             print(f'seed (preset param) = {self.seed}')
             assert seed is not None
 
-        
+
         np.random.seed( int(self.seed) )
 
         self.scale_params = {'scale-':self.params['scale_neg'],
@@ -875,13 +884,14 @@ class VisuoMotor:
             #seq0 = np.tile( np.arange(n_contexts), self.params['n_context_appearences'])
             #context_seq = np.random.permutation(seq0)
 
-            def genSpecTrialSubblock(pause_trial,
+            def genSpecTrialSubblock(pause_block,
                                   error_clamp_pair, error_clamp_sandwich,
                                   d, bi):
+                # note that special trial inherti block ind
                 # d is "normal" trial around which we create special ones
                 trial_infos = []
                 # inplace
-                if pause_trial:
+                if pause_block:
                     dspec = {'vis_feedback_type':'veridical', 'tgti':tgti,
                          'trial_type': 'pause', 'special_block_type': None }
                     dspec[ 'block_ind' ] = bi
@@ -969,39 +979,43 @@ class VisuoMotor:
                      'trial_type': ttype, 'special_block_type': None,
                      'block_ind': bi}
 
-                pause_trial_middle, error_clamp_pair_middle,\
+                pause_block_middle, error_clamp_pair_middle,\
                         error_clamp_sandwich_middle = 0,0,0
-                pause_trial_end, error_clamp_pair_end,\
+                pause_block_end, error_clamp_pair_end,\
                         error_clamp_sandwich_end = 0,0,0
 
 
                 #if self.debug:
-                #    pause_trial_middle, error_clamp_pair_middle,\
+                #    pause_block_middle, error_clamp_pair_middle,\
                 #            error_clamp_sandwich_middle = 0,1,0
 
                 if bi > 2: #or self.debug:
                     N = self.params['spec_trial_modN']
                     if bi % N == 0:
-                        pause_trial_middle       = 1
+                        if 'pause_block_middle' in self.params['special_trials']:
+                            pause_block_middle       = 1
                     elif bi % N == 4:
-                        pause_trial_end          = 1
+                        if 'pause_block_end' in self.params['special_trials']:
+                            pause_block_end          = 1
                     elif bi % N == 2:
-                        error_clamp_pair_end     = 1
-                    elif bi % N in [6,1,3,5]:
-                        error_clamp_sandwich_end = 1
+                        if 'ECpair_block_end' in self.params['special_trials']:
+                            error_clamp_pair_end     = 1
+                    elif bi % N in [1,3,5,6]: # but not 7
+                        if 'ECsandwich_block_end' in self.params['special_trials']:
+                            error_clamp_sandwich_end = 1
 
                 hd = num_context_repeats // 2
                 rhd = num_context_repeats - hd
                 self.trial_infos += [d] * hd
 
                 # insert in the middle
-                self.trial_infos += genSpecTrialSubblock(pause_trial_middle,
+                self.trial_infos += genSpecTrialSubblock(pause_block_middle,
                     error_clamp_pair_middle, error_clamp_sandwich_middle,d,
                                                       bi)
 
                 self.trial_infos += [d] * rhd
 
-                self.trial_infos += genSpecTrialSubblock(pause_trial_end,
+                self.trial_infos += genSpecTrialSubblock(pause_block_end,
                     error_clamp_pair_end, error_clamp_sandwich_end,d, bi)
 
 
@@ -1039,6 +1053,7 @@ class VisuoMotor:
 
         #n_pauses = (num_context_repeats *  2/8)
         n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
+        self.n_pauses = n_pauses
 
         self.MEG_start_trigger = 252
         self.MEG_stop_trigger = 253
@@ -1049,6 +1064,7 @@ class VisuoMotor:
         durtot = 0.
         for durpar in duration_params:
             durtot += self.params[durpar]
+        # no breaks included
         self.durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
                 n_pauses * self.params['pause_duration']
         self.trial_dur_expected  = durtot
@@ -1123,7 +1139,7 @@ class VisuoMotor:
         # print first trial infos
         #if self.debug:
         print(f'In total we have {len(self.trial_infos)} trials, of them {n_pauses} pauses ')
-        print(f'Expected trial duration = {durtot} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message. Also, it assumes that all breaks have same duration as pauses')
+        print(f'Expected trial duration = {durtot} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message. Also, it assumes that all breaks replace pauses and have same duration as pauses')
 
 
         # 4.1 sec
@@ -1161,7 +1177,7 @@ class VisuoMotor:
                 self.trigger = parallel.ParallelPort(address=self.trigger_port)
 
 
-            # very first trigger 
+            # very first trigger
             self.send_trigger(0)
 
 
@@ -1619,7 +1635,7 @@ class VisuoMotor:
                 if self.params['ITI_show_home'] and not \
                         (self.params['hit_notif'] == 'home_color_change' or \
                         self.params['miss_notif'] == 'home_color_change'):
-                    self.drawHome() 
+                    self.drawHome()
                     #print('ITI draw home 1')
 
                 tdif = time.time() - \
@@ -1753,7 +1769,7 @@ class VisuoMotor:
                     self.drawHome()
                     at_home = self.is_home('unpert_cursor', 'radius_home')
                     if at_home:
-                        smooth = self.params['smooth_traj_feedback_when_home'] 
+                        smooth = self.params['smooth_traj_feedback_when_home']
                     else:
                         smooth = 0
                     self.drawCursorFeedback(smooth = smooth)
@@ -2046,9 +2062,9 @@ class VisuoMotor:
 
     def applyNoise(self, coordinates, noise = None  ):
         if noise is None:
-            noise = self.params['noise_fb'] 
+            noise = self.params['noise_fb']
         r = coordinates
-        
+
         if noise > 1e-10:
             r = np.array(r) + np.random.uniform(-1,1) * noise
         return r
@@ -2395,7 +2411,7 @@ class VisuoMotor:
                       f'at_home={at_home}, stopped={stopped}, '
                       f'radius_reached={radius_reached}, hit_cond={hit_cond}')
 
-                if self.debug:
+                if self.debug or self.scr_endreach:
                     self.save_scr(trial_info, prefix='endreach')
 
                 if reach_finished and hit_cond:
@@ -2975,7 +2991,7 @@ if __name__ == "__main__":
     parser.add_argument('--pause_duration',  type=float)
     parser.add_argument('--training_text_show_duration',  type=float)
     parser.add_argument('--verbose_trigger',  type=float)
- 
+
 
 
     args = parser.parse_args()

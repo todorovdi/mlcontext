@@ -15,7 +15,7 @@ from mne.time_frequency import psd_multitaper
 import pandas as pd
 from Levenshtein import editops
 import warnings
-from tqdm import tqdm
+from tqdm import tqdm  # for error bar
 import sys
 from base2 import (int_to_unicode, point_in_circle, getXGBparams,
                    calc_target_coordinates_centered, radius_target,
