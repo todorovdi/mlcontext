@@ -58,8 +58,10 @@ class VisuoMotorMEG(VisuoMotor):
         # we had 20
         # the larger the more task success, the fewer explicit (according to Li-Ann Leow
         info['radius_target'] = 30
+        #info['radius_target'] = 40
 
-        
+        # can be every_trial_change, every_phase_change, every_frame
+        info['flush_log_freq'] = 'every_trial_change'
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
@@ -77,6 +79,7 @@ class VisuoMotorMEG(VisuoMotor):
 
 
         self.add_param('expected_break_duration', 60.) # sec
+
 
     def insertBreaks(self):
         if self.n_pauses > 0:
@@ -225,6 +228,7 @@ class VisuoMotorMEG(VisuoMotor):
                              'EYELINK_CALIBRATION_PRE':20,
                              'EYELINK_CALIBRATION':21,
                              'TASK_INSTRUCTIONS':22,
+                             'KEYPRESS':23,
                               }
 
         self.phase2trigger_inv = dict(zip(self.phase2trigger.values(), self.phase2trigger.keys()))
@@ -240,14 +244,8 @@ class VisuoMotorMEG(VisuoMotor):
         # start phase
         self.current_phase = "EYELINK_CALIBRATION_PRE"
 
-        self.dummy_eyelink_counter = self.params['FPS'] * 0.2
+        self.dummy_eyelink_counter = None  # set to meaningful value when press 'e'
 
-        test_trial_ind = info.get('test_trial_ind',3)
-        if info['test_break'] and (test_trial_ind >= 0):
-            dspec = {'vis_feedback_type':'veridical', 'tgti':0,
-                         'trial_type': 'break', 'special_block_type': None }
-            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
-                self.trial_infos[test_trial_ind:]
 
         # Q do I switch to REST or to ITI from break (currently to REST)?
 
@@ -298,13 +296,25 @@ class VisuoMotorMEG(VisuoMotor):
         self.trial_infos = self.trial_infos + ins
 
 
+        #######################  test breaks
+
+        test_trial_ind = info.get('test_trial_ind',3)
+        if info['test_break'] and (test_trial_ind >= 0):
+            dspec = {'vis_feedback_type':'veridical', 'tgti':0,
+                     'trial_type': 'break', 'special_block_type': None, 'block_ind':-1000 }
+            self.trial_infos = self.trial_infos[:test_trial_ind] + [dspec] +\
+                self.trial_infos[test_trial_ind:]
+
+
         ###########################################
+        self.trigger_keypress = 250
+
         self.MEG_start_trigger = 252
         self.MEG_stop_trigger = 253
 
         phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
             'REST', 'GO_CUE_WAIT_AND_SHOW',
-            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS' ]
+            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS', 'KEYPRESS' ]
 
         if self.params['rest_after_return']:
              phases_trigger_coded += ['RETURN']
@@ -317,7 +327,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.spec_phases = [ 'BREAK', 'TRAINING_START', 'TRAINING_END', 'PAUSE' ]
         #spec_tt = ['break', 'pause' ]
-        self.spec_tt = {'break':['REST','BREAK', 'BUTTON_PRESS' ] , 
+        self.spec_tt = {'break':['REST','BREAK', 'BUTTON_PRESS', 'KEYPRESS' ] , 
                    'pause':['REST','PAUSE' ] }
 
         # 'TARGET':20, 'FEEDBACK': 35,
@@ -464,8 +474,9 @@ class VisuoMotorMEG(VisuoMotor):
         print(f'UPD: In total we have {len(self.trial_infos)} trials, of them {self.n_pauses} pauses and {self.n_breaks} breaks ')
         print(f'UPD: Expected trial duration = {self.trial_dur_expected} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message')
 
-        assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
-        f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
+        if not self.debug:
+            assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
+            f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
 
 
         self.color_diode_off = self.color_bg
@@ -677,6 +688,9 @@ class VisuoMotorMEG(VisuoMotor):
         if self.task_started == 1:
             self.send_trigger_cur_trial_info()
 
+        if self.params['flush_log_freq'] == 'every_phase_change':
+            self.log_flush()
+
     def on_trial_change(self, prev_trial_index, prev_trial_info):
         self.el_tracker.sendMessage('TRIALID %d' % self.trial_index)
 
@@ -690,7 +704,8 @@ class VisuoMotorMEG(VisuoMotor):
         print(f'  prev trial = {prev_trial_info}')
         print(f'  new trial  = {trial_info2}')
 
-        self.log_flush()
+        if self.params['flush_log_freq'] == 'every_trial_change':
+            self.log_flush()
 
         ## OPTIONAL--record_status_message : show some info on the Host PC
         ## for illustration purposes, here we show an "example_MSG"
@@ -775,7 +790,7 @@ class VisuoMotorMEG(VisuoMotor):
                                     pos_label= 'center')
 
 
-        elif (self.task_started == 1):
+        elif (self.task_started == 1) and (self.current_phase != 'EYELINK_CALIBRATION'):
             # Clear screen
             self._display_surf.fill(self.color_bg)
             if self.debug:
@@ -784,7 +799,7 @@ class VisuoMotorMEG(VisuoMotor):
                                        pos_label = 'upper_right')
 
             if self.current_phase in ['TRAINING_START', 'TRAINING_END']:
-                if self.trial_infos[self.current_trial - 1] == 'BREAK':
+                if self.trial_infos[self.trial_index - 1] == 'BREAK':
                     phase_spec = 'TRAINING_END_AFTER_BREAK'
                     txt = self.phase2text[phase_spec]
                 else:
@@ -883,19 +898,19 @@ class VisuoMotorMEG(VisuoMotor):
 
 
                 timedif = time.time() - self.phase_start_times[self.current_phase]
-                if (int(timedif) % 5 == 0):
+                if (np.floor(timedif * 100) % 100 == 0):
                     # this is for experimenter, not for participant
-                    print(f'ongoing break, {R} seconds passed')
+                    print(f'ongoing break, {timedif:.1f} seconds passed')
 
-                break_str = 'Pause longue commence'
+                break_str = 'Pause'
                 perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
                             inc_last_reward = False)
                 #if not self.free_from_break: # does not change anything
-                self.drawTextMultiline( [break_str] + [''] + perfstrs , 
-                   font = self.myfont_popup,
-                   pos_label= 'center', voffset_glob = -80)
+                #self.drawTextMultiline( [break_str] + [''] + perfstrs , 
+                #   font = self.myfont_popup,
+                #   pos_label= 'center', voffset_glob = -80)
 
-                self.drawProgressBar()
+                self.drawProgressBar(pause_str = break_str)
 
             if self.current_phase == 'PAUSE':
                 self.color_home = self.color_home_def
@@ -991,7 +1006,12 @@ class VisuoMotorMEG(VisuoMotor):
         # if not task_started
         else:
             if self.current_phase == 'EYELINK_CALIBRATION':
-                phase_after_calib = 'TASK_INSTRUCTIONS'
+                # we do some stuff in on_render because update vars is not called before the task is started
+                if self.trial_index > 0:
+                    assert self.trial_infos[self.trial_index]['trial_type'] == 'break'
+                    phase_after_calib = 'BREAK'
+                else:
+                    phase_after_calib = 'TASK_INSTRUCTIONS'
                 # TODO: I am not sure if fullscreen here should be this or 
                 # I have to actually check whether I am fullscreen or not
                 if self.params['dummy_mode']:
@@ -1007,6 +1027,8 @@ class VisuoMotorMEG(VisuoMotor):
 
                     #self.restartTask( very_first = 1, phase = phase_after_calib)
                     self.current_phase = phase_after_calib 
+                if self.current_phase != 'EYELINK_CALIBRATION':
+                    print('Phase after eyelink calibration = ',self.current_phase)
             elif self.current_phase in self.phase2dir:
                 self.calibJoystick()
             elif self.current_phase == "TASK_INSTRUCTIONS":
@@ -1157,14 +1179,17 @@ class VisuoMotorMEG(VisuoMotor):
         self.reset_traj()
         self.reset_main_vars()    # NEW
 
-        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000  ) )
         self.send_trigger(0)
-        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000  ) )
 
         print('before sending ' ,time.time() - self.initial_time )
         self.send_trigger(self.MEG_start_trigger)
         print('after sending ' ,time.time() - self.initial_time )
-        pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000  ) )
         print('after waiting ' ,time.time() - self.initial_time )
         self.send_trigger(0)
 
@@ -1614,6 +1639,10 @@ class VisuoMotorMEG(VisuoMotor):
                     move_dur_after_lh_finished = False
                 
                 reach_time_finished = reach_time_finished0 or move_dur_after_lh_finished
+                if move_dur_after_lh_finished:
+                    print('Reach finished because of move_dur_after_lh_finished')
+                elif reach_time_finished0:
+                    print('Reach finished because of reach_time_finished0')
             else:
                 raise ValueError('Wrong val of param move_duration_fixation_type!')
 
@@ -1871,13 +1900,16 @@ class VisuoMotorMEG(VisuoMotor):
                 self.reset_traj()
             #else:
             #    self.frame_counters["return"] += 1
+        elif (self.current_phase == 'EYELINK_CALIBRATION'):
+            # if we have calibration during break, just do nothing
+            nothing = (1 == 1)
         else:
             #print("Error")
             raise ValueError(f'wrong phase {self.current_phase}')
             self.on_cleanup(-1)
 
         if self.trial_index == len(self.trial_infos):
-            self.task_started = 2
+            self.task_started = 2  # end of the task
 
         self.current_phase_trigger = self.phase2trigger[self.current_phase]
         if self.current_phase != prev_phase:
@@ -1954,25 +1986,32 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_log.append(self.current_time - self.initial_time)
         self.current_log.append(self.current_time)
 
-        #self.log_flush()
+        if self.params['flush_log_freq'] == 'every_frame':
+            self.log_flush()
         # columns are
         #trial_index,   current_phase_trigger, tgti_to_show, vis_feedback_type, trial_type, special_block_type, cursorX, cursorY, feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY, error_distance, feedbackX_when_crossing, feedbackY_when_crossing, time, abs_time
 
     def log_flush(self):
+        if self.debug:
+            print('Logfile flushed')
         self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
 
     def on_cleanup(self, exit_type):
         '''
         at the end of on_execute
         '''
+        self.log_flush()
 
-        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000 ) )
         self.send_trigger(0)
-        pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000  ) )
 
         self.send_trigger(self.MEG_stop_trigger)
         #time.sleep(0.05)
-        pygame.time.wait( int( 1000 * self.params['MEG_trigger_duration'] ) )
+        if not self.params['dummy_mode']:
+            pygame.time.wait( int( 1000  ) )
         self.MEG_rec_started = 0
 
         self.send_trigger(0)
@@ -2011,7 +2050,8 @@ class VisuoMotorMEG(VisuoMotor):
             # if task was not started and a button was pressed, start the task
             if self.task_started == 0:
                 # otherwise triggers will overlap
-                pygame.time.wait( int( 1000 * self.params['trigger_duration'] ) )
+                if not self.params['dummy_mode']:
+                    pygame.time.wait( int( 1000  ) )
                 self.restartTask(very_first = 1)
             # if task was started and a button was pressed, release break
             else:
@@ -2019,12 +2059,13 @@ class VisuoMotorMEG(VisuoMotor):
                 self.free_from_break = 0
 
         if event.type == pygame.KEYDOWN:
-            self.send_trigger(self.phase2trigger['BUTTON_PRESS'], 
+            self.send_trigger(self.phase2trigger['KEYPRESS'], 
                               add_info = {'event.type': event.type,
                                           'event.key': event.key, 
                                           'keyname': pygame.key.name(event.key)  } )
 
             if event.key == pygame.K_ESCAPE:
+                print('Escape was pressed, exiting')
                 self.on_cleanup(-1)
             if event.key == pygame.K_F11 and pygame.mouse.get_focused():
                 disp_sizes = pygame.display.get_desktop_sizes()
@@ -2057,7 +2098,7 @@ class VisuoMotorMEG(VisuoMotor):
             # release from break
             if (event.key == pygame.K_g) and (not self.free_from_break):
                 self.free_from_break = 1
-                self._display_surf.fill(self.color_bg) # need to be here beacuase
+                self._display_surf.fill(self.color_bg) # need to be here beacause
                 # sleep will make on_render not be executed so 'pause commence' 
                 # will be for too long and I'd like it to disappear 
                 # after pressing g to let participant prepare
@@ -2066,8 +2107,11 @@ class VisuoMotorMEG(VisuoMotor):
                 time.sleep(self.params['delay_exit_break_after_keypress']) # in sec
 
                 self.restartTask(very_first = 0, phase = self.phase_after_restart  )
-            if (event.key == pygame.K_e) and (not self.task_started == 1):
-                self.current_phase = 'EYELINK_CALIBRATION'
+            if (event.key == pygame.K_e):
+                if ( (  not self.task_started == 1 ) or (self.current_phase == 'BREAK') ):
+                    self.current_phase = 'EYELINK_CALIBRATION'
+                    self.dummy_eyelink_counter = self.params['FPS'] * 0.2
+                    print('Starting eyelink calibration')
             if (event.key == pygame.K_j) and (not self.task_started == 1) and\
                     (self.params['controller_type'] == 'joystick' ):
                 self.current_phase = self.calib_seq[0]

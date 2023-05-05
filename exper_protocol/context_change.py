@@ -220,11 +220,12 @@ class VisuoMotor:
         self.add_param_comment('# Radius of the target')
         #self.add_param('radius_target', 19)
         #self.add_param('radius_target', 24)
-        self.add_param('radius_target', 20)
+        self.copy_param(info, 'radius_target', 20)
 
         self.copy_param(info, 'verbose_trigger', 0)
 
         self.copy_param(info, 'trigger_device', None)
+        self.copy_param(info, 'flush_log_freq', 'every_frame')
 
         # to minimize change of screen content
         self.add_param('ITI_show_home',1)
@@ -463,6 +464,7 @@ class VisuoMotor:
 
 
         num_training = info.get('num_training', None)
+        #print('context_change: num_training in info is ',num_training)
         if num_training is None:
             if self.debug:
                 self.add_param('num_training',2)
@@ -1417,7 +1419,8 @@ class VisuoMotor:
                            self.home_position,
                            int(self.params['radius_home']), 2)
 
-    def drawProgressBar(self, prop = None, vshift = -150):
+    def drawProgressBar(self, prop = None, vshift = -150, 
+                        pause_str = None):
         if prop is None:
             prop =  ( (self.trial_index + 1) / len( self.trial_infos))
 
@@ -1448,7 +1451,8 @@ class VisuoMotor:
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
         perfinfo =  f'Récompense totale = {monetary_value_tot:.2f} Eur'
 
-        pause_str = 'La pause commence maintenant ! '
+        if pause_str is None:
+            pause_str = 'La pause commence maintenant ! '
         perfstrs = [ pause_str ] +  [ perfinfo ]
         self.drawTextMultiline(perfstrs, font = self.myfont_popup,
                                pos_label = 'center',

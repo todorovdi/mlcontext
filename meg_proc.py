@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+
 def events2df(events, info, dat_time, trigger2phase, CONTEXT_TRIGGER_DICT, restmintime):
     dfev = pd.DataFrame(events, columns=['nsample', 'prev_trigger', 'trigger' ]  )
     CONTEXT_TRIGGER_DICT_inv = dict(zip(CONTEXT_TRIGGER_DICT.values(), CONTEXT_TRIGGER_DICT.keys()))
@@ -165,3 +166,122 @@ def checkSeqConsist(df, dfev):
     good_inds_df   = dftmpmerge.loc[~c,'index_log']
     #assert (dfev.loc[badis_dfev.values,'trial_index'].values ==  df.loc[badis_df.values,'trial_index'].values).all()
     return r, bad_inds_dfev, bad_inds_df, good_inds_dfev, good_inds_df
+
+def decode_naive(X, y, nperm= 2, n_jobs = 10, nbfold=5, nbfold_perm=2,
+                pbackend = 'multiprocessing' ):
+    from mne.decoding import SlidingEstimator, LinearModel
+    #from sklearn.linear_model import LinearRegression
+    from jr.gat import scorer_spearman
+    from scipy.stats import spearmanr
+    from mne.decoding import cross_val_multiscore
+    from sklearn.preprocessing import RobustScaler
+    from joblib import parallel_backend
+    from sklearn.pipeline import make_pipeline
+    from sklearn.linear_model import RidgeCV
+    from sklearn.model_selection import KFold
+    from sklearn.metrics import make_scorer
+    import mne
+
+    assert len(X) == len(y), (X.shape, y.shape)
+    good =  ~np.isnan(y) 
+    print( f'Removing {np.sum(~good)} bad (nan) datapoints')
+    yg = y[good]
+    Xg = X[good]  # trial x channel x time   
+
+    print( np.sum( np.isinf(yg) ), np.sum( np.isnan(yg) ) )
+    scoring = make_scorer(scorer_spearman)    
+    
+    regr = RidgeCV()
+    pipeline = make_pipeline(RobustScaler(), LinearModel(regr))
+    est = SlidingEstimator(pipeline, scoring = scoring,
+                          n_jobs = n_jobs)
+
+
+    cv     = KFold(nbfold, shuffle=True)
+    cvperm = KFold(nbfold_perm, shuffle=True)
+    classic_dec_verbose = 1
+
+    # #%debug
+    def sc(est,XX,YY): 
+        print(XX.shape)
+        return spearmanr(XX,YY)[0]
+    yg_perm = np.random.permutation(yg)
+    with mne.use_log_level('warning'):
+        with parallel_backend(pbackend):
+            scores = cross_val_multiscore(est, Xg, y=yg, cv=cv,                                                                                    
+               scoring=scoring, n_jobs=n_jobs,                                                                                             
+               verbose=classic_dec_verbose) 
+
+            scs = []
+            for i in range(nperm):
+                yg_perm = np.random.permutation(yg)
+                scores_perm = cross_val_multiscore(est, Xg, y=yg_perm, cv=cvperm,                                                                                    
+                       scoring=scoring, n_jobs=n_jobs,                                                                                             
+                       verbose=0) 
+                scs += [scores_perm.mean(0)]
+            scores_perm = np.array(scs)    
+    
+    return scores, scores_perm
+
+def decode_naive2(X, y, nperm= 2, n_jobs = 10, nbfold=5, nbfold_perm=2,
+        pbackend = 'multiprocessing'):
+    from mne.decoding import SlidingEstimator, LinearModel
+    #from sklearn.linear_model import LinearRegression
+    from jr.gat import scorer_spearman
+    from scipy.stats import spearmanr
+    from mne.decoding import cross_val_multiscore
+    from sklearn.preprocessing import RobustScaler
+    from joblib import parallel_backend
+    from sklearn.pipeline import make_pipeline
+    from sklearn.linear_model import RidgeCV
+    from sklearn.model_selection import KFold
+    from sklearn.metrics import make_scorer
+    import mne
+
+
+
+
+    assert len(X) == len(y), (X.shape, y.shape)
+    good =  ~np.isnan(y) 
+    print( f'Removing {np.sum(~good)} bad (nan) datapoints')
+    yg = y[good]
+    Xg = X[good]  # trial x channel x time   
+
+    print('num inf, nan =', np.sum( np.isinf(yg) ), np.sum( np.isnan(yg) ) )
+    scoring = make_scorer(scorer_spearman)    
+    
+    regr = RidgeCV()
+    #pipeline = make_pipeline(RobustScaler(), LinearModel(regr))
+    est = make_pipeline(RobustScaler(), LinearModel(regr) )
+                            
+#     est = SlidingEstimator(pipeline, scoring = scoring,
+#                           n_jobs = n_jobs)
+
+
+    cv     = KFold(nbfold, shuffle=True)
+    cvperm = KFold(nbfold_perm, shuffle=True)
+    classic_dec_verbose = 1
+
+    # #%debug
+    def sc(est,XX,YY): 
+        print(XX.shape)
+        return spearmanr(XX,YY)[0]
+    yg_perm = np.random.permutation(yg)
+    with mne.use_log_level('warning'):
+        with parallel_backend(pbackend):
+            Xg_ = Xg.reshape(len(Xg), -1)
+            scores = cross_val_multiscore(est, Xg_, y=yg, cv=cv,                                                                                    
+               scoring=scoring, n_jobs=n_jobs,                                                                                             
+               verbose=classic_dec_verbose) 
+
+            scs = []
+            for i in range(nperm):
+                yg_perm = np.random.permutation(yg)
+                scores_perm = cross_val_multiscore(est, Xg_, y=yg_perm,
+                       cv=cvperm, scoring=scoring, n_jobs=n_jobs,
+                       verbose=0) 
+                scs += [scores_perm.mean()]
+            scores_perm = np.array(scs)    
+
+    
+    return scores, scores_perm
