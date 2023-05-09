@@ -187,7 +187,8 @@ def coords2anglesRad(X, Y, home_position, radius = None ):
     #        angles = angles - 2*np.pi
     return angles
 
-def getLastInfo(fn, nread):
+def getLastInfo(fn):
+    #, nread):
     import pandas as pd
     with open(fn + '.log', 'r') as f:
         lines = f.readlines()
@@ -205,9 +206,12 @@ def getLastInfo(fn, nread):
     print( dict(zip(colnames, lines[-1].split(',') ) ) )
     n_rows = len(lines)
     del lines
-    skip = int(n_rows - nread)
-    if skip < nread:
-        skip = 0
+    #skip = int(n_rows - nread)
+    #if skip < nread:
+    #    skip = 0
+
+    # we actually don't want to skip rows otherwise we won't be able to recompute reward accrued
+    skip = 0
 
     #def skip_comment(row):
     #    # check if the row starts with #
@@ -223,6 +227,7 @@ def getLastInfo(fn, nread):
     block_starts = grp_blockim['time']
     phase_starts = df.groupby('current_phase_trigger').min('time')['time']
 
+    grp_pertimax = df.groupby('trial_index').max('time')
 
     last_pause, last_block = None, None
     p = df.query('trial_type == "pause"')
@@ -240,10 +245,10 @@ def getLastInfo(fn, nread):
  
     last_block_first_trial_ind = df.query(f'block_ind == {last_trial_block_ind}')['trial_index'].min()
 
-    reward_accrued_before_last_trial = grp_pertim.\
+    reward_accrued_before_last_trial = grp_pertimax.\
         query(f'trial_index < {last_trial_ind}')['reward'].sum()
 
-    reward_accrued_before_last_block = grp_blockim.\
+    reward_accrued_before_last_block = grp_pertimax.\
         query(f'block_ind < {last_trial_block_ind}')['reward'].sum()
 
     return (last_phase, last_trial_ind, last_trial_block_ind, last_block_first_trial_ind, 

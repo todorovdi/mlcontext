@@ -1262,7 +1262,13 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
     for line in lines[:stl]:
         if line.startswith('#'):
             continue
-        lhs,rhs = line.replace(' ','').replace('\n','').split('=')
+        r = line.replace(' ','').replace('\n','').split('=')
+        if len(r) != 2:
+            print(line, r )
+            lhs = r[0] 
+            rhs = '='.join(r[1:])
+        else:
+            lhs,rhs = r
         params[lhs] = rhs
 
     early_reach_end_event = params.get('early_reach_end_event')

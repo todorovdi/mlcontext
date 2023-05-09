@@ -118,12 +118,15 @@ class VisuoMotor:
         self.session_id = info['session']
         self.timestr = time.strftime("%Y%m%d_%H%M%S")
 
+        
+
         if not os.path.exists(subdir):
             os.makedirs(subdir)
-        if self.debug:
-            self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id)
-        else:
-            self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id +
+        #if self.debug:
+        #    self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id)
+        #else:
+            
+        self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id +
                              '_' + self.timestr)
         param_fn = self.filename + '.param'
         self.paramfile = open(param_fn, 'w')
@@ -146,6 +149,8 @@ class VisuoMotor:
         self.add_param('joystick_angle2cursor_control_type', 'angle_scaling')
         #self.add_param('joystick_angle2cursor_control_type', 'velocity')
 
+        self.add_param('subject', info['participant'] )
+        self.add_param('session', info['session'] )
         #self.add_param('width', 800)
         #self.add_param('width', 1000)
 
@@ -191,6 +196,9 @@ class VisuoMotor:
             # I want same accuracy in X and Y dir
             self.add_param('width_for_cccomp',  w)
             self.add_param('height_for_cccomp', h)
+
+
+        ##############
 
         self.add_param_comment('# DESIRED Frames per second for plotting')
         # obesrved FPS can be slighlty different
@@ -446,6 +454,7 @@ class VisuoMotor:
             ['pause_block_middle','pause_block_end', 'ECpair_block_end',
              'ECsandwich_block_end' ])
         self.copy_param(info, 'conseq_veridical_allowed', 1)
+        self.copy_param(info, 'conseq_veridical_allowed_3inarow', 1)
 
         # 3 pert, 3 targets
         self.copy_param(info, 'block_len_min',6)
@@ -505,6 +514,9 @@ class VisuoMotor:
                         if not self.params['conseq_veridical_allowed']:
                             if (vfti1[0],vfti2[0]) == ('veridical','veridical'):
                                 repet_cond = True
+                        elif not self.params['conseq_veridical_allowed_3inarow']: 
+                            raise ValueError('not impl')
+
                         if repet_cond:
                             was_repet = True
                             # break from this and return to outer while
@@ -559,6 +571,15 @@ class VisuoMotor:
                         if (vft,vft_prev) == ('veridical','veridical'):
                             if verbose:
                                 print('skip 4')
+                            add = False
+                    if self.params['conseq_veridical_allowed'] and (not self.params['conseq_veridical_allowed_3inarow'])\
+                        and (len(ct_inds) >= 2) and ( len(ct_inds) > self.params['num_training'] ):
+
+                        vft_prev, tgti_prev   = vfti_seq0[ct_inds[-1] ]
+                        vft_prev2, tgti_prev2 = vfti_seq0[ct_inds[-2] ]
+                        if (vft, vft_prev, vft_prev2) == ('veridical','veridical','veridical'):
+                            if verbose:
+                                print('skip 5')
                             add = False
                 if not add:
                     if ii > 2000:
@@ -762,7 +783,7 @@ class VisuoMotor:
             self.instuctions_str += f"\n\nCliquer sur le bouton de {ctrl_str} vous ramène au centre (à n'utiliser qu'en cas d'urgence)"
 
         self.instuctions_str += (f"\n\nMaintenant, appuyez sur n'importe quel boutton {ctrl_de} pour commencer la tâche.\n"
-        "(c'est la seule fois où vous devrez appuyer sur un bouton du joystick)\n\n")
+        f"(c'est la seule fois où vous devrez appuyer sur un bouton {ctrl_de})\n\n")
         ###################   FRENCH TEXT END #####################
 
         self.break_start_str = 'BREAK'
@@ -779,7 +800,7 @@ class VisuoMotor:
         self.color_traj_orig_debug = [100, 50, 60] # reddish
         self.color_traj_feedback_debug = [200, 200, 200]  #whitish
         self.color_diode = [255, 255, 255]
-        self.color_diode_off = [0,0,0]
+        self.color_diode_off = self.color_bg
         self.color_text = [255,255,255]
         self.color_feedback = self.color_feedback_def
         self.color_target_def = [0, 255, 0]  # green

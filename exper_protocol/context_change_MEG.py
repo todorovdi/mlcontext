@@ -36,6 +36,7 @@ class VisuoMotorMEG(VisuoMotor):
         info['show_diode'] = 1
         #info['conseq_veridical_allowed'] = 0
         info['conseq_veridical_allowed'] = 1   # Wolpert said we should allow
+        info['conseq_veridical_allowed_3inarow'] = 0  # We discussed with R he said we should prohibit
 
         #time_lh_estimate = 0.22 # pm 0.04
         #info['time_feedback'] = 0.7 - time_lh_estimate # before we had 0.75 total
@@ -48,7 +49,8 @@ class VisuoMotorMEG(VisuoMotor):
         expected_reaction_time = 0.25 
         saefty_dur = 0.05
         #info['time_feedback'] = 0.7
-        info['time_feedback'] = expected_reaction_time + saefty_dur + (0.75 - expected_reaction_time)
+        if info.get('time_feedback', None) is None:
+            info['time_feedback'] = expected_reaction_time + saefty_dur + (0.75 - expected_reaction_time)
 
         info['block_len_min'] = 7
         info['block_len_max'] = 11 # NOT including. So largest will be 10
@@ -61,7 +63,8 @@ class VisuoMotorMEG(VisuoMotor):
         #info['radius_target'] = 40
 
         # can be every_trial_change, every_phase_change, every_frame
-        info['flush_log_freq'] = 'every_trial_change'
+        if info.get('flush_log_freq', None) is None:
+            info['flush_log_freq'] = 'every_trial_change'
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
@@ -74,16 +77,34 @@ class VisuoMotorMEG(VisuoMotor):
 
 
         self.copy_param(info, 'dummy_mode', 1)
-        self.copy_param(info, 'maxMEGrec_dur', 10 * 60)  # this is not counting pauses
+        self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
+        self.copy_param(info, 'max_time_between_breaks', 10 * 55)  # this soft, is not counting pauses. If 60, then have to regen too often
         self.copy_param(info, 'reset_trigger_auto', 1)
 
 
         self.add_param('expected_break_duration', 60.) # sec
+        self.add_param('allow_restart_from_break', 1 )
+
+        ##############
+
+        pns_ver_save = ['pylink','pygame']
+        for pn in pns_ver_save:
+            self.add_param(pn + '.version', str(eval(pn + '.__version__' ) )  )
+        
+        fn_lci = 'last_commit_info.txt'
+        if os.path.exists(fn_lci):
+            with open(fn_lci, 'r') as f:
+                vinfo = f.readline()
+        else:
+            vinfo = None
+        print('Code ver info = ',vinfo)
+        self.add_param('code_ver', vinfo)
 
 
     def insertBreaks(self):
+        maxMEGrec_dur = self.params['maxMEGrec_dur']
+        max_time_between_breaks = self.params['max_time_between_breaks']
         if self.n_pauses > 0:
-            maxMEGrec_dur = self.params['maxMEGrec_dur']
             mult = int( np.ceil( self.durtot_all / maxMEGrec_dur ) )
             approx_pause_step = len(self.trial_infos)  // mult
             print(f"mult = {mult}; approx_pause_step = {approx_pause_step}")
@@ -128,48 +149,56 @@ class VisuoMotorMEG(VisuoMotor):
             print(f'Num (non-break) pauses={n_pauses}, num breaks = {n_breaks}')
      
 
-            tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break']
-            difftis_break = np.diff( np.hstack([0, tis_break]) )
-            difftis_break_dur = difftis_break * self.trial_dur_expected
-            print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
-            assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], 'Too long time distance between breaks'
         else:
-            numtrials_between_breaks = int( self.params['maxMEGrec_dur'] / self.trial_dur_expected )
+            numtrials_between_breaks = int( max_time_between_breaks / self.trial_dur_expected )
             # annoying that insert in vim does not respect indent
             
-            tnext = self.params['maxMEGrec_dur']
+            tnext = max_time_between_breaks
             while True:
                 # recalc block starts because we change trial infos every time
+                # I do want to include pretraining here
                 block_inds = np.array( [ ti['block_ind'] for ti in self.trial_infos ] )
-                block_inds_shifted = np.roll( block_inds, 1, axis=0) 
-                block_inds_shifted[0] = -100000
-                block_starts = np.where( block_inds != block_inds_shifted )[0]
+
+                # returns the unique values, the index of the first occurrence of each value, and the count for each value
+                ubinds, block_starts, count = np.unique(block_inds, return_index=True, return_counts=True)
+                block_starts = block_starts[count > 1]
+
+                #block_inds_shifted = np.roll( block_inds, 1, axis=0) 
+                #block_inds_shifted[0] = -100000
+                #block_starts = np.where( block_inds != block_inds_shifted )[0]
 
 
                 # first time block start crosses boundary -- insert there douple EC and break
-                inds = np.where( (block_starts * self.trial_dur_expected) > tnext )[0]
-                #print(inds)
-                if len(inds) == 0:
+                # TODO: block starts +1 to see what happends towards trial end?
+                # note: since we include pretraining, it is not actual block_inds, it is block_inds + 1
+                block_cand_inds = np.where( (block_starts * self.trial_dur_expected) > tnext )[0]
+                #print(block_cand_inds)
+                if len(block_cand_inds) == 0:
                     break
 
-                ind = block_starts[ inds[0] ]
-                if self.trial_infos[ind]['vis_feedback_type'] == 'veridical':
-                    if self.trial_infos[ind + 1]['vis_feedback_type'] == 'veridical':
-                        if self.trial_infos[ind - 1]['vis_feedback_type'] == 'veridical':
-                            if self.trial_infos[ind - 2]['vis_feedback_type'] == 'veridical':
-                                print( self.trial_infos[ind-2:ind+2] )
-                                raise ValueError('Need to regenerate block sequence, too many veridical in a row. Please restart the script')
+                bsci = block_cand_inds[0]
+                tind = block_starts[ bsci  ]
+
+                #print(bsci, tind, tnext/60)
+                if self.trial_infos[tind]['vis_feedback_type'] == 'veridical':
+                    assert (bsci > 1) and (bsci < len(self.trial_infos) - 1)
+                    if (self.trial_infos[  block_starts[ bsci + 1 ]  ]['vis_feedback_type'] == 'veridical' ):
+                        # this is really tind-1
+                        if self.trial_infos[block_starts[ bsci - 1 ]]['vis_feedback_type'] == 'veridical':
+                            if self.trial_infos[block_starts[ bsci - 2 ]]['vis_feedback_type'] == 'veridical':
+                                print( np.array(self.trial_infos) [block_starts[bsci - 2 : bsci + 2]] )
+                                raise ValueError('Need to regenerate block sequence, too many veridical in a row to insert a break. Please restart the script')
                         else:
-                            ind = ind - 1
+                            tind = block_starts[ bsci - 1 ] 
                     else:
-                        ind = ind + 1
+                        tind = block_starts[ bsci + 1 ]  
 
-                if abs(ind - len(self.trial_infos) ) < 6:
-                    raise ValueError(f'Need to regenerate block sequence, break is too close to the end ind={ind}')
+                if abs(tind - len(self.trial_infos) ) < 6:
+                    raise ValueError(f'Need to regenerate block sequence, break is too close to the end tind={tind}')
 
-                pre  = self.trial_infos[:ind]
-                # we include entire block that cross boundary in post
-                post = self.trial_infos[ind:]
+                # we include entire block that cross boundary in post, not pre
+                pre  = self.trial_infos[:tind]
+                post = self.trial_infos[tind:]
                 last_pre = pre[-1]
 
                 ins = []
@@ -194,9 +223,22 @@ class VisuoMotorMEG(VisuoMotor):
                 f' Mean block num trials is (almost) = {np.diff(block_starts).mean():.2f}')
 
 
+        tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break'] + [len(self.trial_infos) - 1]
+        difftis_break = np.diff( np.hstack([0, tis_break]) )
+        difftis_break_dur = difftis_break * self.trial_dur_expected
+        print( f'tis_break = {tis_break}, in sec (excl break dur) ={tis_break}')
+        print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
+        assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], f'Too long time distance between breaks: {np.max( difftis_break_dur )} >= {self.params["maxMEGrec_dur"]} '
+
+
     def prepVars(self, insert_breaks = True):
         self.el_tracker = EL_init(self.params['dummy_mode'] )
-        self.edf_file = open_edf_file(self.el_tracker, info)
+
+        import time
+        # this is important to use newly generated time here, because if we reload the task after exiting, we don't want to overwrite edf file
+        self.timestr_hms = time.strftime("%H%M%S")
+        self.edf_file = open_edf_file(self.el_tracker, 
+            self.timestr_hms, self.params)
 
         preamble_text = 'RECORDED BY %s' % os.path.basename(__file__)
         self.el_tracker.sendCommand(f"add_file_preamble_text '{preamble_text}'" )
@@ -204,9 +246,9 @@ class VisuoMotorMEG(VisuoMotor):
 
         EL_config(self.el_tracker, self.params['dummy_mode'])
 
-        self.instuctions_eyelink_calib_str = (f"Pour calibrer eyetracker, appulyez 'e'\n")
+        self.instuctions_eyelink_calib_str = (f"Pour calibrer eyetracker, appuyez 'e'. Sinon appuyez sur un bouton du joystick pour commencer \n")
         #self.phase_after_restart = 'REST'
-        self.phase_after_restart = 'TRAINING_END'
+        self.phase_after_restart = 'TRAINING_END'  # restart W/O relaunch, after break finished normally
         self.first_phase_after_start = 'TRAINING_START'
         self.params['delay_exit_break_after_keypress'] = 0.2 # if first_phase_after_start is REST, we might need it couple of sec
         #self.params['delay_exit_break_after_keypress'] = 3. # if first_phase_after_start is REST, we might need it couple of sec
@@ -228,8 +270,9 @@ class VisuoMotorMEG(VisuoMotor):
                              'EYELINK_CALIBRATION_PRE':20,
                              'EYELINK_CALIBRATION':21,
                              'TASK_INSTRUCTIONS':22,
-                             'KEYPRESS':23,
                               }
+
+        #self.phase2trigger['KEYPRESS'] = 23  # doing this would break backward compat 
 
         self.phase2trigger_inv = dict(zip(self.phase2trigger.values(), self.phase2trigger.keys()))
 
@@ -245,7 +288,6 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_phase = "EYELINK_CALIBRATION_PRE"
 
         self.dummy_eyelink_counter = None  # set to meaningful value when press 'e'
-
 
         # Q do I switch to REST or to ITI from break (currently to REST)?
 
@@ -285,15 +327,19 @@ class VisuoMotorMEG(VisuoMotor):
         if insert_breaks:
             self.insertBreaks()
 
-        # add two ECs to the end
-        ins = []
-        last_pre = self.trial_infos[-1]
-        print(last_pre)
-        dspec = {'vis_feedback_type':'error_clamp', 'tgti':last_pre['tgti'],
-             'trial_type': 'error_clamp',
-            'special_block_type': 'error_clamp_pair', 'block_ind':last_pre['block_ind'] }
-        ins += 2 * [dspec]
-        self.trial_infos = self.trial_infos + ins
+            # add two ECs to the end
+            ins = []
+            last_pre = self.trial_infos[-1]
+            print(last_pre)
+            dspec = {'vis_feedback_type':'error_clamp', 'tgti':last_pre['tgti'],
+                 'trial_type': 'error_clamp',
+                'special_block_type': 'error_clamp_pair', 'block_ind':last_pre['block_ind'] }
+            ins += 2 * [dspec]
+            self.trial_infos = self.trial_infos + ins
+        else:
+            n_pauses = sum( [spec['trial_type'] == 'pause' for spec in self.trial_infos] )
+            n_breaks = sum( [spec['trial_type'] == 'break' for spec in self.trial_infos] )
+            self.n_breaks = n_breaks
 
 
         #######################  test breaks
@@ -314,7 +360,9 @@ class VisuoMotorMEG(VisuoMotor):
 
         phases_trigger_coded = [ 'TRAINING_START', 'TRAINING_END',
             'REST', 'GO_CUE_WAIT_AND_SHOW',
-            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS', 'KEYPRESS' ]
+            'ITI', 'BREAK', 'PAUSE', 'BUTTON_PRESS' ]
+        if 'KEYPRESS' in self.phase2trigger:
+            phases_trigger_coded += ['KEYPRESS']
 
         if self.params['rest_after_return']:
              phases_trigger_coded += ['RETURN']
@@ -327,8 +375,10 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.spec_phases = [ 'BREAK', 'TRAINING_START', 'TRAINING_END', 'PAUSE' ]
         #spec_tt = ['break', 'pause' ]
-        self.spec_tt = {'break':['REST','BREAK', 'BUTTON_PRESS', 'KEYPRESS' ] , 
+        self.spec_tt = {'break':['REST','BREAK', 'BUTTON_PRESS' ] , 
                    'pause':['REST','PAUSE' ] }
+        if 'KEYPRESS' in self.phase2trigger:
+            self.spec_tt += ['KEYPRESS']
 
         # 'TARGET':20, 'FEEDBACK': 35,
 
@@ -371,6 +421,7 @@ class VisuoMotorMEG(VisuoMotor):
         elif sys.platform in ['win32', 'cygwin'] :
             self.jaxcenter =  {'ax1':-0.029, 'ax2':-0.0825} #{'ax1' :0}
 
+
         return CTD_to_export
 
     def __init__(self, info, task_id='',
@@ -379,15 +430,17 @@ class VisuoMotorMEG(VisuoMotor):
         self.initial_time = time.time()
 
         subdir='dataMEG'
+        self.subdir = subdir
         import pickle
+
+        #os.copy( __file__, 
 
         # whether we restart from last or not
         last_fn_base = None
         from utils import getLastInfo, getLastFname
-        
 
         if par['continue_from_last'] is not None:
-            last_fn_base = getLastFname(subdir)
+            last_fn_base = getLastFname(subdir)  # returns full path
 
             if last_fn_base is None:
                 raise ValueError('problem with loading last info')
@@ -396,8 +449,6 @@ class VisuoMotorMEG(VisuoMotor):
 
         if last_fn_base is not None:
             self.filename = last_fn_base
-        
-            
 
             fnf = self.filename + '__params.pkl'
             assert os.path.exists(fnf), fnf
@@ -419,7 +470,7 @@ class VisuoMotorMEG(VisuoMotor):
             self.trial_infos = trial_infos
 
             nread = self.params['FPS'] * self.params['trial_dur_expected'] * 5
-            r = getLastInfo(self.filename, nread)
+            r = getLastInfo(self.filename)
             (last_phase, last_trial_ind, last_trial_block_ind, last_block_first_trial_ind,
                 last_pause, last_block,
                 reward_accrued_before_last_trial, reward_accrued_before_last_block)  = r
@@ -456,6 +507,8 @@ class VisuoMotorMEG(VisuoMotor):
                             parafile_close = 0, subdir=subdir,
                             gen_trial_infos = (last_fn_base is None),
                             init_params = (last_fn_base is None))
+
+
         print(f'arg seed = {seed}', 'params seed = ',self.params['seed'], 'self seed = ',self.seed)
         #self.params['diode_width'] = 500
         assert self.params['trigger_device'] == 'parallel'
@@ -487,14 +540,19 @@ class VisuoMotorMEG(VisuoMotor):
         elif sys.platform in ['win32', 'cygwin'] :
             assert self.use_true_triggers
 
-
-
-
         if par['continue_from_last'] == 'trial':
             self.reward_accrued = reward_accrued_before_last_trial
             self.trial_index = last_trial_ind
 
             print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
+            print( 'trial_info = ', self.trial_infos[self.trial_index] )
+                
+            arfb = self.params.get('allow_restart_from_break', 0)
+            if (not arfb) and (self.trial_infos[self.trial_index]['trial_type'] == 'break'):
+                self.trial_index += 1
+                print('advance trial_index by 1 to avoid starting from break')
+                print( 'trial_info = ',self.trial_infos[self.trial_index] )
+
         elif par['continue_from_last'] == 'block':
             self.reward_accrued = reward_accrued_before_last_block
             self.trial_index = last_block_first_trial_ind
@@ -510,7 +568,18 @@ class VisuoMotorMEG(VisuoMotor):
             self.trial_index = last_break + 1
             print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
 
+        # can be either because we want to continue from break of because last trial happened to be break
+        if self.trial_infos[self.trial_index]['trial_type'] == 'break':
+            print('WARNING: Trying to restart from break') 
+            self.free_from_break = 0
+            self.restarted_from_break = 1
+        else:
+            self.restarted_from_break = 0
+
+        self.filename_restared_from = None
         if last_fn_base is not None:
+            self.filename_restared_from = last_fn_base
+
             if self.trial_index >= self.params['num_training']:
                 self.phase_after_restart     = 'TRAINING_END'
                 self.first_phase_after_start = 'TRAINING_END'
@@ -526,6 +595,12 @@ class VisuoMotorMEG(VisuoMotor):
                 self.phase2text['TRAINING_END_AFTER_BREAK': 'La tâche recommence maintenant']
 
         if last_fn_base is None:
+            # we need params inited
+            import shutil
+            newfnf = pjoin(self.subdir, os.path.splitext(os.path.split(__file__)[1])[0] )
+            newfnf += f'_{self.timestr}.py'
+            shutil.copyfile( __file__, newfnf )
+
             import json
             s = json.dumps(CTD_to_export, indent=4)
             self.paramfile.write( '# CTD_to_export \n' )
@@ -573,6 +648,14 @@ class VisuoMotorMEG(VisuoMotor):
             with open(fnf, 'wb') as f:
                 #json.dump(list( enumerate(self.trial_infos) ) , f, indent = 4)
                 pickle.dump( self.phase2trigger_inv, f )
+
+        ntexit = info.get('exit_after_ntrials', None)
+        if ntexit is not None:
+            print(f'Cropping at {ntexit}')
+            self.trial_infos = self.trial_infos[:ntexit]
+
+        self.current_log = []
+        self.loglines_to_flush = []
 
 
     def send_trigger(self, value, add_info = None, send_nonzero = False):
@@ -993,7 +1076,8 @@ class VisuoMotorMEG(VisuoMotor):
             diode_height = self.params['diode_height']
 
             if show_diode:
-                pygame.draw.rect(self._display_surf, self.color_photodiode,
+                pygame.draw.rect(self._display_surf, 
+                                 self.color_photodiode,
                                 (0, 0, diode_width, diode_height), 0)
                 #from psychopy import visual
                 #Pixel = visual.Rect(
@@ -1007,11 +1091,23 @@ class VisuoMotorMEG(VisuoMotor):
         else:
             if self.current_phase == 'EYELINK_CALIBRATION':
                 # we do some stuff in on_render because update vars is not called before the task is started
-                if self.trial_index > 0:
-                    assert self.trial_infos[self.trial_index]['trial_type'] == 'break'
-                    phase_after_calib = 'BREAK'
-                else:
+
+                if (self.trial_index == 0):
                     phase_after_calib = 'TASK_INSTRUCTIONS'
+                # recalib during break (with relaunch)
+                elif (self.trial_index > 0) and (self.filename_restared_from is not None):
+                    # relaunch from break
+                    if self.trial_infos[self.trial_index]['trial_type'] == 'break' :
+                        #self.trial_infos[self.trial_index]:
+                        phase_after_calib = 'BREAK'
+                    # relaunch from regular trial
+                    else:
+                        phase_after_calib = 'TRAINING_END'
+                # recalib during break (without relaunch)
+                elif (self.trial_index > 0) and (self.filename_restared_from is None):
+                        phase_after_calib = 'BREAK'
+                else:
+                    raise ValueError('something bad')
                 # TODO: I am not sure if fullscreen here should be this or 
                 # I have to actually check whether I am fullscreen or not
                 if self.params['dummy_mode']:
@@ -1029,6 +1125,8 @@ class VisuoMotorMEG(VisuoMotor):
                     self.current_phase = phase_after_calib 
                 if self.current_phase != 'EYELINK_CALIBRATION':
                     print('Phase after eyelink calibration = ',self.current_phase)
+                    if self.current_phase != "TASK_INSTRUCTIONS":
+                        self.restartTask(very_first = 1, phase=self.current_phase)
             elif self.current_phase in self.phase2dir:
                 self.calibJoystick()
             elif self.current_phase == "TASK_INSTRUCTIONS":
@@ -1171,6 +1269,8 @@ class VisuoMotorMEG(VisuoMotor):
                 self.current_phase = self.first_phase_after_start
             else:
                 self.current_phase = self.phase_after_restart 
+        else:
+            self.current_phase = phase
 
         ct = time.time()
         self.phase_start_times[self.current_phase] = ct
@@ -1202,7 +1302,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         if self.current_phase in [self.phase_after_restart, self.first_phase_after_start]:
             self.send_trigger_cur_trial_info()  # this way it will be send right after MEG start trigger. Maybe it is not good
-            print('after sendin cur trial info trigger ' ,time.time() - self.initial_time )
+            print('after sending cur trial info trigger ' ,time.time() - self.initial_time )
 
         # arguments: sample_to_file, events_to_file, sample_over_link,
         # event_over_link (1-yes, 0-no)
@@ -1222,7 +1322,7 @@ class VisuoMotorMEG(VisuoMotor):
         except RuntimeError as error:
             print("Eyelink ERROR:", error)
             EL_disconnect(self.el_tracker, self.edf_file, 
-                          self.subject_id, self.params['dummy_mode'])
+                          self.filename, self.params['dummy_mode'])
 
 
     def test_stopped(self, stop_rad_px = 3):
@@ -1933,8 +2033,10 @@ class VisuoMotorMEG(VisuoMotor):
         if (self.task_started == 2):
             return
         ti = self.trial_infos[self.trial_index]
-        # prepare one log line
+        # otherwise we'll clear it only after flush
         self.current_log = []
+
+        # prepare one log line
         self.current_log.append(self.trial_index)
         self.current_log.append(self.current_phase_trigger)
         self.current_log.append(self.tgti_to_show) #target index
@@ -1973,8 +2075,8 @@ class VisuoMotorMEG(VisuoMotor):
             self.current_log.append(ax1)
             self.current_log.append(ax2)
         else:
-            self.current_log.append(-1)
-            self.current_log.append(-1)
+            self.current_log.append(-10)
+            self.current_log.append(-10)
 
         self.current_log.append(self.reward)
 
@@ -1985,6 +2087,8 @@ class VisuoMotorMEG(VisuoMotor):
 
         self.current_log.append(self.current_time - self.initial_time)
         self.current_log.append(self.current_time)
+        #self.current_log.append('\n')
+        self.loglines_to_flush += [ ",".join(str(x) for x in self.current_log) + '\n' ]
 
         if self.params['flush_log_freq'] == 'every_frame':
             self.log_flush()
@@ -1994,7 +2098,11 @@ class VisuoMotorMEG(VisuoMotor):
     def log_flush(self):
         if self.debug:
             print('Logfile flushed')
-        self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
+        #self.logfile.write(",".join(str(x) for x in self.current_log) + '\n')
+        #self.logfile.write("".join(self.loglines_to_flush ) )
+        self.logfile.writelines(self.loglines_to_flush )
+        self.current_log = []
+        self.loglines_to_flush = []
 
     def on_cleanup(self, exit_type):
         '''
@@ -2021,7 +2129,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         EL_abort(self.el_tracker)
         EL_disconnect(self.el_tracker, self.edf_file, 
-                       self.subject_id, self.params['dummy_mode'])
+                       self.filename, self.params['dummy_mode'])
         pygame.quit()
         exit()
 
@@ -2035,6 +2143,7 @@ class VisuoMotorMEG(VisuoMotor):
                 print('on_event: ',event)
 
         if event.type in [ pygame.JOYBUTTONDOWN, pygame.MOUSEBUTTONDOWN  ]:
+            #event.type for mouse button press is 1025
             self.send_trigger(self.phase2trigger['BUTTON_PRESS'], 
                               add_info = {'event.type': event.type }  )
 
@@ -2052,15 +2161,23 @@ class VisuoMotorMEG(VisuoMotor):
                 # otherwise triggers will overlap
                 if not self.params['dummy_mode']:
                     pygame.time.wait( int( 1000  ) )
-                self.restartTask(very_first = 1)
+
+                if self.restarted_from_break:
+                    phase = 'BREAK'
+                else:
+                    phase = self.first_phase_after_start
+                self.restartTask(very_first = 1, phase=phase)
             # if task was started and a button was pressed, release break
             else:
                 self.moveHome()
                 self.free_from_break = 0
 
         if event.type == pygame.KEYDOWN:
-            self.send_trigger(self.phase2trigger['KEYPRESS'], 
-                              add_info = {'event.type': event.type,
+            if 'KEYPRESS' in self.phase2trigger:
+                trg = self.phase2trigger['KEYPRESS']
+            else:
+                trg = self.phase2trigger['BUTTON_PRESS']
+            self.send_trigger(trg, add_info = {'event.type': event.type,
                                           'event.key': event.key, 
                                           'keyname': pygame.key.name(event.key)  } )
 
@@ -2095,7 +2212,8 @@ class VisuoMotorMEG(VisuoMotor):
                 self.free_from_break = 1
                 print('Debug restart task by key')
                 self.restartTask(very_first = 1, phase = self.first_phase_after_start)
-            # release from break
+
+            # release from break during the normal function of the task (no relaunch of the program)
             if (event.key == pygame.K_g) and (not self.free_from_break):
                 self.free_from_break = 1
                 self._display_surf.fill(self.color_bg) # need to be here beacause
@@ -2219,6 +2337,9 @@ if __name__ == "__main__":
     parser.add_argument('--maxMEGrec_dur',  type=float)
 
     parser.add_argument('--continue_from_last', default=None, type=str)
+
+    parser.add_argument('--exit_after_ntrials', default=None, type=int)
+    parser.add_argument('--flush_log_freq', type=str)
  
     args = parser.parse_args()
     par = vars(args)

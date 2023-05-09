@@ -23,25 +23,26 @@ def EL_init(dummy_mode):
 
     return el_tracker
 
-def open_edf_file(el_tracker, info):
+def open_edf_file(el_tracker, fn_suffix, params):
     """Open an EDF data file on the Host PC"""
 
-    subj = info['participant']
-    s = ''
-    if len(subj) and ( subj != 'Dmitrii_test' ):
-        print(subj)
-        nn = 4
-        if len(subj) > nn:
-            subjN = subj[:-nn]
-        else:
-            subjN = subj
-        assert subj.isalnum()
-    else:
-        subjN = ''
-    edf_file = f"EL_{subjN}_{s}.edf"
+    edf_file = f'cc{fn_suffix}.edf'
+
+    #subj = info['participant']
+    #s = ''
+    #if len(subj) and ( subj != 'Dmitrii_test' ):
+    #    print(subj)
+    #    nn = 4
+    #    if len(subj) > nn:
+    #        subjN = subj[:-nn]
+    #    else:
+    #        subjN = subj
+    #    assert subj.isalnum()
+    #else:
+    #    subjN = ''
+    #edf_file = f"EL{subjN}_{s}.edf"
     #maxlen = 8
     #assert len(edf_file) < maxlen
-
 
     print(f'open_edf_file: using file {edf_file}')
     #edf_file = f"eyelink_dat_{subj}_{self.settings.current_session}.edf"
@@ -55,10 +56,14 @@ def open_edf_file(el_tracker, info):
             el_tracker.close()
         pygame.quit()
         sys.exit()
+
+    subj = params['subject']
     
     preamble_text = 'SUBJECT ID: %s' % subj
     el_tracker.sendCommand(
         "add_file_preamble_text '%s'" % preamble_text)
+
+    return edf_file
 
 def EL_config(el_tracker, dummy_mode):
     """ Configure the tracker"""
@@ -258,7 +263,7 @@ def EL_abort(el_tracker):
         pylink.pumpDelay(100)
         el_tracker.stopRecording()
 
-def EL_disconnect(el_tracker,  edf_file, subj, dummy_mode):
+def EL_disconnect(el_tracker,  edf_file, fnf_noext, dummy_mode):
     print('EL_disconnect')
     if dummy_mode:
         return
@@ -283,7 +288,7 @@ def EL_disconnect(el_tracker,  edf_file, subj, dummy_mode):
         # Download the EDF data file from the Host PC to a local data folder
         # parameters: source_file_on_the_host, destination_file_on_local_drive
         import os
-        local_edf = os.path.join("results", "%s.edf" % subj)
+        local_edf = fnf_noext + ".edf"
         try:
             el_tracker.receiveDataFile(edf_file, local_edf)
         except RuntimeError as error:

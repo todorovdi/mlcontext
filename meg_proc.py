@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 
-def events2df(events, info, dat_time, trigger2phase, CONTEXT_TRIGGER_DICT, restmintime):
+def events2df(events, info, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_DICT, restmintime):
     dfev = pd.DataFrame(events, columns=['nsample', 'prev_trigger', 'trigger' ]  )
     CONTEXT_TRIGGER_DICT_inv = dict(zip(CONTEXT_TRIGGER_DICT.values(), CONTEXT_TRIGGER_DICT.keys()))
     def f(row): 
@@ -77,6 +77,58 @@ def events2df(events, info, dat_time, trigger2phase, CONTEXT_TRIGGER_DICT, restm
     c =(ph == 'TRAINING_END') | crest  #| (ph == 'PAUSE') | (ph == 'BREAK')
     print(np.sum(c))
     dfev['trial_index'] = c.cumsum() #- 1
+
+    #######################
+
+    # take first time we start movement from the point of view of dfev, 
+    # take the value of the diode right before and in the middle of the mvt
+    safe_delay = 200
+    # we really need to use 'time' (which is raw.times basically) for time_as_index to work
+    inds = raw.time_as_index(mvt_starts_megtrig['time'] - safe_delay)
+    diode_pos = diode[0, inds]
+
+    safe_delay2 = params['time_feedback'] / 2
+    inds2 = raw.time_as_index(mvt_starts_megtrig['time'] + safe_delay2)
+    diode_neg = diode[0, inds2]
+
+    med = np.mean([ np.mean(diode_neg), np.mean(diode_pos)] )
+    print('med = ', med)
+
+
+    dfdi = pd.DataFrame({'diode':dat_diode[0], 'times': times} )
+    #med = dfdi['diode'].median()
+    #med = - 0.18 # MAY NEED TO BE TUNED MANUALLY! or I have to use info from dfev
+    dfdi['diode_neg'] = dfdi['diode'] < med
+    dfdi['diode_neg_csr'] = (dfdi['diode_neg'] != dfdi['diode_neg'].shift(1)) .cumsum()
+
+    #############
+
+
+    dfdi['time_since_first_REST'] = dat_time[0] - restmintime_meg
+    grp = dfdi.query('diode_neg == True').groupby('diode_neg_csr')
+    dfdisz = grp.size() 
+    dfmvtdur_di = dfdisz / raw.info['sfreq']
+    display('Mvt dur from diode ' ,dfmvtdur_di.describe())
+
+    ###################
+    # times when diode changed from off to on, first occurence
+    ts_di = grp.min('time_since_first_REST')['time_mmvt_starts_megtrigegchan'].values
+
+    # times when diode changed from ON to OFF, first occurence
+    ts_di_off = grp.max('time_since_first_REST') #+ 1/raw.info['sfreq']
+    ts_di_off['time_since_first_REST'] += 1/raw.info['sfreq']
+
+    ts_ev = mvt_starts_megtrig['time_since_first_REST'].values
+    ts_diev_diff = ts_di - ts_ev
+    print('max,min,mean = ', np.max(ts_diev_diff), np.min(ts_diev_diff), np.mean(ts_diev_diff) )
+
+    #################
+    dfev['time_since_first_REST_diode'] = np.nan
+    dfev.loc[mvt_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di
+    dfev.loc[iti_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di_off
+
+
+    ########################
     
     return dfev
 
