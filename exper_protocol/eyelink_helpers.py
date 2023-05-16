@@ -292,7 +292,7 @@ def EL_disconnect(el_tracker,  edf_file, fnf_noext, dummy_mode):
         try:
             el_tracker.receiveDataFile(edf_file, local_edf)
         except RuntimeError as error:
-            print('ERROR:', error)
+            print('ERROR:', error, edf_file, local_edf )
 
         # Close the link to the tracker.
         el_tracker.close()

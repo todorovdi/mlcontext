@@ -2,7 +2,9 @@ import pandas as pd
 import numpy as np
 
 
-def events2df(events, info, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_DICT, restmintime):
+def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_DICT, 
+              params, restmintime):
+    assert isinstance(params, dict)
     dfev = pd.DataFrame(events, columns=['nsample', 'prev_trigger', 'trigger' ]  )
     CONTEXT_TRIGGER_DICT_inv = dict(zip(CONTEXT_TRIGGER_DICT.values(), CONTEXT_TRIGGER_DICT.keys()))
     def f(row): 
@@ -23,7 +25,7 @@ def events2df(events, info, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_
     # this is 'naive time', when MEG is restarted (i.e. when multiple raws are concatenated)
     # it won't show any big difference between consequtive time values
     # in particular it will be inconsistent with the time values from the log
-    dfev['time'] = dfev['nsample'] / info['sfreq'] 
+    dfev['time'] = dfev['nsample'] / raw.info['sfreq'] 
 
     #### define better times
     dfev['time_megchan'] = dat_time[0,dfev['nsample']]
@@ -80,22 +82,26 @@ def events2df(events, info, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_
 
     #######################
 
+    #mvt_starts = df.query('phase == "TARGET_AND_FEEDBACK"').groupby('trial_index').min('time')
+    mvt_starts_megtrig = dfev.query('phase == "TARGET_AND_FEEDBACK"')
+
     # take first time we start movement from the point of view of dfev, 
     # take the value of the diode right before and in the middle of the mvt
     safe_delay = 200
     # we really need to use 'time' (which is raw.times basically) for time_as_index to work
     inds = raw.time_as_index(mvt_starts_megtrig['time'] - safe_delay)
-    diode_pos = diode[0, inds]
+    diode_pos = dat_diode[0, inds]
 
     safe_delay2 = params['time_feedback'] / 2
     inds2 = raw.time_as_index(mvt_starts_megtrig['time'] + safe_delay2)
-    diode_neg = diode[0, inds2]
+    diode_neg = dat_diode[0, inds2]
 
-    med = np.mean([ np.mean(diode_neg), np.mean(diode_pos)] )
-    print('med = ', med)
+    diode_extremes = [ np.mean(diode_neg), np.mean(diode_pos)]
+    med = np.mean(diode_extremes )
+    print('diode med = ', med, ' extremes ',diode_extremes)
 
 
-    dfdi = pd.DataFrame({'diode':dat_diode[0], 'times': times} )
+    dfdi = pd.DataFrame({'diode':dat_diode[0], 'times': raw.times} )
     #med = dfdi['diode'].median()
     #med = - 0.18 # MAY NEED TO BE TUNED MANUALLY! or I have to use info from dfev
     dfdi['diode_neg'] = dfdi['diode'] < med
@@ -112,20 +118,27 @@ def events2df(events, info, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_
 
     ###################
     # times when diode changed from off to on, first occurence
-    ts_di = grp.min('time_since_first_REST')['time_mmvt_starts_megtrigegchan'].values
+    ts_di = grp.min('time_since_first_REST')['time_since_first_REST'].values
+    #ts_di = grp.min('time_since_first_REST')['time_mvt_starts_megtrigchan'].values
 
     # times when diode changed from ON to OFF, first occurence
     ts_di_off = grp.max('time_since_first_REST') #+ 1/raw.info['sfreq']
     ts_di_off['time_since_first_REST'] += 1/raw.info['sfreq']
 
-    ts_ev = mvt_starts_megtrig['time_since_first_REST'].values
-    ts_diev_diff = ts_di - ts_ev
-    print('max,min,mean = ', np.max(ts_diev_diff), np.min(ts_diev_diff), np.mean(ts_diev_diff) )
 
-    #################
-    dfev['time_since_first_REST_diode'] = np.nan
-    dfev.loc[mvt_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di
-    dfev.loc[iti_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di_off
+    ts_ev = mvt_starts_megtrig['time_since_first_REST'].values
+
+    if len(ts_di) ==  len(ts_ev):
+        ts_diev_diff = ts_di - ts_ev
+        print('max,min,mean = ', np.max(ts_diev_diff), np.min(ts_diev_diff), np.mean(ts_diev_diff) )
+
+        #################
+        dfev['time_since_first_REST_diode'] = np.nan
+        dfev.loc[mvt_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di
+        dfev.loc[iti_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di_off
+    else:
+        print(f'WARNING: number of diod switches {(len(ts_di))} not equals number of triggers of start of movement {len(ts_ev)}')
+        print('Therefore cannot set time_since_first_REST_diode column')
 
 
     ########################

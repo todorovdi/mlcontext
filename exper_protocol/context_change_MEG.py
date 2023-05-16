@@ -657,6 +657,11 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_log = []
         self.loglines_to_flush = []
 
+        if (self.use_true_triggers):
+
+            # very first trigger
+            self.send_trigger(0)
+
 
     def send_trigger(self, value, add_info = None, send_nonzero = False):
         # We block it if it has sent something already
@@ -863,10 +868,11 @@ class VisuoMotorMEG(VisuoMotor):
                 #with open(fnf, 'w') as f:
                 #    f.writelines(perfstrs )
 
-                self.logfile.write('\n\n' )
+                self.loglines_to_flush += ['#\n#\n']
                 monetary_value_tot = self.reward_accrued * self.reward2EUR_coef # without rounding!
                 perfstrs[-1] = perfstrs[-1] + f'; reward_accrued={self.reward_accrued}; monetary_value_tot={monetary_value_tot}'
-                self.logfile.write(";".join(perfstrs) )
+                self.loglines_to_flush += ['#' + ";".join(perfstrs) ]
+                self.log_flush()
 
             self.drawTextMultiline( endstrs + [''] + perfstrs,
                                    font = self.myfont_popup,
@@ -2053,7 +2059,9 @@ class VisuoMotorMEG(VisuoMotor):
         self.current_log.append(self.unpert_feedbackY)
         self.current_log.append(self.error_distance)  # Euclidean distance
 
-        tx,ty = self.target_coords[self.tgti_to_show]
+        tx,ty = -100000, -100000
+        if self.tgti_to_show is not None:
+            tx,ty = self.target_coords[self.tgti_to_show]
         self.current_log.append(tx)
         self.current_log.append(ty)
 

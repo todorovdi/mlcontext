@@ -37,9 +37,12 @@ qs_notspec = ('trial_index > @numtrain '
 
 qs_notEC = ('trial_index > @numtrain and trial_type != "error_clamp"')
 
-
 qs_notspec_not_afterspec = ('trial_index > @numtrain and trial_type != "error_clamp"'
                    ' and prev_trial_type not in @spectrials')
+
+qs_easy0 = '(vis_feedback_type == "veridical" and tgti_to_show == 1)'
+qs_easy1 = '(tgti_to_show == 2 and vis_feedback_type == "rot-20")'
+qs_easy2 = '(tgti_to_show == 0 and vis_feedback_type == "rot20")'
 
 canonical_context_pair_listnames = ['both_close','some_close','tgt_close',
     'pert_close','pert_same','tgt_same']
@@ -76,7 +79,7 @@ def genCtxPairLists(dfcc):
             ctx_pairs_both_close += [pair]
         if tc or pc:
             ctx_pairs_some_close += [pair]
-        
+
     canonical_context_pair_lists = dict(zip(canonical_context_pair_listnames,
     [ctx_pairs_both_close, ctx_pairs_some_close, ctx_pairs_tgt_close ,
     ctx_pairs_pert_close, ctx_pairs_pert_same, ctx_pairs_tgt_same] ))
@@ -90,7 +93,7 @@ def getCtxPairProps(ctxpair, canonical_context_pair_lists):
             if ctxpair is None:
                 r[ln] = None
             else:
-                r[ln] = ctxpair in canonical_context_pair_lists[ln]            
+                r[ln] = ctxpair in canonical_context_pair_lists[ln]
         return r
     elif isinstance(ctxpair, Iterable):
         r = []
@@ -99,12 +102,39 @@ def getCtxPairProps(ctxpair, canonical_context_pair_lists):
             r += [ getCtxPairProps(rr, canonical_context_pair_lists) ]
         return pd.DataFrame(r)
 
+def getAllValidDsnames( d ):
+    from glob import glob
+    from pathlib import Path
+    exclude = ['009', '010']
+    exclude += ['2023-SE1-020_context_change_20230502_141402'] # just was stopped after training
+    fnbs = []
+    for fnf in sorted( glob(d + '2023-SE1-0*[0-9].log') ):
+        name = Path(fnf).name
+        skip = 0
+        for excl in exclude:
+            if name.find(excl) >= 0:
+                skip = 1
+        if skip:
+            continue
+        fnb = name.replace('.log','')
+        #print( f'"{fnb}",' )
+        fnbs += [fnb]
+        
+    fnbs += ['2023-SE1-pilot3_context_change_20230317_105210']
+
+    # check no repeats
+    import re
+    snums=list(sorted( re.findall(r'SE1-0(\d+)_context', '_'.join(fnbs)) ) )
+    assert len(snums) == len(set( snums ) )
+
+    return fnbs
+
 # otherwise we get too many. We need reset_index having been already applied
 def setContextSimilarityCols(dftmp, canonical_context_pair_lists):
     assert np.sum( dftmp.index.duplicated() )  == 0
-    mx = dftmp.groupby(['subject','trial_index']).size().max() 
+    mx = dftmp.groupby(['subject','trial_index']).size().max()
     assert mx == 1, mx
-    
+
     subjects = dftmp['subject'].unique()
 
     pref = 'prev_ctx_'
@@ -130,11 +160,11 @@ def setContextSimilarityCols(dftmp, canonical_context_pair_lists):
 
         pair_props = getCtxPairProps(ctx_pairs, canonical_context_pair_lists)
         for ln in canonical_context_pair_listnames:
-            dftmp.loc[inds, pref + ln] = pair_props[ln].to_numpy() 
-            
+            dftmp.loc[inds, pref + ln] = pair_props[ln].to_numpy()
+
         #bs = [False]  + list(bis == prev_bis)
         dftmp.loc[inds, 'prev_block_ind_diff'] = dfcc_tmp['block_ind'] - dfcc_tmp['block_ind'].shift(1)
-        
+
 
 
 
@@ -601,9 +631,10 @@ def getSubDf(df, subj, pertv, tgti, env, block_name=None, pert_seq_code=None,
             df = df[df['subject'] == subj]
     if len(df) == 0 and verbose:
         print('empty after subject')
+        raise ValueError(f'Nothing for subject {subj}')
 
     # not env == 'all'
-    if env is not None:
+    if (env is not None) and ('environment' in df.columns):
         if env in env2envcode:  # make trial inds (within subject)
             # could be str or int codes
             if isinstance(df['environment'].values[0], str):
@@ -671,6 +702,77 @@ def plot(df, coln):
     subjects =df['subject'].unique()
     dfc = df.query('subject == @subjects[0]')
 
+def getIdealPath(start, end, lentrunc):
+    dirx, diry = start
+    from scipy.interpolate import interp1d
+    ptinds = np.arange(lentrunc)
+    rh2 = np.sqrt( dirx**2 + diry**2 )
+    coef = rh / rh2
+    dirtgt = (dirtgt0 - fb0pt) * coef + fb0pt
+
+    fxint = interp1d([0, lentrunc-1 ], [dirtgt[0], txc[tgti]], 'linear' )
+    tgtpathX_interp = fxint(ptinds)
+    fyint = interp1d([0, lentrunc-1 ], [dirtgt[1], tyc[tgti]], 'linear' )
+    tgtpathY_interp = fyint(ptinds)
+
+    return np.array(tgtpathX_interp, tgtpathY_interp).T
+
+def analyzeTraj( XY, tgtXY, home_position, radius_home, indlh = None ):
+    # XS.shape = npts x 2
+    from exper_protocol.utils import screen2homec
+    from base2 import rot
+    # often the very first is fully zero
+    skipped0 = False
+    if tuple(XY[0,:] ) == (0,0):
+        print('skip 0 ')
+        XY = XY[1:, :]
+        skipped0 = True
+
+    target_coords_homec = screen2homec( *tgtXY, home_position  )
+    tgtcur = np.array(  list(target_coords_homec), dtype=float)
+
+
+    Xhc, Yhc = screen2homec(XY[:,0], XY[:,1], home_position  )
+    XYhc = np.array( [Xhc, Yhc], dtype=float ).T
+    pt0 = XYhc[0]
+    XYhc_adj = XYhc - pt0[None,:]
+    # angle of target wrt first point of
+    tgtcur_adj = tgtcur - pt0
+    ang_tgt = np.math.atan2(*tuple(tgtcur_adj) )
+
+    # as if target vas pure vertical
+    XYhc_ta = rot( *(XYhc.T), ang_tgt, pt0 )
+    Xhc_ta, Yhc_ta = XYhc_ta
+
+    tgtcur_ta     = rot( *tgtcur, ang_tgt, pt0 )
+
+    rh = radius_home
+    dirx = rh * np.sin(ang_tgt) + pt0[0]
+    diry = rh * np.cos(ang_tgt) + pt0[1]
+    dirtgt0 = np.array( [dirx,diry] )
+
+    dirtgt_ta = rot(*dirtgt0, ang_tgt, pt0) #- pt0[0],0
+    dirtgt_ta[1] = np.sqrt( rh**2 - dirtgt_ta[0]**2 )
+
+    ds = np.sqrt( Xhc**2 + Yhc**2 )
+    leave_home_coef = 1.
+    inds_leavehome = np.where(ds > rh * leave_home_coef )[0]
+    if len(inds_leavehome) and (indlh is None):
+        indlh  = inds_leavehome[0]  # first index when  traj is outside home
+
+
+    if indlh is not None:
+        lh_pt0adj = XYhc[indlh] - pt0
+        # angle from vertical starting at 0 pt
+        ang_lh = np.math.atan2( *lh_pt0adj )
+        error_lh_ang = ( ang_lh - ang_tgt  )
+    else:
+        error_lh_ang = None
+        ang_lh = None
+
+    #return fbXYhc_ta
+    return locals()
+
 #df = getSubDf(df_all, subj, pertv,tgti,env)
 def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc' ):
     #dfs = []
@@ -711,10 +813,12 @@ def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc
     #return subj2qts
 
 
-def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=False,
+def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
                return_mask = False, trialcol = 'trials',
                cols_uniqify = ['trial_shift_size',
-                  'trial_group_col_calc'] ):
+                               'trial_group_col_calc'] , verbose=False , 
+               hi = None, low=None,
+               trunc_hi = True, trunc_low = True, abs=False, retloc=False):
     if not inplace:
         df = df.copy()
 
@@ -722,8 +826,9 @@ def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=F
 
     grp0 = df.groupby([trialcol] + cols_uniqify)
     mx=  max(grp0.size() )
-    assert mx <= df['subject'].nunique()
+    assert mx <= df['subject'].nunique(), mx
 
+    #df = df.set_index( ['subject', trialcol] + cols_uniqify )
     #mask = np.ones(len(df), dtype=bool)
 
     # good
@@ -736,23 +841,39 @@ def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=F
     #    df =  df[ mask ]
     #    mask = np.array(mask)
 
-    if (q is not None) and (q > 1e-10):
+    if  ( (q is not None) and (q > 1e-10) ) or (hi is not None) or (low is not None):
         #gk2qts = calcQuantilesPerESCI(df, coln, q=q)
         df.loc[~mask, coln] = np.nan
-        grp = df.groupby(['subject'] + cols_uniqify)
+        if abs:
+            df_ = df[['subject'] + cols_uniqify + [coln] ].copy()
+            df_[coln] = df_[coln].abs()
+            grp = df_.groupby(['subject'] + cols_uniqify)
+            #grp = grp[coln].apply(lambda x, gk: x.abs(), group_keys=True )
+            #display(grp)
+        else:
+            grp = df.groupby(['subject'] + cols_uniqify)
 
         mgsz = np.max(grp.size() )
         print(  f' np.max(grp.size() )  == {mgsz}')
         assert mgsz <= ntrials_per_subject
 
-        low = grp[coln].quantile(q=q)
-        hi  = grp[coln].quantile(q=1-q)
-        assert not hi.reset_index()[coln].isna().any(), hi
+        if low is None:
+            qlow = grp[coln].quantile(q=q)
+        if hi is None:
+            qhi  = grp[coln].quantile(q=1-q)
+
+            assert not qhi.reset_index()[coln].isna().any(), qhi
 
         dfs = []
         for gk,ginds in grp.groups.items():
 
             dftmp = df.loc[ginds]
+
+            if abs:
+                dftmp_ = df_.loc[ginds]
+                assert dftmp_[coln].min() >= 0
+            else:
+                dftmp_ = dftmp
 
             assert len(ginds) == len(dftmp) , 'perhaps index was not reset after concat'
             #print(len(ginds) )
@@ -761,17 +882,39 @@ def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=F
             #    return gk, ginds, dftmp, grp
             assert len(dftmp) <= ntrials_per_subject,(len(dftmp), ntrials_per_subject)
 
-            lowc = low[gk]
-            hic  = hi[gk]
+            if low is None:
+                lowc = qlow[gk]
+            else:
+                lowc = low
+            if hi is None:
+                hic  = qhi[gk]
+            else:
+                hic = hi
+
+            if verbose:
+                print( 'gk={}, lowc={:.6f}, hic={:.6f}'.format( gk, lowc,hic))
 
             mask_good  =  ~ ( dftmp[coln].isna() | np.isinf( dftmp[coln] ) )
-            mask_trunc = (dftmp[coln] < hic)  & (dftmp[coln] > lowc)
+            #mask_trunc =
+            #mask_trunc = pd.DataFrame(index=dftmp.index, columns=[0], dtype=bool).fillna(True)
+            mask_trunc = pd.Series(index=dftmp.index, dtype=bool)
+            mask_trunc[:] = True
+
+            if trunc_hi:
+                mask_trunc &= (dftmp_[coln] < hic)
+            if trunc_low:
+                mask_trunc &= (dftmp_[coln] > lowc)
+
             if infnan_handling in ['keepnan', 'discard']:
                 mask_bad = (~mask_good) | (~mask_trunc)
             elif infnan_handling == 'do_nothing':
                 mask_bad = (~mask_trunc)
             else:
                 raise ValueError(f'Wrong {infnan_handling}')
+            #display(mask_good)
+            #return
+            #display(mask_bad)
+            #display(dftmp)
             dftmp.loc[mask_bad  , coln ] = np.nan
 
             if np.all( (np.isnan(dftmp[coln]) | np.isinf(dftmp[coln]))  ):
@@ -809,6 +952,8 @@ def truncateDf(df, coln, q=0.05, verbose=0, infnan_handling='keepnan', inplace=F
     r = df
     if return_mask:
         r = df, mask
+    if retloc:
+        r = df, locals()
     return r
 
 
@@ -1265,7 +1410,7 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
         r = line.replace(' ','').replace('\n','').split('=')
         if len(r) != 2:
             print(line, r )
-            lhs = r[0] 
+            lhs = r[0]
             rhs = '='.join(r[1:])
         else:
             lhs,rhs = r
@@ -1298,12 +1443,12 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
             phase2trigs[phase_to_collect] += [v]
         #print(line)
 
-    intpars = ['width','height', 'num_training', 
+    intpars = ['width','height', 'num_training',
                'n_context_appearences']
     for pn in intpars:
         params[pn] = int(params[pn])
 
-    fpars = ['radius_home', 'radius_cursor', 'dist_tgt_from_home', 
+    fpars = ['radius_home', 'radius_cursor', 'dist_tgt_from_home',
              'radius_target', 'FPS', 'time_feedback']
     for pn in fpars:
         params[pn] = float(params[pn])
@@ -1336,20 +1481,100 @@ def getGeomInfo(params):
     return home_position, target_coords
 
 
-
 def row2multierr(row, dfc, grp_perti, home_position, target_coords,
                  params, revert_pert = True,
                  ax = None, axo = None,
                  force_entire_traj=False, addinfo=None, titlecols=[],
                  xlim=(-140,140),
-                 vertline = 'tgt_ta' ):
+                 vertline = 'tgt_ta', calc_area = True ):
+
+    if revert_pert:
+        raise ValueError('in this version -- not impl')
+    if ax is not None:
+        raise ValueError('in this version -- not impl')
+
+    from base2 import rot
+    from exper_protocol.utils import screen2homec
+    ti = row['trial_index']
+    #print(f'trial_index = {ti}')
+    idx = grp_perti.groups[ti]
+    dfcurtr = dfc.loc[idx[1:]]; skipped0 = 1
+
+    # here we want to include zeroth
+    times = dfc.loc[idx, 'time'].to_numpy()
+
+    pert = row['perturbation']
+    le = len(dfcurtr)
+
+    if axo is None and ax is not None:
+        axo = ax
+
+    assert dfcurtr['current_phase_trigger'].min() == dfcurtr['current_phase_trigger'].max()
+
+    target_coords_homec = screen2homec( *tuple(zip(*target_coords)), home_position  )
+    #txc,tyc = target_coords_homec
+    #if np.diff(txc).min() < 0:
+    #    print('inverting x of targets')
+    #    txc = -txc
+    radius_home = float( params['radius_home'])
+    tgtXY = np.array([ row['target_coordX'],row['target_coordY'] ] )
+
+    fbXY = dfcurtr[['feedbackX','feedbackY']].values
+    fb = analyzeTraj( fbXY, tgtXY, home_position,
+                       radius_home, indlh = None )
+    indlh = fb['indlh']
+    ofbXY = dfcurtr[['unpert_feedbackX','unpert_feedbackY']].values
+    ofb = analyzeTraj( ofbXY, tgtXY, home_position,
+                       radius_home, indlh = indlh )
+
+    #curveX, curveY = fbXhc_ta, fbYhc_ta
+    traja2 = None
+    length = None
+    time_lh = None
+    if indlh is not None:
+        if fb['skipped0'] or skipped0:
+            indlh_eff = indlh + 1
+        else:
+            indlh_eff = indlh
+        time_lh = times[indlh_eff]
+        time_lh = time_lh - times[0]
+
+        from base2 import areaOne
+        traja2 = areaOne( *fb['XYhc_ta'] ,
+                fb['dirtgt_ta'], fb['tgtcur_ta'])
+        try:
+            from shapely.geometry import LineString
+            tr = LineString(list( fb['XYhc_ta'].T ))
+            length = tr.length
+        except ImportError as e:
+            length = None
+
+        #fb_ang_lh        = fb['ang_lh']
+        #ofb_ang_lh       = ofb['ang_lh']
+        #fb_error_lh_ang  = fb['error_lh_ang']
+        #ofb_error_lh_ang = ofb['error_lh_ang']
+
+        # num of frames of mvt (frames after leave home)
+        lenmvt =  le - indlh
+        # ideal path for feedback
+        #tgtpathXY_interp = getIdealPath( (dirx,diry), fb['dirtgt0'],
+        #                                lenmvt )
+
+    return locals()
+
+
+def row2multierr_old(row, dfc, grp_perti, home_position, target_coords,
+                 params, revert_pert = True,
+                 ax = None, axo = None,
+                 force_entire_traj=False, addinfo=None, titlecols=[],
+                 xlim=(-140,140),
+                 vertline = 'tgt_ta', calc_area = True ):
     '''
     it reverts answer for neg pert
     row['perturbation'] is only used to decide if we revert or no
     '''
     from base2 import rot
     from exper_protocol.utils import screen2homec
-    from shapely.geometry import LineString
     ti = row['trial_index']
     #print(f'trial_index = {ti}')
     idx = grp_perti.groups[ti]
@@ -1382,15 +1607,33 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
     fbXYhc = np.array( [fbXhc, fbYhc], dtype=float )
 
     fb0pt = np.array( [fbXhc[0], fbYhc[0] ] , dtype=float)
-    tgtcur_adj = tgtcur - fb0pt
+    # shift target by the first point of fb
     fbXYhc_adj = fbXYhc - fb0pt[:,None]
 
+    ofbXY = dfcurtr[['unpert_feedbackX', 'unpert_feedbackY']].to_numpy()
+    ofbXhc, ofbYhc = screen2homec(ofbXY[:,0], ofbXY[:,1], home_position  )
+    ofbXYhc = np.array( [ofbXhc, ofbYhc], dtype=float )
+    ofb0pt = np.array( [ofbXhc[0], ofbYhc[0] ] , dtype=float)
+    ofbXYhc_adj = ofbXYhc - ofb0pt[:,None]
+
+    # angle of target wrt first point of fb
+    tgtcur_adj = tgtcur - fb0pt
     ang_tgt = np.math.atan2(*tuple(tgtcur_adj) )
 
+    # angle of target wrt first point of ofb
+    tgtcur_adj_ofb = tgtcur - ofb0pt
+    ang_tgt_ofb = np.math.atan2(*tuple(tgtcur_adj_ofb) )
+
+    # as if target vas pure vertical
     fbXYhc_ta = rot( *fbXYhc, ang_tgt, fb0pt )
     fbXhc_ta, fbYhc_ta = fbXYhc_ta
 
-    tgtcur_ta = rot( *tgtcur, ang_tgt, fb0pt )
+    # as if target vas pure vertical
+    ofbXYhc_ta = rot( *ofbXYhc, ang_tgt_ofb, ofb0pt )
+    ofbXhc_ta, ofbYhc_ta = ofbXYhc_ta
+
+    tgtcur_ta     = rot( *tgtcur, ang_tgt, fb0pt )
+    tgtcur_ta_ofb = rot( *tgtcur, ang_tgt_ofb, ofb0pt )
 
     rh = float( params['radius_home'])
     dirx = rh * np.sin(ang_tgt) + fb0pt[0]
@@ -1433,15 +1676,13 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         fyint = interp1d([0, lentrunc-1 ], [dirtgt[1], tyc[tgti]], 'linear' )
         tgtpathY_interp = fyint(ptinds)
 
-        #curveX, curveY = rot(fbXhc_ta, fbYhc_ta, ang_tgt)
         curveX, curveY = fbXhc_ta, fbYhc_ta
+        #curveX, curveY = rot(fbXhc_ta, fbYhc_ta, ang_tgt)
 
-        ofbXY = dfcurtr[['unpert_feedbackX', 'unpert_feedbackY']].to_numpy()
-        ofbXhc, ofbYhc = screen2homec(ofbXY[:,0], ofbXY[:,1], home_position  )
-        curveX0, curveY0 = rot(ofbXhc, ofbYhc, ang_tgt)
+        curveX0, curveY0 = rot(ofbXhc, ofbYhc, ang_tgt, ofb0pt)  # ofb ta
 
-        fbXYlh_ta = fbXYhc_ta[:,ind]
-
+        fbXYlh_ta  = fbXYhc_ta[:,ind]
+        ofbXYlh_ta = ofbXYhc_ta[:,ind]
 
         ideal_lh = dirtgt_ta
 
@@ -1453,19 +1694,22 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
             intersections = 'prohibit'
 
 
-        # negative when feedback on the left of the ideal target
-        traja = area(curveX[ind:], curveY[ind:], ideal_lh,
-             tgtcur_ta, xshift = xshift,
-                     verbose=0, ax=ax, plotargs = {'alpha':0.2},
-                     intersections = intersections)
+        traja, traja2, trajoa = None,None,None
+        if calc_area:
+            # negative when feedback on the left of the ideal target
+            traja = area(curveX[ind:], curveY[ind:], ideal_lh,
+                tgtcur_ta, xshift = xshift,
+                        verbose=0, ax=ax, plotargs = {'alpha':0.2},
+                        intersections = intersections)
 
-        from base2 import areaOne
-        traja2 = areaOne(curveX[ind:], curveY[ind:], ideal_lh, tgtcur_ta)
+            from base2 import areaOne
+            # area of the single curve
+            traja2 = areaOne(curveX[ind:], curveY[ind:], ideal_lh, tgtcur_ta)
 
-        trajoa = area(curveX0[ind:], curveY0[ind:], ideal_lh,
-             tgtcur_ta, xshift = xshift,
-                    verbose=0, ax=axo, plotargs = {'alpha':0.2},
-                     intersections = intersections)
+            trajoa = area(curveX0[ind:], curveY0[ind:], ideal_lh,
+                tgtcur_ta_ofb, xshift = xshift,
+                        verbose=0, ax=axo, plotargs = {'alpha':0.2},
+                        intersections = intersections)
 
         #try:
         #    traja = area(fbXhc_ta[ind:], fbYhc_ta[ind:], (0,rh),
@@ -1475,8 +1719,12 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         #    print(f'area: Error for {ti}: {e}')
 
 
-        tr = LineString(list(zip(curveX[ind:], curveY[ind:])) )
-        length = tr.length
+        try:
+            from shapely.geometry import LineString
+            tr = LineString(list(zip(curveX[ind:], curveY[ind:])) )
+            length = tr.length
+        except ImportError as e:
+            length = None
 
         # yes, it should be > 0 to reverse, not < 0.
         if (pert > 0) and revert_pert:
@@ -1494,10 +1742,20 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         error_lh_ang = ( ang_fb_lh - ang_tgt  ) * 180 / np.pi
         #error_lh_ang = -error_lh_ang
 
-        ofb_lh_pt0adj = ofbXhc[ind+0] - fb0pt[0], ofbYhc[ind+0] - fb0pt[1]
+        # calc angle wrt actual target
+        ofb_lh_pt0adj = ofbXYhc[:,ind] - ofb0pt
         ang_ofb_lh = np.math.atan2( *ofb_lh_pt0adj )
         error_unpert_lh_ang = ( ang_ofb_lh - ang_tgt  ) * 180 / np.pi
         #plt.plot(ptinds, fxint(ptinds))
+
+        # FINISHED HERE ON FRIDAY
+        # was trying to print all info to make sure I compute the right thing
+        # for lh angle
+        # doubts on should I rotate (and compute angles)
+        # wrt home center or wrt start position
+        # if I look at angles for ofb_ta they will be already errors (because
+        # rot to true target so that it's vertical. Vertica wrt starting point
+        # of ofb)
 
         ds2 = np.sqrt( (tgtpathX_interp - fbXhc[ind:] )**2 +\
                       (tgtpathY_interp - fbYhc[ind:] )**2 )
@@ -1527,10 +1785,12 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         #enddist2 = np.nan
         error_lh_ang = np.nan
         error_unpert_lh_ang = np.nan
+        ang_fb_lh, ang_tgt, ang_ofb_lh = np.nan,np.nan,np.nan
         ind = 0
 
 
     if ax is not None:
+        plot_ta = 1
         rt = float(params['radius_target'] )
         for tgti_ in range(len(txc) ):
             if tgti_ == tgti:
@@ -1541,8 +1801,9 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         crc = plt.Circle((txc[tgti], tyc[tgti]), rt, color='blue', lw=2, fill=False,
                          alpha=0.6)
         ax.add_patch(crc)
-        ax.scatter( [tgtcur_ta[0]] , [tgtcur_ta[1] ]  ,
-                   s=290, c='blue', alpha=0.5)
+        if plot_ta:
+            ax.scatter( [tgtcur_ta[0]] , [tgtcur_ta[1] ]  ,
+                    s=290, c='blue', alpha=0.5)
 
         ##################
         # nonaligned fb
@@ -1551,11 +1812,28 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
                        marker='+', s = 60, c='r')
 
         # aligned fb
-        ax.scatter(fbXhc_ta[:ind] , fbYhc_ta[:ind] , alpha=0.3, c='r')
-        ax.scatter(fbXhc_ta[ind:] , fbYhc_ta[ind:] , alpha=0.4, c='r', label='fb ta (homec)')
+        if plot_ta:
+            ax.scatter(fbXhc_ta[:ind] , fbYhc_ta[:ind] , alpha=0.3, c='r')
+            ax.scatter(fbXhc_ta[ind:] , fbYhc_ta[ind:] , alpha=0.4, c='r', label='fb ta (homec)')
         # mark black first exit point
         if ind > 0:
-            ax.scatter( [fbXYlh_ta[0]], [fbXYlh_ta[1]] , alpha=0.8, c='k', s= 10)
+            ang_fb_ta_lh = np.math.atan2( *(fbXYlh_ta - fbXYhc_ta[:,0]) )
+            #pt_ = np.array(curveX0[ind], curveY0[ind]) - ofb0pt
+            ang_ofb_ta_lh = np.math.atan2( *(ofbXYlh_ta - ofbXYhc_ta[:,0] ) )
+            #
+            c = (1 / np.pi) * 180
+            if plot_ta:
+                ax.scatter( [fbXYlh_ta[0]], [fbXYlh_ta[1]] , alpha=0.8,
+                           c='k', s= 10, label=f'dir fb ta = {ang_fb_ta_lh*c:.1f}')
+
+                ax.scatter( [curveX0[ind]], [curveY0[ind]] , alpha=0.8,
+                        c='k', s= 10, label=f'dir ofb ta = {ang_ofb_ta_lh*c:.1f}')
+
+            print(f'{ti}, pert={pert} ind={ind}--> tgt={ang_tgt * c:.1f} '
+                f' fblh={ang_fb_lh * c :.1f}, ofblh{ang_ofb_lh * c:.1f}'
+                f' fblhta={ang_fb_ta_lh * c :.1f}, ofblhta={ang_ofb_ta_lh * c:.1f}'
+                f'\n error_lh_ang = {error_lh_ang:.1f}, error_unpert_lh_ang={error_unpert_lh_ang:.1f}' )
+            print(f'   ofbXYhc_ta[0] = {ofbXYhc_ta[:,0]}, fb= {fbXYhc_ta[:,0]}')
 
 
             # nonaligned ofb
@@ -1563,7 +1841,7 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
                        marker='x', s = 30, c='magenta')
 
             # aligned ofb
-            if abs(ang_tgt) > 1e-10:
+            if (abs(ang_tgt) > 1e-10) and (plot_ta):
                 axo.scatter(curveX0[ind:] , curveY0[ind:] , alpha=0.4,
                            label='ofb ta (homec)',
                            marker='*', s = 30, c='magenta')
@@ -1628,7 +1906,9 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
         ax.legend(loc='lower left')
         ax.set_xlim(xlim)
 
-    return err, error_lh_ang, error_unpert_lh_ang, start_dist, traja, traja2, trajoa, td, length,  enddist
+    return (err, error_lh_ang, error_unpert_lh_ang,
+            start_dist, traja, traja2, trajoa, td, length,
+            enddist, ang_fb_lh, ang_tgt, ang_ofb_lh)
 
 def row2multierr_test(home_position, target_coords, params,
                       test_type = 'ideal_traj',
@@ -1765,11 +2045,15 @@ def row2multierr_test(home_position, target_coords, params,
             calc_area = False, show_dist_guides = False, verbose=0,
                  force_entire_traj=False, addinfo=None)
 
-    r = row2multierr(row, dfc, grp_perti, home_position, target_coords,
+    r = row2multierr_old(row, dfc, grp_perti, home_position, target_coords,
                  params, revert_pert = False )
     z = zip( ['err', 'error_lh_ang', 'error_unpert_lh_ang', 'start_dist',
               'traja', 'traja2', 'trajoa', 'td',
         'length',  'enddist'], r)
+
+    angvars = ['ang_lh', 'error_lh_ang' ]
+    c = 180 / np.pi
+
     d = dict(z)
     for k,v in d.items():
         print(f'{k} = {v:.2f}' )
@@ -1793,27 +2077,51 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
 
 
     def f(row):
-        return row2multierr(row, dfc, grp_perti, home_position,
+        locs = row2multierr(row, dfc, grp_perti, home_position,
             target_coords, params, revert_pert = revert_pert)
-    dfcc[['error_intdist2_nn', 'error_lh_ang', 'error_unpert_lh_ang',
-          'error_distance_lh',
-      'error_area_signed_nn','error_area2_signed_nn', 'error_area_ofb_signed_nn',
-          'time_lh', 'traj_length',
-     'enddist']] = dfcc.apply(lambda x: f(x) ,1, result_type='expand')
+        fb  = locs['fb']
+        ofb = locs['ofb']
+        r = (fb['error_lh_ang'], ofb['error_lh_ang'],
+            fb['ang_lh'], ofb['ang_lh'],
+            locs['traja2'],
+             locs['length'], locs['time_lh'],
+             fb['ang_tgt'] )
+        del locs
+
+        return r
+
+    dfcc[['error_lh_ang', 'error_unpert_lh_ang',
+          'ang_fb_lh', 'ang_ofb_lh',
+      'error_area2_signed_nn', 
+          'traj_length', 'time_lh', 
+          'ang_tgt']] =\
+        dfcc.apply(lambda x: f(x) ,1, result_type='expand')
+
+
+    #def f(row):
+    #    r = row2multierr_old(row, dfc, grp_perti, home_position,
+    #        target_coords, params, revert_pert = revert_pert)
+    #    return r
+    #dfcc[['error_intdist2_nn', 'error_lh_ang', 'error_unpert_lh_ang',
+    #      'error_distance_lh',
+    #  'error_area_signed_nn','error_area2_signed_nn', 'error_area_ofb_signed_nn',
+    #      'time_lh', 'traj_length', 'enddist','ang_fb_lh',
+    #      'ang_tgt', 'ang_ofb_lh']] =\
+    #    dfcc.apply(lambda x: f(x) ,1, result_type='expand')
 
     from base2 import calcNormCoefSectorArea
     norm_coef =  calcNormCoefSectorArea(params)
 
-    dfcc['error_area_signed_nn' ]      *= norm_coef
-    dfcc['error_area2_signed_nn' ]      *= norm_coef
-    dfcc['error_area_ofb_signed_nn' ]  *= norm_coef
+    #dfcc['error_area_signed_nn' ]      *= norm_coef
+    #dfcc['error_area_ofb_signed_nn' ]  *= norm_coef
+    dfcc['error_area2_signed_nn' ]     *= norm_coef
 
     #def f(row, normalize):
     #    return row2multierr(row, dfc, grp_perti, home_position,
     #                 target_coords, params, normalize, curve_for_area_calc='org_feedback')
     #dfcc['error_area_ofb_signed_nn'] = dfcc.apply(lambda x: f(x, True)[2] ,1)
 
-    ####################################
+    ############### calc movement time, not counting time after reaching target
 
     des_time = 30 * 1e-3
     frame = 1 / float( params['FPS'] )
@@ -1825,6 +2133,8 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
     #dfcc.loc[dfcc['nonhit'], 'time_mvt']  = float(params['time_feedback'] ) - dfcc.loc[dfcc['nonhit'], 'time_lh']
     for rowi, row in dfcc.iterrows():
         if row['nonhit']:
+            # TODO: has to be updated for MEG task, since
+            # time of mvt is controlled differently there
             time_mvt = float(params['time_feedback']) - row['time_lh']
         else:
         #dfr = dfc_all.query('subject == @subjects[0] and trial_index == @ti')
@@ -1850,13 +2160,13 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
     ####################################
 
 
-    dfcc['error_intdist2'] = dfcc['error_intdist2_nn'] / dfcc['time_mvt']
-    dfcc['error_area_signed'] = dfcc['error_area_signed_nn'] / dfcc['time_mvt']
+    #dfcc['error_intdist2'] = dfcc['error_intdist2_nn'] / dfcc['time_mvt']
+    #dfcc['error_area_signed'] = dfcc['error_area_signed_nn'] / dfcc['time_mvt']
     dfcc['error_area2_signed'] = dfcc['error_area2_signed_nn'] / dfcc['time_mvt']
-    dfcc['error_area_ofb_signed'] = dfcc['error_area_ofb_signed_nn'] / dfcc['time_mvt']
+    #dfcc['error_area_ofb_signed'] = dfcc['error_area_ofb_signed_nn'] / dfcc['time_mvt']
 
-    coef_endpt_err  = 0.5
-    dfcc['error_aug2'] = dfcc['error_intdist2'] + coef_endpt_err * dfcc['error_distance']
+    #coef_endpt_err  = 0.5
+    #dfcc['error_aug2'] = dfcc['error_intdist2'] + coef_endpt_err * dfcc['error_distance']
 
     trajlen_ideal = params['dist_tgt_from_home']  - \
             float(params['radius_home'] ) - float(params['radius_target'] )
@@ -1912,8 +2222,8 @@ def printPretrialMistakesDiag(df, params):
     nframes_normal = np.min(szrest) + 1
     print(f'for {ph} nframes_normal = ',nframes_normal)
 
-    # on which trials participant left home during REST or had to adjust position 
-    # in the beginning of the trial to return to rest? 
+    # on which trials participant left home during REST or had to adjust position
+    # in the beginning of the trial to return to rest?
     print( szrest[szrest> nframes_normal] / float(params['FPS']) )
 
     return dfsz
@@ -1931,9 +2241,9 @@ def set_streaks(df, inds = None, inplace=True):
         df_ = df.loc[inds]
     else:
         df_ = df
-    
+
     #df_['subphase_relation'] = 'middle'
-    ph = df_['phase'] 
+    ph = df_['phase']
     #assert np.sum(rest_mask) > 0
 
     csr = (ph != ph.shift()).cumsum()
@@ -1942,23 +2252,24 @@ def set_streaks(df, inds = None, inplace=True):
     number_of_rest_streaks = len( df_.groupby(csr).first() )#.query('phase == "REST"') )
     #print(number_of_rest_streaks)
 
-    firstis = csr.to_frame().reset_index().groupby('phase').first()['index'].values  # first ind of 
-    lastis = csr.to_frame().reset_index().groupby('phase').last()['index'].values  # first ind of 
+    firstis = csr.to_frame().reset_index().groupby('phase').first()['index'].values  # first ind of
+    lastis = csr.to_frame().reset_index().groupby('phase').last()['index'].values  # first ind of
 
     df.loc[firstis,'subphase_relation'] = 'first'
     df.loc[lastis, 'subphase_relation'] = 'last'
     #display(df_.loc[firstis, ['phase','csr','subphase_relation']])
-    
+
     # useful to choose last streak of REST or GO_CUE
     df['csr_neg_within_trial'] = df['csr'] - df.groupby('trial_index')['csr'].transform('max')
     #df_.drop(labels=['csr'],axis=1)
     return df, list(zip(firstis,lastis))
 
-def aggRows(df, coln_time, operation, grp = None, coltake='corresp', 
+def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
             colgrp = 'trial_index' ):
     # coln_time = 'time'
     assert operation in ['min','max']
-    assert df[coln_time].diff().min() >= 0  # need monotnicity
+    diffmin = df[coln_time].diff().min()
+    assert diffmin >= 0, diffmin  # need monotnicity
     assert coltake is not None
 
     if grp is None:
@@ -1999,7 +2310,7 @@ def compareTriggers(df, dfev, dftriglog):
     ##{'time': 'min', **df.select_dtypes(include=['object']).apply(lambda x: x.iloc[0])}
     grp_perti = df.groupby(['trial_index'])
     #df_trst = grp_perti.agg(agg_d)
-    
+
     operation = 'min'
     coln_time = 'time'
     df_trst = aggRows(df, coln_time, operation, grp = grp_perti )
@@ -2008,7 +2319,7 @@ def compareTriggers(df, dfev, dftriglog):
     phase2df = {}
     phase2dfev = {}
     phase2dftriglog = {}
-    for phase in phases:    
+    for phase in phases:
         if phase in phase2best_neg_csr.keys():
             crs_neg_v = phase2best_neg_csr[phase]
             # sel only last streak
@@ -2036,7 +2347,7 @@ def compareTriggers(df, dfev, dftriglog):
     print('')
     print('##############')
     print('Differences of timing per phase between df and trigger timing')
-    for phase in phases: 
+    for phase in phases:
         if phase == 'BREAK':
             continue
         dftmps = [phase2df[phase],phase2dfev[phase] ]#,phase2dftriglog[phase]]
@@ -2053,8 +2364,9 @@ def compareTriggers(df, dfev, dftriglog):
 
 def addBasicInfo(df, phase2trigger, params,
                 home_position, target_coords,
-                phase_to_collect = 'TARGET_AND_FEEDBACK', training_end_sep_trial = False):
-    #### 
+                phase_to_collect = 'TARGET_AND_FEEDBACK', training_end_sep_trial = False,
+                reshifted = 0 ):
+    ####
     # This is for context change experiment
     ############################################################
 
@@ -2078,7 +2390,7 @@ def addBasicInfo(df, phase2trigger, params,
     assert len(dfc)
 
 
-    df, flpairs = set_streaks(df,inds = None) 
+    df, flpairs = set_streaks(df,inds = None)
 
     #assert dfc['current_phase_trigger'].nunique() == 1
 
@@ -2105,7 +2417,7 @@ def addBasicInfo(df, phase2trigger, params,
     dfc['target_locs'] = dfc.apply(f,1)
 
     pertn2pertv = dict( zip(['veridical', 'rot15', 'rot30', 'rot-15',
-                            'rot-20','rot20'],[0,15,30,-15,-20,20]) )
+                            'rot-20','rot20', 'error_clamp' ],[0,15,30,-15,-20,20, 0]) )
 
     dfc['perturbation'] = dfc.apply(lambda row: pertn2pertv[row['vis_feedback_type']],1 )
 
@@ -2147,8 +2459,8 @@ def addBasicInfo(df, phase2trigger, params,
     grp = dfc.groupby(['trial_index'])
     #idx = grp['time'].transform(max) == dfc['time'] #.size()
     #dfcc = dfc.loc[idx]
-    # this should work better 
-    dfcc = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp') 
+    # this should work better
+    dfcc = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp')
 
     # it DOES NOT include pauses
     dfcc = dfcc.reset_index(drop=True)
@@ -2170,7 +2482,7 @@ def addBasicInfo(df, phase2trigger, params,
         except ValueError as e:
             print(e,tgti,pert)
             ctxi = -1000
-            
+
         return ctxi
 
     dfcc['ctxid'] = dfcc.apply(f,1)
@@ -2187,7 +2499,9 @@ def addBasicInfo(df, phase2trigger, params,
         r = (dfcc_tmp['block_ind'] != dfcc_tmp['block_ind'].shift(1)).cumsum() #+ 1
         dfcc.loc[grp.groups[g], 'Nctx_app'] =  r
         #print(g, r.max(), dfcc_tmp['block_ind'].unique())
-    assert np.max(dfcc['Nctx_app'] ) == params['n_context_appearences']
+
+    if not reshifted:
+        assert np.max(dfcc['Nctx_app'] ) == params['n_context_appearences']
 
 
     ##################################
@@ -2267,6 +2581,9 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc.loc[dfcc['time_lh'].isna(), 'error_endpoint_ang'] = np.nan
     dfcc.loc[dfcc['time_lh'].isna(), 'error_pert_adj'] = np.nan
 
+    dfcc['is_easy'] = False
+    dfcc.loc[dfcc.query(qs_easy0).index, 'is_easy'] = True
+
 
     colns_adj180 = ['error_endpoint_ang', 'error_lh_ang', 'error_unpert_lh_ang']
     for coln in colns_adj180:
@@ -2281,32 +2598,34 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc.loc[c, 'error_endpoint_ang_pert_adj'] = -dfcc.loc[c,'error_endpoint_ang_pert_adj']
 
 
-    col = 'error_area_signed'
+    col = 'error_area2_signed'
+    #col = 'error_area_signed'
     col2 = 'error_pert_adj'
     col3 = 'error_distance'
     if col in dfcc.columns:
-        coef = dfcc[col].quantile(0.75) / dfcc[col2].quantile(0.75)
-        dfcc['error_aug3'] = dfcc[col] + coef * dfcc[col2]
+        #coef = dfcc[col].quantile(0.75) / dfcc[col2].quantile(0.75)
+        #dfcc['error_aug3'] = dfcc[col] + coef * dfcc[col2]
 
         #sc = np.sqrt( dfcc[col3] / hitr )
         ## bigger error -- stronger scale
         #dfcc['error_area_signed_scaled_ed'] = dfcc[col] * sc
         #dfcc['error_area_ofb_signed_scaled_ed'] = dfcc['error_area_ofb_signed'] * sc
 
-        dfcc['error_area_signed_tln']     = dfcc['error_area_signed_nn'] / dfcc['traj_length']
-        dfcc['error_area_ofb_signed_tln'] = dfcc['error_area_ofb_signed_nn'] / dfcc['traj_length']
+        #dfcc['error_area_signed_tln']     = dfcc['error_area_signed_nn'] / dfcc['traj_length']
+        #dfcc['error_area_ofb_signed_tln'] = dfcc['error_area_ofb_signed_nn'] / dfcc['traj_length']
 
+        dfcc['error_area2_signed_tln']     = dfcc['error_area2_signed_nn'] / dfcc['traj_length']
 
         sc = np.power( np.maximum(dfcc['error_distance'] / hitr, 1.)   , 1./8. )
-        dfcc['error_area_signed_tln_scaled_ed'] = dfcc['error_area_signed_tln'] * sc
-        dfcc['error_area_ofb_signed_tln_scaled_ed'] = dfcc['error_area_ofb_signed_tln'] * sc
+        #dfcc['error_area_signed_tln_scaled_ed'] = dfcc['error_area_signed_tln'] * sc
+        #dfcc['error_area_ofb_signed_tln_scaled_ed'] = dfcc['error_area_ofb_signed_tln'] * sc
 
-        dfcc['error_area_signed_scaled_ed'] = dfcc['error_area_signed'] * sc
-        dfcc['error_area_ofb_signed_scaled_ed'] = dfcc['error_area_ofb_signed'] * sc
+        #dfcc['error_area_signed_scaled_ed'] = dfcc['error_area_signed'] * sc
+        #dfcc['error_area_ofb_signed_scaled_ed'] = dfcc['error_area_ofb_signed'] * sc
 
-        dfcc['error_area_signed_nn_scaled_ed']     = dfcc['error_area_signed_nn'] * sc
+        #dfcc['error_area_signed_nn_scaled_ed']     = dfcc['error_area_signed_nn'] * sc
         dfcc['error_area2_signed_nn_scaled_ed']     = dfcc['error_area2_signed_nn'] * sc
-        dfcc['error_area_ofb_signed_nn_scaled_ed'] = dfcc['error_area_ofb_signed_nn'] * sc
+        #dfcc['error_area_ofb_signed_nn_scaled_ed'] = dfcc['error_area_ofb_signed_nn'] * sc
     else:
         print(f'WARNING: {col} not in dfcc.columns')
 
@@ -2838,14 +3157,14 @@ def alignDfs(df1,cols1, df2,cols2, suff2 = '_2', verbose=0,
     z = [['index']] + list(zip( cols_int,
                  cols_int_mod ) )
     #print(z)
-    #print(list(map(list,z ) ) ) 
+    #print(list(map(list,z ) ) )
     cols = sum( list(map(list,z ) ), [] )
-    cols += list( set(cols1) - set(cols2) ) 
+    cols += list( set(cols1) - set(cols2) )
     cols += [rd[col] for col in set(cols2) - set(cols1)  ]
 
     print(cols)
     dfr = dfr[cols ]
-    
+
     if check_agreement:
         for colnc in (set(cols1) & set(cols2)):
             print(colnc)
@@ -2861,7 +3180,7 @@ def getStartEndMultiSubj(df_, ynames = ['err_sens']):
     df1 = grp['trial_index'].min().to_frame().rename(columns={'trial_index':'block_start_trial_index'})
     df2 = grp['trial_index'].max().to_frame().rename(columns={'trial_index':'block_end_trial_index'})
 
-    #sts = grp['trial_index'].idxmin().to_frame().rename(columns={'trial_index':'block_start_trial_index'}) 
+    #sts = grp['trial_index'].idxmin().to_frame().rename(columns={'trial_index':'block_start_trial_index'})
 
     block_bounds = pd.concat( [df1, df2], axis=1)
 
@@ -2884,3 +3203,19 @@ def getStartEndMultiSubj(df_, ynames = ['err_sens']):
 
     df_startend = pd.concat([df_block_start, df_block_end])
     return df_startend
+
+def markBlockStarts(df, ax, plot_argv):
+    '''vert lines at the start of first trial in block
+    input is row=trial'''
+    qs = 'block_ind >= 0'
+    block_starts = df.query(qs).groupby('block_ind')['trial_index'].min()
+    if ax is not None:
+        ax.vlines(block_starts, **plot_argv)
+    return block_starts
+
+def printBadTrialInfo(df, df_big, coln='err_sens'):
+    # Total percentage of bad trials for a subset
+    rinf  = np.isinf(df[coln]).sum() / len(df_big)
+    rnan  = np.isnan(df[coln]).sum() / len(df_big)
+    rtot = len(df) / len(df_big)
+    print('inf = {:.2f}%,  nan = {:.2f}%  (total={:.2f}%)'.format( rinf * 100, rnan * 100, rtot *100) )

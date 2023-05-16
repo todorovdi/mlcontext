@@ -307,7 +307,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         raise ValueError(f'error_type={error_type} not implemnted')
 
     if recalc_non_hit or (colname_nh not in behav_df.columns):
-        raise ValueError('recalc_non_hit not implemneted')
+        raise ValueError(f'{colname_nh} is not present and recalc_non_hit not implemneted')
 
     nonhit = behav_df[colname_nh].to_numpy()
 
@@ -412,7 +412,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     df_esv = pd.DataFrame( df_esv )
 
 
-    df_esv[colname_nh] = nonhit
+    df_esv[colname_nh] = nonhit.astype(bool) 
     if colname_nh_out is None:
         colname_nh_out = colname_nh + '_shifted'
 
@@ -430,16 +430,18 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
 
 
     #df_esv[colname_nh_out] = nonhit_shifted
-    df_esv[colname_nh_out] = nonhit_err_compat
+    df_esv[colname_nh_out] = nonhit_err_compat.astype(bool)
 
     df_esv[err_sens_coln] = np.nan
-    c = df_esv[colname_nh]
+    c = df_esv[colname_nh_out]
 
     if time_locked == 'trial_end':
         errors_denom = errors2
     else:
         errors_denom = errors1
-    df_esv.loc[c,err_sens_coln]  = (correction / errors_denom)[c]
+
+    #errors_denom[c]
+    df_esv.loc[c,err_sens_coln]  = (correction[c] / errors_denom[c])
 
     # recal that in the experiment code what goes to "errors" columns is
     # computed this way
@@ -449,30 +451,31 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     #import pdb; pdb.set_trace()
 
 
-    nh = np.sum( ~df_esv[colname_nh] )
+    nh = np.sum( ~df_esv[colname_nh_out] )
     if correct_hit == 'prev_valid':
-        df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.inf
-        hit_inds = np.where(~df_esv[colname_nh] )[0]
+        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.inf
+        hit_inds = np.where(~df_esv[colname_nh_out] )[0]
         for hiti in hit_inds:
             prev = df_esv.loc[ :hiti, err_sens_coln ]
             good = np.where( ~ (np.isinf( prev ) | np.isnan(np.isinf) ) )[0]
             if len(good):
                 lastgood = good[-1]
                 df_esv.loc[ hiti, err_sens_coln ] = df_esv.loc[ lastgood, err_sens_coln ]
-        #df_esv.loc[~df_esv[colname_nh],err_sens_coln]  =
+        #df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  =
     elif correct_hit == 'zero':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = 0
+        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = 0
     elif correct_hit == 'inf':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.inf
+        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.inf
     elif correct_hit == 'nan':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh],err_sens_coln]  = np.nan
+        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.nan
 
+    #raise ValueError('debug')
 
     df_esv['correction'] = correction
     df_esv['error_type'] = error_type

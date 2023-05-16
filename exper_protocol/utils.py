@@ -257,7 +257,7 @@ def getLastInfo(fn):
 
 def getLastFname(subdir):
     import os, glob
-    # Get a list of all files in 'subdir' ending with '.xls'
+    # Get a list of all files in 'subdir' ending with '.param'
     if not os.path.exists(subdir):
         print('Dir not exists')
         return None

@@ -1201,7 +1201,7 @@ class VisuoMotor:
 
 
             # very first trigger
-            self.send_trigger(0)
+            #self.send_trigger(0)
 
 
     def init_target_positions(self):
@@ -1319,6 +1319,8 @@ class VisuoMotor:
             self.just_moved_home = 1
 
     def drawTgt(self, radmult = 1.):
+        if self.tgti_to_show is None:
+            return
         pygame.draw.circle(self._display_surf, self.color_target,
                            self.target_coords[self.tgti_to_show],
                            self.params['radius_target'] * radmult, 0)
@@ -1635,10 +1637,10 @@ class VisuoMotor:
                 #with open(fnf, 'w') as f:
                 #    f.writelines(perfstrs )
 
-                self.logfile.write('\n\n' )
+                self.logfile.write('#\n#\n' )
                 monetary_value_tot = self.reward_accrued * self.reward2EUR_coef # without rounding!
                 perfstrs[-1] = perfstrs[-1] + f'; reward_accrued={self.reward_accrued}; monetary_value_tot={monetary_value_tot}'
-                self.logfile.write(";".join(perfstrs) )
+                self.logfile.write('#' + ";".join(perfstrs) )
 
             self.drawTextMultiline( endstrs + [''] + perfstrs,
                                    font = self.myfont_popup,
