@@ -1292,3 +1292,50 @@ def getEpochs(raw,is_short,bsl):
                         [epochs_feedback, epochs_target])
 
     return epochs_type
+
+
+def getTruncDep(df, qs_to_check):
+    # dependence on truncation params
+    from behav_proc import truncateDf
+    #truncateDf?
+
+    #dfes_goog_noq = truncateDf( dfes, 'err_sens', q = None, infnan_handling='discard' )
+    print( qs_to_check )
+
+    pds = [dict(q=None), dict(q=None, low=-50, hi=50),dict(q=None, low=-30, hi=30), dict(q=None, low=-10, hi=10),
+           dict(q=None, low=-1, hi=1),
+        dict(q=0.05),dict(q=0.02), dict(q=None),
+          dict(q=0.05, trunc_hi = 0),dict(q=0.02, trunc_hi =0), dict(q=None, trunc_hi =0),
+          dict(q=0.05, trunc_low = 0),dict(q=0.02, trunc_low =0), dict(q=None, trunc_low =0),
+          dict(q=0.05, trunc_low = 0, abs=True),dict(q=0.02, trunc_low =0, abs=True), dict(q=None, trunc_low =0, abs=True)]
+    rs = []
+    for truncapd in pds:
+        print('   truncapd=',truncapd)
+        dfes_goog, locs = truncateDf( df, 'err_sens', **truncapd, 
+                            infnan_handling='discard',
+                             verbose=1, retloc=1 )
+        for alt in ['greater','less','two-sided']:
+            r = pg.ttest(dfes_goog.query(qs_to_check)['err_sens'], 0 , alternative=alt)
+            r['truncaprs'] = repr(truncapd)
+            r['hi_mean'] = None
+            r['low_mean'] = None
+            low = locs.get('qlow',None)
+            hi = locs.get('qhi',None)
+            if low is not None:
+                r['low_mean'] = low.mean()
+            else:
+                r['low_mean'] = locs.get('low',None)
+            if hi is not None:
+                r['hi_mean'] = hi.mean()
+            else:
+                r['hi_mean'] = locs.get('hi',None)
+                
+            r['qs'] = qs_to_check
+            rs += [r]
+        
+        del dfes_goog
+        #break
+        #display(pg.ttest(dfes_goog.query(qs_notspec)['err_sens'], 0 , alternative='less'))
+    ttrs = pd.concat(rs)
+
+    return ttrs
