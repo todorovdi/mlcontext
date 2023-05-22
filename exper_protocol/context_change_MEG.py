@@ -56,11 +56,18 @@ class VisuoMotorMEG(VisuoMotor):
         info['block_len_max'] = 11 # NOT including. So largest will be 10
         info['n_context_appearences'] = 11
 
+
+
         info['special_trials'] = ['ECpair_prebreak']
         # we had 20
         # the larger the more task success, the fewer explicit (according to Li-Ann Leow
         info['radius_target'] = 30
         #info['radius_target'] = 40
+
+        #info['target_location_pattern'] =  'fan'
+        info['target_location_pattern'] =  'fan_right'
+
+        info['target_location_spread'] = 20
 
         # can be every_trial_change, every_phase_change, every_frame
         if info.get('flush_log_freq', None) is None:
@@ -80,6 +87,9 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
         self.copy_param(info, 'max_time_between_breaks', 10 * 55)  # this soft, is not counting pauses. If 60, then have to regen too often
         self.copy_param(info, 'reset_trigger_auto', 1)
+
+
+        self.copy_param(info, 'trigger_duration_long',     500  / 1000)  # Coumarane says 50 works
 
 
         self.add_param('expected_break_duration', 60.) # sec
@@ -592,7 +602,7 @@ class VisuoMotorMEG(VisuoMotor):
                      f'faites {self.params["num_training"] - self.trial_index} '
                     "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.")
                 #self.phase2text['TRAINING_END': 'La tâche principale commence maintenant']
-                self.phase2text['TRAINING_END_AFTER_BREAK': 'La tâche recommence maintenant']
+                self.phase2text['TRAINING_END_AFTER_BREAK'] = 'La tâche recommence maintenant'
 
         if last_fn_base is None:
             # we need params inited
@@ -1278,26 +1288,39 @@ class VisuoMotorMEG(VisuoMotor):
         else:
             self.current_phase = phase
 
-        ct = time.time()
-        self.phase_start_times[self.current_phase] = ct
         self.moveHome()
         pygame.mouse.set_visible(0)
         self.reset_traj()
         self.reset_main_vars()    # NEW
 
+        # DBG
+        #pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
+
         if not self.params['dummy_mode']:
-            pygame.time.wait( int( 1000  ) )
+            pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
         self.send_trigger(0)
         if not self.params['dummy_mode']:
-            pygame.time.wait( int( 1000  ) )
+            pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
+
+        # DBG
+        #pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
 
         print('before sending ' ,time.time() - self.initial_time )
         self.send_trigger(self.MEG_start_trigger)
         print('after sending ' ,time.time() - self.initial_time )
         if not self.params['dummy_mode']:
-            pygame.time.wait( int( 1000  ) )
+            pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
         print('after waiting ' ,time.time() - self.initial_time )
+
+
+        # DBG
+        #pygame.time.wait( int( self.params['trigger_duration_long'] * 1000  ) )
+
         self.send_trigger(0)
+
+        # it's important that it is after these 3 times 1000 ms
+        ct = time.time()
+        self.phase_start_times[self.current_phase] = ct
 
         self.MEG_rec_started = 1
         self.task_started = 1
@@ -2217,9 +2240,12 @@ class VisuoMotorMEG(VisuoMotor):
                 self.save_scr(prefix='keypress')
             # forcefully start task, should not be used unless debug
             if event.key == pygame.K_y:
-                self.free_from_break = 1
-                print('Debug restart task by key')
-                self.restartTask(very_first = 1, phase = self.first_phase_after_start)
+                if self.debug:
+                    self.free_from_break = 1
+                    print('Debug restart task by key')
+                    self.restartTask(very_first = 1, phase = self.first_phase_after_start)
+                else:
+                    print('Debug restart task by key not allowed when not debug')
 
             # release from break during the normal function of the task (no relaunch of the program)
             if (event.key == pygame.K_g) and (not self.free_from_break):

@@ -68,8 +68,15 @@ def trial_info2trgtpl_upd(trial_info, phase, spec_phases, spec_tt):
 def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 0):
     # defloc -- angle from vertical line
     if num_targets == 3:
-        assert target_location_pattern == 'fan'
-        target_angles = np.array([defloc-spread,defloc,defloc + spread])
+        assert target_location_pattern in ['fan', 'fan_left', 'fan_right']
+        if target_location_pattern  == 'fan':
+            target_angles = np.array([defloc-spread,defloc,defloc + spread], dtype=float)
+        elif target_location_pattern  == 'fan_left':
+            target_angles = np.array([defloc-spread,defloc,defloc + spread], dtype=float)       
+            target_angles -= spread / 2.
+        elif target_location_pattern  == 'fan_right':
+            target_angles = np.array([defloc-spread,defloc,defloc + spread], dtype=float)       
+            target_angles += spread / 2.
     elif num_targets == 2:
         target_angles = np.array([defloc-spread,defloc + spread])
     elif num_targets == 1:
@@ -431,12 +438,12 @@ class VisuoMotor:
 
         # in degrees
         #self.add_param('target_location_spread',15)
-        self.add_param('target_location_spread',20)
+        self.copy_param(info, 'target_location_spread',20)
 
-        self.add_param('num_targets',3)
+        self.copy_param(info, 'num_targets',3)
         #self.add_param('num_targets',4)
         #self.add_param('target_location_pattern', 'diamond')
-        self.add_param('target_location_pattern', 'fan')
+        self.copy_param(info, 'target_location_pattern', 'fan')
         target_angles = get_target_angles(self.params['num_targets'],
                     self.params['target_location_pattern'],
                     self.params['target_location_spread'])
