@@ -1,4 +1,4 @@
-#import os
+# import os
 import os.path as op
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,7 +58,7 @@ qs_motor_var = ' ( ' + qs_not_easy_wide + ' and ' + qs_notspec +\
               ' and ~time_lh.isna() and trial_index >= @numtrain )' )
 
 # when to discard err_sens
-thr_lh_ang_deg = 2 
+thr_lh_ang_deg = 2
 thr_lh_ang_rad = thr_lh_ang_deg * ( np.pi / 180 )
 
 thr_signed_area2_nn_scaled_ed = 0.028 # this was just 5% quantile of abs
@@ -72,7 +72,7 @@ coln_ctx_closeness = ['prev_ctx_both_close',
        'prev_ctx_some_close', 'prev_ctx_tgt_close', 'prev_ctx_pert_close',
        'prev_ctx_pert_same', 'prev_ctx_tgt_same']
 
-coln2pubname = {'error_lh2_ang':'Starting angle', 
+coln2pubname = {'error_lh2_ang':'Starting angle',
                 'error_lh2_ang_valid':'Starting angle',
                 'error_area2_signed_nn':'Signed area' ,
                 'error_area2_signed_nn_valid':'Signed area' }
@@ -148,7 +148,7 @@ def getAllValidDsnames( d ):
         fnb = name.replace('.log','')
         #print( f'"{fnb}",' )
         fnbs += [fnb]
-        
+
     fnbs += ['2023-SE1-pilot3_context_change_20230317_105210']
 
     # check no repeats
@@ -158,17 +158,18 @@ def getAllValidDsnames( d ):
 
     return fnbs
 
-def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home, 
-                   thr1 = 1e-3, thr2 = 1e-3, inplace=True):
+def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
+                   thr1 = 1e-3, thr2 = 1e-3, inplace=True,
+                  calc_std = 0  ):
     '''
     works inplace
     '''
     print('Starting addTrueMvtTime')
     if not inplace:
         dfcc_all = dfcc_all.copy()
-        dfc_all = dfc_all.copy()
+        #dfc_all = dfc_all.copy()
     # leave home like
-    calc_std = 0
+
     if calc_std:
         dfc_all['jax1_std'] = dfc_all.groupby(['subject','trial_index'])['jax1'].\
             expanding().std().reset_index(drop=True)
@@ -181,13 +182,13 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
 
 
     # jax2 vertical, jax1 horizontal
-    
+
     def f(row):
         tind = row['trial_index']
         subj = row['subject']
         #qs = 'subject == @subj and trial_index == @tind'
         #dftr = dfc_all.query(qs)
-        
+
         # this is faster than making many individ queries
         dftr = dfc_all.loc[ grp.groups[(subj,tind)] ]
 
@@ -196,7 +197,7 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
 
         jax12_dev =  np.abs( jax12 - jax12_0[None, :]  )
         #print(jax12_dev[::10,:] )
-        
+
         if calc_std:
             jax1_std,jax2_std = dftr[['jax1_std','jax2_std']].values.T
             tmin1 = np.where(jax1_std > thr1)[0]
@@ -205,7 +206,7 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
                 tmin1 = dftr.iloc[tmin1]['time_since_trial_start']
             else:
                 tmin1 = np.nan
-            
+
             tmin2 = np.where(jax2_std > thr2)[0]
             if len( tmin2 ):
                 tmin2 = tmin2[0]
@@ -219,7 +220,7 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
                 tmin1 = dftr.iloc[tmin1]['time_since_trial_start']
             else:
                 tmin1 = np.nan
-            
+
             tmin2 = np.where(jax12_dev[:,1] > thr2)[0]
             #print(tmin2)
             if len( tmin2 ):
@@ -248,7 +249,7 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
         # slower
         #tmin2 = dftr.query('jax2_std > @thr')['time_since_trial_start'].min()
         return tmin1, tmin2, time_lh, time_l3h
-    # tm == true movement (assuming before they just 
+    # tm == true movement (assuming before they just
     # follow easy joystick traj is not true move)
     # this time counts since trial start
     # rather slow, takes 15 sec
@@ -267,8 +268,8 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
     #dfcc_all.loc[~easy, 'time_tmstart2'] = dfcc_all.loc[~easy, ['time_lh', 'time_tmstart'] ].max(axis=1)
 
 
-    #r = dfcc_all.loc[easy, ['time_tmstart_jax1', 'time_tmstart_jax2'] ].min(axis=1) 
-    #dfcc_all.loc[easy, ['time_tmstart_jax1', 'time_tmstart_jax2'] ].min(axis=1) 
+    #r = dfcc_all.loc[easy, ['time_tmstart_jax1', 'time_tmstart_jax2'] ].min(axis=1)
+    #dfcc_all.loc[easy, ['time_tmstart_jax1', 'time_tmstart_jax2'] ].min(axis=1)
 
     ea = dfcc_all.loc[easy]
     def f(row):
@@ -342,7 +343,7 @@ def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
     return pert_seq_code
 
 def addBehavCols(df_all, inplace=True, skip_existing = False,
-                 dset = 'Romain_Exp2_Cohen'):
+                 dset = 'Romain_Exp2_Cohen', fn_events_full = None):
     '''
     This is for NIH experiment
     inplace, does not change database lengths (num of rows)
@@ -354,6 +355,17 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     pertvals     = df_all['perturbation'].unique()
 
     subj = subjects[0]
+
+
+    if fn_events_full is not None:
+        #fn_events = f'{task}_{hpass}_{ICAstr}_eve.txt'
+        #fn_events_full = op.join(path_data, subject, fn_events )
+        # these are all events, including non-target triggers
+        events0 = mne.read_events(fn_events_full)
+        event_ids_all_for_EC = stage2evn2event_ids['target']['all']
+        mask   = np.isin(events[:,2], event_ids_all_for_EC)
+        events = events0[mask]
+        df_all = addTrigPresentCol_NIH(df_all, events)
 
     df_all['dist_trial_from_prevtgt'] = np.nan
     for subj in subjects:
@@ -424,7 +436,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                 elif env == 'random' and triali > 500:
                     block_name = env + '2'
                 else:
-                    display(row)
+                    print(row)
                     raise ValueError(f'wrong combin {env}, {triali}')
                 return block_name
             df_all['block_name'] = df_all.apply(f,1)
@@ -946,7 +958,7 @@ def analyzeTraj( XY, tgtXY, home_position, radius_home, indlh = None,
         ptpostlh = XYhc[indlh + nframes_offset]
         # direction after leaving home
         vec = ptpostlh - ptlh
-        ang_lh_to_postlh = np.math.atan2( *vec ) 
+        ang_lh_to_postlh = np.math.atan2( *vec )
 
         tgtcur_adj_lh = tgtcur - ptlh
         # angle of target wrt lh point
@@ -956,7 +968,7 @@ def analyzeTraj( XY, tgtXY, home_position, radius_home, indlh = None,
     else:
         error_lh_ang = None
         ang_lh = None
- 
+
         ang_lh_to_postlh = None
         error_lh2_ang = None
 
@@ -1004,11 +1016,18 @@ def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc
     #    subj2qts[subj] = qts
     #return subj2qts
 
+def getMaskNotNanInf(vals, axis = None):
+    if (vals.ndim > 1) and (axis is not None):
+        #r = ~np.any( np.isinf(y), axis=1) 
+        r = ~ np.any ( np.isnan(vals) | np.isinf(vals), axis=1 ) 
+    else:
+        r = ~ ( np.isnan(vals) | np.isinf(vals) )
+    return r
 
 def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
                return_mask = False, trialcol = 'trials',
                cols_uniqify = ['trial_shift_size',
-                               'trial_group_col_calc'] , verbose=False , 
+                               'trial_group_col_calc'] , verbose=False ,
                hi = None, low=None,
                trunc_hi = True, trunc_low = True, abs=False, retloc=False):
     if not inplace:
@@ -1024,7 +1043,8 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
     #mask = np.ones(len(df), dtype=bool)
 
     # good
-    mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+    #mask =  ~ ( df[coln].isna() | np.isinf( df[coln] ) )
+    mask = getMaskNotNanInf(df[coln] )
 
     #print('fff')
     #if clean_infnan:
@@ -1035,6 +1055,7 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
 
     if  ( (q is not None) and (q > 1e-10) ) or (hi is not None) or (low is not None):
         #gk2qts = calcQuantilesPerESCI(df, coln, q=q)
+        # before some of them could be inf, not nan
         df.loc[~mask, coln] = np.nan
         if abs:
             df_ = df[['subject'] + cols_uniqify + [coln] ].copy()
@@ -1057,6 +1078,7 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
             assert not qhi.reset_index()[coln].isna().any(), qhi
 
         dfs = []
+        # for each group separately
         for gk,ginds in grp.groups.items():
 
             dftmp = df.loc[ginds]
@@ -1092,11 +1114,14 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
             mask_trunc = pd.Series(index=dftmp.index, dtype=bool)
             mask_trunc[:] = True
 
+            # what to keep
             if trunc_hi:
                 mask_trunc &= (dftmp_[coln] < hic)
             if trunc_low:
                 mask_trunc &= (dftmp_[coln] > lowc)
 
+            # what to remove
+            # if keepnan, then mark as nan, but don't remove
             if infnan_handling in ['keepnan', 'discard']:
                 mask_bad = (~mask_good) | (~mask_trunc)
             elif infnan_handling == 'do_nothing':
@@ -1109,18 +1134,21 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
             #display(dftmp)
             dftmp.loc[mask_bad  , coln ] = np.nan
 
+            mask = mask & (~mask_bad) 
+
             if np.all( (np.isnan(dftmp[coln]) | np.isinf(dftmp[coln]))  ):
                 display(dftmp[ ['subject','trials'] + cols_uniqify + ['err_sens']] )
                 print(gk,len(ginds), sum(mask_bad), sum(mask_good), sum(mask_trunc) )
                 raise ValueError(gk)
 
+            # if keepnan, then mark as nan, but don't remove
             if infnan_handling == 'discard':
                 dftmp = dftmp[~mask_bad]
 
             dfs += [dftmp]
         df = pd.concat(dfs, ignore_index = 0)  #TODO should I really ignore index here??
         print('dubplicate check ')
-        assert not df.dublicated().any()
+        assert not df.duplicated().any()
     elif infnan_handling == 'discard':
         df = df[mask]
 
@@ -1187,6 +1215,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         coln_correction_calc = None, coln_error = 'error',
         computation_ver = 'computeErrSens2',
         df_fulltraj = None,  trajPair2corr = None,
+        drop_feedback = False,
         verbose=0 ):
     '''
         if allow_duplicating is False we don't allow creating copies
@@ -1290,12 +1319,14 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                     colname_nh = coln_nh,
                     correct_hit = 'inf', shiftsz = tsz,
                     err_sens_coln=escoln,
+                    coln_nh_out = coln_nh_out,
                     time_locked = time_locked, addvars=addvars,
                     target_info_type = target_info_type,
                     coln_correction_calc = coln_correction_calc,
                     coln_error = coln_error,
                     recalc_non_hit = False, **addargs)
 
+                print(f'computation_ver = {computation_ver}')
                 if computation_ver == 'computeErrSens2':
                     nhna, df_esv, ndf2vn = r
                 elif computation_ver == 'computeErrSens3':
@@ -1323,7 +1354,10 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 dfcur['correction'] = np.array( df_esv['correction'] )
                 for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
                            f'prev_{escoln}', 'prev_error' ]:
-                    dfcur[cn] = df_esv[cn].to_numpy()
+                    if cn not in df_esv.columns:
+                        print(f'WARNING: {cn} not in df_esv.columns')
+                    else:
+                        dfcur[cn] = df_esv[cn].to_numpy()
 
                 if computation_ver == 'computeErrSens2':
                     errn = ndf2vn['prev_error']
@@ -1365,7 +1399,9 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
 
     df_all2 = pd.concat(dfs)
     df_all2.reset_index(inplace=True, drop=True)
-    df_all2.drop(['feedbackX','feedbackY'],axis=1,inplace=True)
+    if drop_feedback and ( 'feedbackX' in df_all2.columns ):
+        df_all2.drop(['feedbackX','feedbackY'],axis=1,inplace=True)
+
     if 'trajectoryX' in df_all2.columns:
         df_all2.drop(['trajectoryX','trajectoryY'],axis=1,inplace=True)
 
@@ -1738,19 +1774,23 @@ def row2multierr(row, dfc, grp_perti, home_position, target_coords,
 
     #curveX, curveY = fbXhc_ta, fbYhc_ta
     traja2 = None
+    traja2o = None
     length = None
-    time_lh = None
+    #time_lh = None  # wrong for some cols, better use what was preset
     if indlh is not None:
         if fb['skipped0'] or skipped0:
             indlh_eff = indlh + 1
         else:
             indlh_eff = indlh
-        time_lh = times[indlh_eff]
-        time_lh = time_lh - times[0]
+        #time_lh = times[indlh_eff]
+        #time_lh = time_lh - times[0]
 
         from base2 import areaOne
         traja2 = areaOne( *fb['XYhc_ta'] ,
                 fb['dirtgt_ta'], fb['tgtcur_ta'])
+
+        traja2o = areaOne( *ofb['XYhc_ta'] ,
+                ofb['dirtgt_ta'], ofb['tgtcur_ta'])
         try:
             from shapely.geometry import LineString
             tr = LineString(list( fb['XYhc_ta'].T ))
@@ -2304,8 +2344,8 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
 
     #dfcc[['error_lh_ang', 'error_unpert_lh_ang',
     #      'ang_fb_lh', 'ang_ofb_lh',
-    #  'error_area2_signed_nn', 
-    #      'traj_length', 'time_lh', 
+    #  'error_area2_signed_nn',
+    #      'traj_length', 'time_lh',
     #      'ang_tgt',
     #       'ang_lh_to_tgt', 'error_lh2_ang',
     #            'error_unpert_lh2_ang' ]] =\
@@ -2321,17 +2361,19 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
         r = (fb['error_lh_ang'], ofb['error_lh_ang'],
             fb['ang_lh'], ofb['ang_lh'],
             locs['traja2'],
-             locs['length'], locs['time_lh'],
+            locs['traja2o'],
+             locs['length'],
              fb['ang_tgt'],
-             fb['ang_lh_to_postlh'],
-             fb['error_lh2_ang'], ofb['error_lh2_ang']   )
+             fb['ang_lh_to_postlh'], fb['error_lh2_ang'],
+             ofb['error_lh2_ang']   )
         del locs
 
         return r
     dfcc[['error_lh_ang', 'error_unpert_lh_ang',
           'ang_fb_lh', 'ang_ofb_lh',
-      'error_area2_signed_nn', 
-          'traj_length', 'time_lh', 
+      'error_area2_signed_nn',
+      'error_unpert_area2_signed_nn',
+          'traj_length',
           'ang_tgt',
            'ang_fb_lh_to_postlh', 'error_lh2_ang',
                 'error_unpert_lh2_ang' ]] =\
@@ -2339,7 +2381,7 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
 
 
     dfcc['error_lh_ang_deg'] = dfcc['error_lh_ang'] * 180 / np.pi
-    dfcc['error_lh_ang_deg_abs'] = dfcc['error_lh_ang_deg'].abs 
+    dfcc['error_lh_ang_deg_abs'] = dfcc['error_lh_ang_deg'].abs
     dfcc['error_lh2_ang_deg'] = dfcc['error_lh2_ang'] * 180 / np.pi
     dfcc['error_lh2_ang_deg_abs'] = dfcc['error_lh2_ang_deg'].abs()
 
@@ -2562,7 +2604,7 @@ def compareTriggers(df, dfev, dftriglog):
     df_trst = aggRows(df, coln_time, operation, grp = grp_perti )
     print(len( df_trst ))
 
-    phase2df = {}
+    phase2df   = {}
     phase2dfev = {}
     phase2dftriglog = {}
     for phase in phases:
@@ -2917,7 +2959,7 @@ def addBasicInfo(df, phase2trigger, params,
     idx = grp['time'].transform(min) == dfct['time'] #.size()
     dfctc = dfct.loc[idx]
 
-    # here we want to set prev_trial_type. We want it to incluse pauses. 
+    # here we want to set prev_trial_type. We want it to incluse pauses.
     # But we still don't want pauses to be part of dfcc, so we use intermediate df
     # TODO: use agg here instead
     dftmp = df[['trial_index','time','trial_type'] ].groupby('trial_index').\
@@ -2931,7 +2973,7 @@ def addBasicInfo(df, phase2trigger, params,
 
     dfcc['prev_time_lh'] = dfcc['time_lh'].shift(1)
 
-    # very literal, has problems when we have EC before. 
+    # very literal, has problems when we have EC before.
     # Pauses are not a problem because they are excluded from dfcc
     # it should include switch from pretraining
     dfcc['prev_perturbation']     = dfcc['perturbation'].shift(1)
@@ -2952,11 +2994,13 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc['perturbation_valid_diff_abs'] = dfcc_tmp['perturbation_tmp'].diff().abs()
     #dfcc['prev_perturbation_valid'] = dfcc['perturbation'].shift(1)
 
-    coln_errs_to_propag = ['error_lh2_ang', 'error_unpert_lh2_ang', 'error_area2_signed_nn' ]
-    propagToValidErrCols(dfcc, coln_errs_to_propag)
 
     dfcc = dfcc.reset_index()
 
+    # this has to be after reset index, otherwise trial index is index and not part of the columns
+    coln_errs_to_propag = ['error_lh2_ang', 'error_unpert_lh2_ang', 'error_area2_signed_nn' ]
+    coln_errs_to_propag_shift = ['trial_index' ]
+    propagToValidErrCols(dfcc, coln_errs_to_propag, coln_errs_to_propag_shift)
 
     # df  -- row per screen update, with streak relations, all phases
     # dfc -- row per screen update, only TARGET_AND_FEEDBACK
@@ -2965,16 +3009,23 @@ def addBasicInfo(df, phase2trigger, params,
     # dfctc -- row per target change
     return df, dfc, dfcc, dfcp, dfctc
 
-def propagToValidErrCols(dfcc, colns):
+def propagToValidErrCols(dfcc, colns, colns_shift):
     # inplace
+    # propagate skipping not exiting home circle and error clamps (pauses should already be thrown away)
     # still keeps nan at the very beginning sometimes
     assert dfcc['subject'].nunique() == 1
     dfcc_tmp = dfcc.copy()
     c = ( dfcc_tmp['trial_type'] == 'error_clamp'  ) | ( dfcc_tmp['time_lh'].isna() )
     for coln in  colns:
-        dfcc_tmp['error_valid'] = np.nan
-        dfcc_tmp.loc[~c,'error_valid'] = dfcc_tmp.loc[~c, coln] 
-        dfcc[coln + '_valid' ] = dfcc_tmp['error_valid'].fillna(None, method='ffill')
+        dfcc_tmp['tmpcol__'] = np.nan
+        dfcc_tmp.loc[~c,'tmpcol__'] = dfcc_tmp.loc[~c, coln]
+        dfcc[coln + '_valid' ] = dfcc_tmp['tmpcol__'].fillna(None, method='ffill')
+
+    assert 'trial_index' in dfcc_tmp
+    for coln in  colns_shift:
+        dfcc_tmp['tmpcol__'] = np.nan
+        dfcc_tmp.loc[~c,'tmpcol__'] = dfcc_tmp.loc[~c, coln]
+        dfcc[ 'prev_' + coln + '_valid' ] = dfcc_tmp['tmpcol__'].fillna(None, method='ffill').shift(1)
 
 def plotTraj3(ax, row, dfc_all, df_es, colscols, params, verbose = 0 ,
              traj_to_plot = ['feedback'],  exitpt_col = 'time_lh',
@@ -3004,24 +3055,24 @@ def plotTraj3(ax, row, dfc_all, df_es, colscols, params, verbose = 0 ,
             indlh =  dftmp.index.get_loc( indlh ) # get iloc
         else:
             indlh = None
-        rd = analyzeTraj(fbXY.values, tgt, home_position, 
+        rd = analyzeTraj(fbXY.values, tgt, home_position,
                     params['radius_home'],  indlh = indlh)
         tmp[tind] = rd
-    
+
         ofbXY = dftmp[['unpert_feedbackX','unpert_feedbackY']]
-        rd = analyzeTraj(ofbXY.values, tgt, home_position, 
+        rd = analyzeTraj(ofbXY.values, tgt, home_position,
                     params['radius_home'], indlh=indlh)
         tmpo[tind] = rd
 
 
     rt = params['radius_target']
     rh = params['radius_home']
-    pp_per_tind = [dict(ls='-', c=color_fb, marker='o', markersize=markersize, 
-                        alpha=traj_alpha), 
+    pp_per_tind = [dict(ls='-', c=color_fb, marker='o', markersize=markersize,
+                        alpha=traj_alpha),
                    dict(ls=':', c=color_fb, marker='o', markersize=markersize)][:1 ]
     ppo_per_tind = [dict(ls='-', c=color_ofb, marker='o', markersize=markersize,
-                        alpha=traj_alpha ), 
-                    dict(ls=':', c=color_ofb, marker='o', markersize=markersize)] [:1 ] 
+                        alpha=traj_alpha ),
+                    dict(ls=':', c=color_ofb, marker='o', markersize=markersize)] [:1 ]
     #for tind,pp,ppo in zip([tind1, tind2],pp_per_tind,ppo_per_tind):
     # take first only as zip works this way
     for tind,pp,ppo in zip([tind1],pp_per_tind,ppo_per_tind):
@@ -3049,17 +3100,17 @@ def plotTraj3(ax, row, dfc_all, df_es, colscols, params, verbose = 0 ,
                 if verbose:
                     #print('0pt={}, lhpt={}'.format(rd['pt0'], XYlh ))
 
-                    print('lh={:5.6f}, tgt={:5.2f}, err={:5.2f}  err2={:5.2f}'.format(ang_lh*c, rd['ang_tgt'] * c, 
+                    print('lh={:5.6f}, tgt={:5.2f}, err={:5.2f}  err2={:5.2f}'.format(ang_lh*c, rd['ang_tgt'] * c,
                           error_lh_ang * c, error_lh2_ang * c) )
-                
+
                 # just one pt
                 ax.scatter( *XYlh , alpha=1,
-                    c='k', s= 15, 
-                    label=f'{tind} ang_lh2 = {ang_lh_to_postlh*c:.1f}')        
-        
+                    c='k', s= 15,
+                    label=f'{tind} ang_lh2 = {ang_lh_to_postlh*c:.1f}')
+
         if 'org_feedback' in traj_to_plot:
             rdo = tmpo[tind]
-            ax.plot( *rdo['XYhc'].T, **ppo)                
+            ax.plot( *rdo['XYhc'].T, **ppo)
 
             indlh = rdo['indlh']
             XYlh = rdo['XYhc'][indlh]
@@ -3068,18 +3119,18 @@ def plotTraj3(ax, row, dfc_all, df_es, colscols, params, verbose = 0 ,
             # just one pt
             if ang_lh is not None:
                 ax.scatter( *XYlh , alpha=1,
-                    c='k', s= 15, 
-                    label=f'{tind} ang_lh2 = {ang_lh_to_postlh*c:.1f}')        
-                    #label=f'{tind} ang_lh_0pt = {ang_lh_to_postlh*c:.1f}')        
-        
-        
+                    c='k', s= 15,
+                    label=f'{tind} ang_lh2 = {ang_lh_to_postlh*c:.1f}')
+                    #label=f'{tind} ang_lh_0pt = {ang_lh_to_postlh*c:.1f}')
+
+
     ax.scatter( 0,0, alpha=0.8,
             c='k', s= 25 )
     crc = plt.Circle((0, 0), rh, color='r', lw=2, fill=False,
                      alpha=0.3)
     ax.add_patch(crc)
     ax.legend()
-    
+
     s = ''
     if (df_es is not None) and (colscols is not None):
         s += '\n'
@@ -3090,7 +3141,7 @@ def plotTraj3(ax, row, dfc_all, df_es, colscols, params, verbose = 0 ,
             for col in cols_:
                 if col is None:
                     continue
-                s += f'{col}='            
+                s += f'{col}='
                 colv = r[col]
                 if isinstance(colv,float):
                     s += f'{colv:.2f}'
@@ -3658,28 +3709,29 @@ def printBadTrialInfo(df, df_big, coln='err_sens'):
     print('inf = {:.2f}%,  nan = {:.2f}%  (total={:.2f}%)'.format( rinf * 100, rnan * 100, rtot *100) )
 
 
-def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12 ):
+def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridical = 1 ):
     '''
     calc drops of errror between the start of the block and the end
     excludes veridical
     '''
     # inds should be increasing
 #    from behav_proc import qs_notspec
-    df_notspec_notver = dfcc_all.query(qs_notspec + 
-                        ' and vis_feedback_type != "veridical"'
-                        ' and trialwb <= 4')
+    qs = qs_notspec + ' and trialwb <= 4'
+    if inc_veridical:
+        qs +=' and vis_feedback_type != "veridical"'
+    df_notspec_notver = dfcc_all.query(qs)
 
     dfdrops = []
     for coln in cols:
         assert inds[0] == 0
-        
+
         def f(dfcur):
-            #print(dfcur[coln])        
+            #print(dfcur[coln])
             dfs = []
             # takes slices with fixed index within trial
             for ind in inds:
                 dfs += [dfcur.query('trialwb == @ind')]
-                
+
             #print(df1[coln])
             #print(df2[coln])
             vss = []
@@ -3706,9 +3758,9 @@ def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12 ):
         df_notspec_notver_difflearn = df_notspec_notver.\
             groupby(['subject','block_ind','Nctx_app', 'ctxid']).apply(f).reset_index()
         df_notspec_notver_difflearn= df_notspec_notver_difflearn.rename(columns={0:'absdrop'})
-        df_notspec_notver_difflearn['coln'] = coln    
+        df_notspec_notver_difflearn['coln'] = coln
         dfdrops += [df_notspec_notver_difflearn]
-        
+
     dfdrop = pd.concat(dfdrops, ignore_index=1)
 
     for i,ind in enumerate(inds[1:] ):
@@ -3747,12 +3799,12 @@ def plotPolys(ax, dftmp, fitcol, degs=range(2,6), mean=1):
     print(dvu)
     for deg in degs:
         try:
-            pr = np.polyfit(dv-np.min(dv),esv-np.min(esv),deg)        
+            pr = np.polyfit(dv-np.min(dv),esv-np.min(esv),deg)
         except (SystemError,LinAlgError):
             print(f'Failed deg={deg}')
             print(dv,esv, np.std(dv))
             continue
-            
+
         poly = np.poly1d(pr)
         #if len(degs) > 1:
         if mean:
@@ -3763,7 +3815,7 @@ def plotPolys(ax, dftmp, fitcol, degs=range(2,6), mean=1):
         #    lbl = None
         esv2 = poly(dvu-np.min(dvu)) + np.min(esv)
         print(dvu-np.min(dvu), esv)
-        ax.plot(range(len(dvu)) , poly(dvu-np.min(dvu)) + np.min(esv), 
+        ax.plot(range(len(dvu)) , poly(dvu-np.min(dvu)) + np.min(esv),
                 label=lbl, c='grey', lw=0.85 )
     return pr
     #ax.legend(loc='lower right')
@@ -3786,9 +3838,9 @@ def getPvals(dftmp, fitcol, pairs, alternative='greater'):
 
         ttr = ttest_ind(vs1,vs2, alternative=alternative)
         pvalues += [ttr.pvalue]
-        
+
         pair2pv[drp] = ttr.pvalue
-        
+
         print(drp, len(vs1),len(vs2), ttr.pvalue)
     # pvalues = [
     #     sci_stats.mannwhitneyu(robots, flight, alternative="two-sided").pvalue,
@@ -3808,17 +3860,17 @@ def getPvals(dftmp, fitcol, pairs, alternative='greater'):
 #plotPolys(ax,dftmp,fitcol, degs=rng, mean=meanfit)
 
 
-def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked, 
+def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
                                  first_trial_to_take = 'adaptive' ):
     '''
     get trials important for ctx change (and not change in the of a block)
     '''
-    assert first_trial_to_take in ['first', 'second', 'adaptive'] 
+    assert first_trial_to_take in ['first', 'second', 'adaptive']
     qs_es = ('error_data_for_calc == @edfc'
               ' and trial_shift_size == 1 '
               ' and trial_group_col_calc == "trials"'
               ' and time_locked == @time_locked'
-             )  
+             )
     # allow sandwiches ' and special_block_type != "error_clamp_sandwich"'
     # if we prohibit prev EC here we won't get all first trials
     # after context switch
@@ -3846,7 +3898,7 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
 
     dfsw_pre['perturbation_diff']     = grp_subj['perturbation_tmp'].diff()
     dfsw_pre['perturbation_diff_abs'] = grp_subj['perturbation_tmp'].diff().abs()
-    # it is important to do it after computing diff, 
+    # it is important to do it after computing diff,
     # otherwise 1st block has all pert_diff = NaN
     dfsw_pre = dfsw_pre.query('block_ind >= 0')
     grp_subj_bi = dfsw_pre.groupby(['subject','block_ind'],
@@ -3855,7 +3907,7 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     assert not dfsw_pre.query('block_ind == 0 and trialwb == 0')['perturbation_diff'].isna().any()
 
     # trial order dependent
-    cols_dif = ['perturbation_diff',  'perturbation_diff_abs', 
+    cols_dif = ['perturbation_diff',  'perturbation_diff_abs',
                     'dist_rad_from_prevtgt2', 'prev_block_ind_diff']
     cols_ctx_change_tiodep = cols_dif + coln_ctx_closeness
 
@@ -3863,46 +3915,46 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
 
 
     ##################   Set end blocks
-    def f(subdf):     
+    def f(subdf):
         # here we take the first row of block, NOT the first non-nan row
-        row0 = subdf.iloc[0] 
-        assert row0['trialwb'] == 0    
+        row0 = subdf.iloc[0]
+        assert row0['trialwb'] == 0
         # to select es value trial
-        qs = '~time_lh.isna() and ~trial_type.isin(@spectrials)'    
+        qs = '~time_lh.isna() and ~trial_type.isin(@spectrials)'
         subj,bi = subdf.name
         # TODO: do pauses in the middle receive block_ind?
-        
+
         #if bi % 8 == 4:
         subdf15 = subdf.query('~trial_type.isin(@spectrials)')
         cjmp = subdf15['trial_index'].diff() > 1
         ti_jumps = subdf15.loc[cjmp, 'trial_index']
-        if len(ti_jumps):        
+        if len(ti_jumps):
             ti_jump = ti_jumps.values[0]
             #print(subdf15.loc[cjmp, 'trialwb'].iloc[0])
             #print('ti_jump = ',ti_jump)
         else:
             ti_jump = 1e6
         qs += f' and trial_index < {ti_jump}'
-        
-        subdf2 = subdf.query(qs) 
+
+        subdf2 = subdf.query(qs)
         #print(len(subdf), len(subdf.query('~time_lh.isna()' )),
         #                      len(subdf2))
-        ind = subdf2['trial_index'].nlargest(3).index[0] 
+        ind = subdf2['trial_index'].nlargest(3).index[0]
         if np.isnan( subdf2.loc[ind,'prev_error'] ):
-            ind = subdf2['trial_index'].nlargest(3).index[1] 
-            
+            ind = subdf2['trial_index'].nlargest(3).index[1]
+
         #print(ind)
-        res = subdf2.loc[ind]    
+        res = subdf2.loc[ind]
         for col in coln_ctx_closeness:
             res[col] = True
         for col in cols_dif:
-            res[col] = 0                
-            
+            res[col] = 0
+
         return res
 
     df_end_block = grp_subj_bi.apply(f)
 
-    display ( df_end_block.groupby('trialwb').size() )
+    print ( df_end_block.groupby('trialwb').size() )
     df_end_block = df_end_block.drop(labels=['subject','block_ind'], axis=1)
 
     infs_eb = np.isinf(df_end_block['err_sens'])
@@ -3912,7 +3964,7 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     # easy or if prev error is NaN
     infrows = df_end_block.loc[infs_eb]
     easy = (infrows['tgti_to_show'] == 1) & (infrows['perturbation'] == 0 )
-    prevnan =  infrows['prev_error'].isna() 
+    prevnan =  infrows['prev_error'].isna()
     print('neasy = {},  nprev_err_nan = {}'.format(easy.sum(),  prevnan.sum()) )
     assert (easy | prevnan).all()
 
@@ -3924,51 +3976,51 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     ##########  Set beg blocks
     ##################################################
     print('Starting getting beginning blocks')
-    # if it is change of pert I'd use second 
-    def f(subdf):     
+    # if it is change of pert I'd use second
+    def f(subdf):
         # here we take the first row of block, NOT the first non-nan row
-        row0 = subdf.iloc[0] 
+        row0 = subdf.iloc[0]
         pertdif = row0['perturbation_diff_abs']
         assert row0['trialwb'] == 0
         assert not np.isnan(pertdif)
-        
+
         # to select es value trial
-        qs = '~time_lh.isna() and ~trial_type.isin(@spectrials)'    
-        subdf2 = subdf.query(qs)    
+        qs = '~time_lh.isna() and ~trial_type.isin(@spectrials)'
+        subdf2 = subdf.query(qs)
         pert_changed = pertdif > 1e-4
-        
-        # ideally I'd do it like that but since for the first 
-        # trial of block quite often the last before that was 
+
+        # ideally I'd do it like that but since for the first
+        # trial of block quite often the last before that was
         # an error clamp, they will have inf err sens
     #     if pert_changed:
-    #         ind = subdf2['trial_index'].nsmallest(2).index[1]        
+    #         ind = subdf2['trial_index'].nsmallest(2).index[1]
     #     else:
     #         ind = subdf2['trial_index'].nsmallest(1).index[0]
-            
+
         # always take err sens calc based on what happens between
         # second and first trial
         sm = subdf2['trial_index'].nsmallest(2)
         if first_trial_to_take == 'first':
-            ind = sm.index[0] 
+            ind = sm.index[0]
         elif first_trial_to_take == 'second':
-            ind = sm.index[1] 
+            ind = sm.index[1]
         if first_trial_to_take == 'adaptive':
             # if tgt is same, we'll notice it right away
             if row0['prev_ctx_tgt_same']:
-                ind = sm.index[0] 
+                ind = sm.index[0]
             else:
-                ind = sm.index[1] 
-            
+                ind = sm.index[1]
+
         #print(ind)
-        res = subdf2.loc[ind]    
+        res = subdf2.loc[ind]
         for col in cols_ctx_change_tiodep:
             res[col] = row0[col]
         return res
-        
+
     #     res = np.zeros(len(x))
     #     display(x)
     #     print(len(x), len(x.query(qs_pertchange)), len(x.query(qs_pertstay)))
-    #     inds_pc = x.query(qs_pertchange)['trial_index'].nsmallest(2).index[[1]]        
+    #     inds_pc = x.query(qs_pertchange)['trial_index'].nsmallest(2).index[[1]]
     #     #res[inds]
     #     inds_ps = x.query(qs_pertstay)['trial_index'].nsmallest(1).index[[0]]
     #     res = pd.concat( x[inds_pc], x[inds_ps] )
@@ -3977,7 +4029,7 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     dfsw_care = grp_subj_bi.apply(f)
 
     dfsw_care = dfsw_care.drop(labels=['subject','block_ind'], axis=1)
-    display( dfsw_care.groupby(by=['subject'],axis='index').size().describe() )
+    print( dfsw_care.groupby(by=['subject'],axis='index').size().describe() )
 
     assert not dfsw_care['err_sens'].isna().any()
 
@@ -3989,9 +4041,11 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     infs = np.isinf(dfsw_care['err_sens'])
     infrows = dfsw_care.loc[infs]
     easy = (infrows['tgti_to_show'] == 1) & (infrows['perturbation'] == 0 )
-    prevnan =  infrows['prev_error'].isna() 
+    prevnan =  infrows['prev_error'].isna()
     print('neasy = {},  nprev_err_nan = {}'.format(easy.sum(),  prevnan.sum()) )
-    assert (easy | prevnan).all()
+    easypnan = (easy | prevnan)
+    if easypnan.sum() > 0:
+        assert easypnan.all()
 
     pct_inf = 100 * infs.sum() / len(dfsw_care['err_sens'])
     print('pct_inf = {:.2f}% = {} entries'.format(pct_inf, infs.sum()) )
@@ -4023,8 +4077,8 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     return dfes_sw
 
 
-def plotAllTajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh', 
-                traj_to_plot= ['feedback'],
+def plotAllTajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh',
+                traj_to_plot= ['feedback'], separate_plots = False,
                 verbose=0):
     for i,row in dfcc_all_sub.iterrows():
         tind = row['trial_index']
@@ -4033,16 +4087,18 @@ def plotAllTajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh',
         #dfpretraj = dfc_all.query('subject == @subj')
         #grp_perti = dfpretraj.groupby(['trial_index'])
         #lf = row2multierr(row, dfpretraj, grp_perti,
-        #                  home_position, 
+        #                  home_position,
         #            target_coords, params, revert_pert=0)
-        
+        if separate_plots:
+            plt.figure()
+
         ax = plt.gca()
         plotTraj3(ax, row, dfc_all, None, None, params,
                   exitpt_col = exitpt_col, traj_to_plot=traj_to_plot,
                  verbose=verbose)
 
 
-def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_lh', 
+def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_lh',
                 traj_to_plot= ['feedback'],
                 verbose=0):
 
@@ -4073,7 +4129,7 @@ def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_
             plotTraj3(ax, row, dfc_all, None, None, params,
                       exitpt_col = exitpt_col, traj_to_plot=traj_to_plot,
                      verbose=verbose, markersize = mszs[tindi] )
-            ttl += f'S{subj[-3:]} ti={tind} ({row["trialwb"]}); pert={row["perturbation"]};\n' 
+            ttl += f'S{subj[-3:]} ti={tind} ({row["trialwb"]}); pert={row["perturbation"]};\n'
 
         ax.set_title(ttl[:-1] )
 
@@ -4083,29 +4139,36 @@ def plotAllTrajTimeRes(dfcc_all_sub, dfc_all):
         subj = row['subject']
         qs = 'subject == @subj and trial_index == @tind'
         dftr = dfc_all.query(qs).copy()
-        
+
         #dftr['jax1_std'] = dftr['jax1'].expanding().std()
         #dftr['jax2_std'] = dftr['jax2'].expanding().std()
         #row = dfcc_all.query(qs).iloc[0]
-        
+
     #     thr = 1e-3
     #     tmin1 = dftr.query('jax1_std > @thr')['time_since_trial_start'].min()
     #     tmin2 = dftr.query('jax2_std > @thr')['time_since_trial_start'].min()
     #     print(tmin1, tmin2, row['time_lh'])
     #     tmin = max(tmin1,tmin2)
 
-        
+
     #     assert abs(tmin - row['time_tmstart']) < 1e-10
         #dftr['time_since_trial_start']
 
         ax = None # plt.gca()
-        dftr.plot(ax = ax, x='time_since_trial_start', 
-                  y=['jax1', 'jax2', 'jax1_std',
-                    'jax2_std'], figsize=(4,3))
+
+        colnsy = ['jax1', 'jax2', ]
+        stdcols = ['jax1_std', 'jax2_std']
+        if stdcols[0] in dftr.columns:
+            colnsy += stdcols
+        dftr.plot(ax = ax, x='time_since_trial_start',
+                  y=colnsy, figsize=(4,3))
         plt.vlines([row['time_lh'], row['time_tmstart2'] ], -0.5,0.2)
         print(row['time_lh'], row['time_tmstart2'])
         plt.xlim(row['time_lh'] - 0.1, 0.5)
         plt.legend(loc='lower right')
+
+        ttl = f'S{subj[-3:]} ti={tind} ({row["trialwb"]}); pert={row["perturbation"]}'
+        plt.title(ttl )
 
 
 def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
@@ -4122,6 +4185,69 @@ def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
     if 'err_sens' in df.columns:
         print('Err sens abs info of truncated')
         inf = np.isinf( df['err_sens'] )
-        display( df.loc[c & (~inf), 'err_sens'].abs().describe()  )
-    
+        print( df.loc[c & (~inf), 'err_sens'].abs().describe()  )
 
+
+def addTrigPresentCol_NIH(df, events, environment=None):
+    '''
+    events is 2-dim
+    '''
+    assert events.ndim == 2
+    from base2 import int_to_unicode
+    from Levenshtein import editops
+    assert (np.diff( np.array(df.index) ) > 0).all()
+
+
+    # remove some of the behav inds
+    # WARNING: this will fail (give empty)if epochs are based of time_locked=feedback
+    # (or maybe it was only in old code?)
+    meg_targets_ev = events[:, 2].copy()
+    #target_inds_behav = np.array( df['target_inds'] )
+
+    target_codes_behav = np.array( df['target_codes'] )
+
+    assert len(target_codes_behav)
+    assert len(meg_targets_ev)
+    print(  len(target_codes_behav) , len(meg_targets_ev) )
+    #if environment is None:
+    #    environment = df['environment']
+
+    # for different environments target signals stored in .fif have different codes (20+ vs 30+) so
+    # we convert to unified indices
+
+    #codes_allowed = [20, 21, 22, 23, 25, 26, 27, 28]
+    from config2 import event_ids_tgt
+    nbad = (~np.isin(meg_targets_ev, event_ids_tgt) ).sum()
+    print(nbad , 'non target code events' )
+    assert nbad == 0
+    #for env,envcode in env2envcode.items():
+    #    #trial_inds = np.where(environment == envcode)[0]
+    #    trial_inds = np.where( np.isin(meg_targets_ev,
+    #        stage2evn2event_ids['target'][env] ) )[0]
+    #    # it uses that target codes are conequitive integers
+    #    meg_targets_ev[trial_inds] = meg_targets_ev[trial_inds] - env2subtr[env]
+
+    # one can have less triggers than behav
+    changes = editops(int_to_unicode(target_codes_behav),
+                        int_to_unicode(meg_targets_ev))
+    # we have missing triggers in MEG file so we delete stuff from behav file
+    delete_trials = [change[1] for change in changes] # these are indices of rows
+    print( changes )
+    df['trigger_present'] = True
+    colind = df.columns.get_loc('trigger_present')
+    df.iloc[delete_trials, colind] = False
+
+    assert df['trigger_present'].sum() > 0
+    print(df['trigger_present'].astype(float).describe() )
+
+    target_codes_behav2 = df.query('trigger_present == True')['target_codes']
+
+    # respects ordering
+    if np.array_equal(meg_targets_ev, target_codes_behav2):
+        if len(delete_trials):
+            print(f'addTrigPresentCol: {len(delete_trials)} triggers missing for {len(delete_trials)} trials')
+    else:
+        #warnings.warn('MEG events and behavior file do not match')
+        raise ValueError('MEG events and behavior file do not match')
+
+    return df

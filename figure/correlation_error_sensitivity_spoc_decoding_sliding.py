@@ -22,7 +22,7 @@ from pingouin import partial_corr
 from plots import *
 
 sns.set_palette('colorblind')
-plt.style.use('seaborn')
+#plt.style.use('seaborn')
 color_palette = sns.color_palette("colorblind", 8).as_hex()
 colors = [color_palette[1], color_palette[7]]
 my_pal = {'Stable': colors[0], 'Random': colors[1]}
@@ -43,7 +43,7 @@ if not op.exists( op.join(path_fig, save_folder) ):
 #                regression_type,time_locked,
 #                analysis_name,freq_name,tmin_cur,tmax_cur)
 if DEBUG:
-    #subjects = subjects[:1]
+    #subjects = subjects[-1:]
     print("--------------   DEBUG MODE  --------------")
     print("--------------   DEBUG MODE  --------------")
     print("--------------   DEBUG MODE  --------------")
@@ -96,7 +96,9 @@ if not use_preload_df:
             # , 'non_hit' is not per dec var
             df_collect1 = collectResults(subject,output_folder,freq_name,
                     keys_to_extract = ['par'], env=env,
+                    control_type = control_type,
                     time_locked = time_locked,
+                    tmin = tmin_desired,
                     time_start=time_start, time_end=time_end )
             if df_collect1 is None or len(df_collect1) == 0:
                 print(f'Found nothing for subject {subject}')
@@ -111,7 +113,7 @@ if not use_preload_df:
             df_collect2['dec_type'] = 'classic'
 
             df_collect3 = collectResults(subject, output_folder, freq_name,
-                    keys_to_extract = varnames_elem,
+                    keys_to_extract = varnames_b2b,
                                         parent_key = 'decoding_per_var_b2b',
                                         df = df_collect1,
                                         time_start=time_start, time_end=time_end)
@@ -177,7 +179,8 @@ if not use_preload_df:
 
         df_mode = 'new'
 
-assert set( df['subject'] ) == set(np.array(subjects)[subject_inds])
+assert set( df['subject'] ) == set(np.array(subjects)[subject_inds]), \
+        set( df['subject'] ) ^ set(np.array(subjects)[subject_inds]) 
 
 row  =df.iloc[0]
 for kte in varnames:
@@ -274,6 +277,7 @@ ppnames = [ 'pp:diff_es_pe:r', 'pp:diff_es:r',    'pp:diff_abscorr:r', 'pp:abspe
 # increases, so does y. Negative correlations imply that as x increases, y
 # decreases.
 
+# classical scores
 for kte in varnames:
     df[f'{kte}_scores_mean_over_folds'] =  df[f'{kte}_scores'].apply(lambda x: np.mean(x) if x is not None else np.nan)
     df[f'{kte}_scores_std_over_folds']  =  df[f'{kte}_scores'].apply(lambda x: np.std(x) if x is not None else np.nan)
@@ -348,8 +352,8 @@ for kte in varnames:
             gsz = grp.size()[0]
             #if len(psc) == 2:
             #    assert gsz == len(subject_inds), (gsz, len(subject_inds) )
-            me  = grp.mean()
-            std = grp.std()
+            me  = grp.mean(numeric_only=True)
+            std = grp.std(numeric_only=True)
 
             me = me.reset_index().sort_values(by=['tmin'],
                                             key=lambda x: list(map(float,x) ) )
@@ -409,6 +413,12 @@ print(f'Fig saved to {fname_fig}')
 if not DEBUG:
     plt.close()
 
+# in td_long_fig2
+# diff = all_scores_stable[1] - all_scores_random[1]
+# sig = decod_stats(diff) < 0.05
+# plt.fill_between(times, diff.mean(0), where=sig, color=colors[0], alpha=0.3)
+# decod_stats computes permutation_cluster_1samp_test for 2**10 perms
+# then retunr p_values
 
 if plot_scores_per_subj:
     for kte in varnames:
@@ -428,6 +438,7 @@ if plot_scores_per_subj:
 sys.exit(0)
 
 
+##########################################################################################
 
 # TODO: needs overhaul
 for kte in varnames:

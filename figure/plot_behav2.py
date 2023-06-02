@@ -7,6 +7,8 @@ from config2 import *
 import seaborn as sns
 from behav_proc import getTrialGroupName
 
+# this file is old, not used anymore (as of june 1, 2023)
+
 trial_group_names = {'trialwe':'we', 'trialwb':'wb', 'trials':'no',
         'trialwtgt':'tgt',  'trialwpert_we':'pertwe',
         'trialwpert_wb':'pertwb',

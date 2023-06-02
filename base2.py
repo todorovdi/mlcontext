@@ -5,6 +5,7 @@ import math
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import ShuffleSplit
 from scipy.linalg import pinv
+# NIH
 width = 800  # need to match the screen size during the task
 height = 800
 radius = int(round(height*0.5*0.8))
@@ -338,7 +339,7 @@ class B2B(BaseEstimator):
     def fit(self, X, Y):
         from joblib import Parallel, delayed
         if self.ensemble is None:
-            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = random_state_split)
+            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = self.random_state_split)
         else:
             ensemble = self.ensemble
 
@@ -424,7 +425,7 @@ def _b2b_fit_one_split(isplit, X,Y,G_set,H_set,G,H):
     return H_hat
 
 
-def _b2b_fit_one_split_back(isplit, Y, Yhat, H_set, H): 
+def _b2b_fit_one_split_back(isplit, Y, Yhat, H_set, H):
     return H.fit(Y[H_set], Yhat[H_set]).coef_
 
 # this one cycles over dims so within a dim it does not make sense to
@@ -441,8 +442,12 @@ def _b2b_fit_one_split_one_dim(isplit,dimi,X,y,G_set,G):
         print(f'_b2b_fit_one_split_one_dim: (isplit={isplit}, {dimi}) G_set = {G_set}\n')
         print(f'_b2b_fit_one_split_one_dim: (isplit={isplit}, {dimi}) y[G_set] = {y[G_set]}\n')
 
+    verbose = 1
+
     import mne
     with mne.use_log_level('warning'):
+        if verbose:
+            print(f'Fit split {isplit}')
         y_hat = G.fit(X[G_set], y[G_set]).predict(X)
     #Y_hat = G.fit(X[G_set], y[G_set]).predict(X)
     #Y_hats[:,dim_ind] = Y_hat
@@ -504,10 +509,11 @@ class B2B_SPoC(BaseEstimator):
 
 
     def fit(self, X, Y):
+        assert X.shape[0] == Y.shape[0], (X.shape, Y.shape)
         import mne
         from joblib import Parallel, delayed
         if self.ensemble is None:
-            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = random_state_split)
+            ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = self.random_state_split)
         else:
             ensemble = self.ensemble
 
@@ -555,7 +561,7 @@ class B2B_SPoC(BaseEstimator):
                 y_hat_per_dim = {}
                 for isplit,dimi,y_hat in r:
                     #if dimi not in y_hat_per_dim:
-                    y_hat_per_dim[ (isplit, dimi) ] = y_hat.T 
+                    y_hat_per_dim[ (isplit, dimi) ] = y_hat.T
 
                 if self.back_each_dim_sep:
 
@@ -675,7 +681,7 @@ def getXGBparams(n_jobs=None, tree_method='gpu_hist'):
     add_clf_creopts.update(method_params)
     return add_clf_creopts
 
-def adjustTrajCoords(XY, tgtcur, home_position, params, 
+def adjustTrajCoords(XY, tgtcur, home_position, params,
                      rot_origin='trajstart', auto_scale = 1,
                      shift_home = 1):
     '''
@@ -723,14 +729,14 @@ def adjustTrajCoords(XY, tgtcur, home_position, params,
         curveX, curveY   = fbXYhc_ta
 
         if shift_home:
-            curveX,  curveY   = fbXYhc_ta  - origin[:,None] 
+            curveX,  curveY   = fbXYhc_ta  - origin[:,None]
             dirtgt_ta -= origin
             tgtcur_ta -= origin
 
         if auto_scale:
             if shift_home:
-                curveX *= d0 / d 
-                curveY *= d0 / d 
+                curveX *= d0 / d
+                curveY *= d0 / d
             else:
                 # I'd need to shfit before rescalign and then shift back
                 raise ValueError('not implemented')
@@ -758,6 +764,8 @@ def areaBetween(xs,ys, xs2, ys2, start ,end):
     ys = np.hstack( [start[1] ] + list( ys ) + endy_ + list(ys2[::-1] )  + [ start[1] ] )
     lr = LineString(np.c_[xs,ys])
 
+    #display(lr)
+
     #mp = shapely.validation.make_valid(shapely.geometry.Polygon(np.c_[xs, ys]))
     #return mp.area
     return signed_area(lr)
@@ -770,10 +778,10 @@ def calcNormCoefSectorArea(params):
     # 0.5 r**2 theta
     full_sector_area = 0.5 * float(params['target_location_spread']) *(np.pi / 180) *\
             float(params['dist_tgt_from_home'])**2
-    norm_coef = 10. / full_sector_area 
+    norm_coef = 10. / full_sector_area
     return norm_coef
 
-def areaBetweenTraj(dftraj1, dftraj2, home_position, 
+def areaBetweenTraj(dftraj1, dftraj2, home_position,
                     target_coords, params, invalid_val = np.nan,
                     endpoint = 'last_point',
                     ax = None):
@@ -794,7 +802,7 @@ def areaBetweenTraj(dftraj1, dftraj2, home_position,
         tgtcur = np.array(  [ txc[tgti], tyc[tgti] ] )
 
         ofbXY = dftraj[['unpert_feedbackX', 'unpert_feedbackY']].to_numpy()
-        r = adjustTrajCoords(ofbXY, tgtcur, home_position, params, 
+        r = adjustTrajCoords(ofbXY, tgtcur, home_position, params,
                         rot_origin='trajstart', auto_scale = 1,
                         shift_home = 1)
         rs += [r]
@@ -816,13 +824,17 @@ def areaBetweenTraj(dftraj1, dftraj2, home_position,
 
     start = tgtline_homec_crossing
     if endpoint == 'target':
-        end = tgt 
+        end = tgt
     elif endpoint == 'last_point':
         end = None
     else:
         raise ValueError(f'endpoint = {endpoint} not impl')
 
     ab = areaBetween(xs,ys,xs2,ys2, start,end)
+
+    ##################################################################
+    ##########################  plotting  #########################
+    ##################################################################
 
     if ax is not None:
         rt = float(params['radius_target'] )
@@ -847,7 +859,7 @@ def areaBetweenTraj(dftraj1, dftraj2, home_position,
                    label='ofb2 ta (homec)',
                    marker='*', s = 30, c='green')
 
-        r = zip( tgtline_homec_crossing , tgt) 
+        r = zip( tgtline_homec_crossing , tgt)
         ax.plot( *r, ls=':', label='tgtpath ta')
 
         #################
@@ -891,9 +903,9 @@ def areaBetweenTraj(dftraj1, dftraj2, home_position,
         #            s+='; '
         #        s += '\n'
         #    #s = f'\nerror={r["error_endpoint_ang"]:.1f}; trialwb={r["trialwb"]}; tt={r["trial_type"]}'
-        
-        ttl =  f'ti={ti1}; vft={vft1}; tgti={tgti1}\n' 
-        ttl += f'ti={ti2}; vft={vft2}; tgti={tgti2}\n' 
+
+        ttl =  f'ti={ti1}; vft={vft1}; tgti={tgti1}\n'
+        ttl += f'ti={ti2}; vft={vft2}; tgti={tgti2}\n'
         ttl += f'area={ab:.2f}'
         ax.set_title(ttl)
         ax.legend(loc='lower left')
@@ -912,3 +924,123 @@ def rot(xs,ys, ang=20. * np.pi / 180., startpt =(0.,0.) ):
     xs2 += startpt[0]
     ys2 += startpt[1]
     return np.array( [xs2, ys2])
+
+
+############################## extracted from jr tools
+
+def repeated_corr(X, y, dtype=float):
+    """Computes pearson correlations between a vector and a matrix.
+
+    Adapted from Jona-Sassenhagen's PR #L1772 on mne-python.
+
+    Parameters
+    ----------
+        X : np.array, shape (n_samples, n_measures)
+            Data matrix onto which the vector is correlated.
+        y : np.array, shape (n_samples)
+            Data vector.
+        dtype : type, optional
+            Data type used to compute correlation values to optimize memory.
+
+    Returns
+    -------
+        rho : np.array, shape (n_measures)
+    """
+    if not isinstance(X, np.ndarray):
+        X = np.array(X)
+    if X.ndim == 1:
+        X = X[:, None]
+    shape = X.shape
+    X = np.reshape(X, [shape[0], -1])
+    if X.ndim not in [1, 2] or y.ndim != 1 or X.shape[0] != y.shape[0]:
+        raise ValueError('y must be a vector, and X a matrix with an equal'
+                         'number of rows.')
+    if X.ndim == 1:
+        X = X[:, None]
+
+    # subtract mean over samples 
+    ym = np.array(y.mean(0), dtype=dtype)
+    Xm = np.array(X.mean(0), dtype=dtype)
+    # chane in place to save memory
+    y -= ym
+    X -= Xm
+
+    y_sd = y.std(0, ddof=1)
+    X_sd = X.std(0, ddof=1)[:, None if y.shape == X.shape else Ellipsis]
+    # corr / (len * product of stds)
+    R = (np.dot(y.T, X) / float(len(y) - 1)) / (y_sd * X_sd)
+    R = np.reshape(R, shape[1:])
+
+    # cleanup variable changed in place
+    y += ym
+    X += Xm
+    return R
+
+def repeated_spearman(X, y, dtype=None):
+    """Computes spearman correlations between a vector and a matrix.
+
+    Parameters
+    ----------
+        X : np.array, shape (n_samples, n_measures ...)
+            Data matrix onto which the vector is correlated.
+        y : np.array, shape (n_samples)
+            Data vector.
+        dtype : type, optional
+            Data type used to compute correlation values to optimize memory.
+
+    Returns
+    -------
+        rho : np.array, shape (n_measures)
+    """
+    from scipy.stats import rankdata
+    if not isinstance(X, np.ndarray):
+        X = np.array(X)
+    if X.ndim == 1:
+        X = X[:, None]
+    shape = X.shape
+    X = np.reshape(X, [shape[0], -1])
+    if X.ndim not in [1, 2] or y.ndim != 1 or X.shape[0] != y.shape[0]:
+        raise ValueError('y must be a vector, and X a matrix with an equal'
+                         'number of rows.')
+
+    # Rank (indices in sorted array, caring about multiplicity)
+    X = np.apply_along_axis(rankdata, 0, X)
+    y = np.apply_along_axis(rankdata, 0, y)
+    # Double rank to ensure that normalization step of compute_corr
+    # (X -= mean(X)) remains an integer.
+    X *= 2
+    y *= 2
+    X = np.array(X, dtype=dtype)
+    y = np.array(y, dtype=dtype)
+    R = repeated_corr(X, y, dtype=type(y[0]))
+    R = np.reshape(R, shape[1:])
+    return R
+
+def _parallel_scorer(y_true, y_pred, func, n_jobs=1):
+    # split long y into part to evaluate in parallel
+
+    #from nose.tools import assert_true
+    from mne.parallel import parallel_func, _check_n_jobs
+    # check dimensionality
+    assert(y_true.ndim == 1)
+    assert(y_pred.ndim == 2)
+    # set jobs not > to n_chunk
+    n_jobs = min(y_pred.shape[1], _check_n_jobs(n_jobs))
+    parallel, p_func, n_jobs = parallel_func(func, n_jobs)
+    chunks = np.array_split(y_pred.transpose(), n_jobs)
+    # run parallel
+    out = parallel(p_func(chunk.T, y_true) for chunk in chunks)
+    # gather data
+    return np.concatenate(out, axis=0)
+
+def scorer_spearman(y_true, y_pred, n_jobs=1):
+    #from jr.stats import repeated_spearman
+    y_true, y_pred, shape = _check_y(y_true, y_pred)
+    rho = _parallel_scorer(y_true, y_pred, repeated_spearman, n_jobs)
+    if (len(shape) > 1) and (np.sum(shape[1:]) > 1):
+        rho = np.reshape(rho, shape[1:])
+    else:
+        rho = rho[0]
+    return rho
+
+##############################

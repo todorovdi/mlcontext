@@ -93,6 +93,7 @@ SHIFT_ID=0
 #$OSCBAGDIS_DATAPROC_CODE/run/srun_exec_runstr.sh $RUNSTRINGS_FN $SLURM_ARRAY_JOB_ID $EFF_ID
 
 MAXJOBS=256 # better this than 64, otherwise more difficult on the level of indtool
+export OPENBLAS_NUM_THREADS=1
 
 NUMRS=`wc -l $RUNSTRINGS_FN | awk '{print $1;}'`
 echo "Start now"
@@ -111,7 +112,7 @@ while [ $NUMRS -gt $SHIFT_ID ]; do
   #############################   Execute 
   sedind=$(( $EFF_ID + 1 ))
   runstr=`sed -n "$sedind"p $RUNSTRINGS_FN`
-  runstr="$runstr --SLURM_job_id $SLURM_JOB_ID" 
+  runstr="$runstr --SLURM_job_id $SLURM_JOB_ID"_"$ID" 
   echo "$runstr"
   # execute
   $runstr

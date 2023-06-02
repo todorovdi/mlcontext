@@ -13,6 +13,7 @@ try:
 except ImportError:
     import io as StringIO
 
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
 
 # path_data = '/Volumes/Samsung_T1/MEGdata/MemErrors/'
@@ -212,7 +213,7 @@ class CustomAction(argparse.Action):
 
 
 
-def genArgParser():
+def genArgParser_decodeNIH():
     parser = argparse.ArgumentParser()
     from config2 import n_jobs as n_jobs_def
 
@@ -300,14 +301,24 @@ def genArgParser():
     parser.add_argument('--save_flt_raw', default = 1, type = int)
 
     parser.add_argument('--error_type', default = 'MPE', type = str)
+    parser.add_argument('--recalc_err_sens', default = 1, type = int)
     parser.add_argument('--trial_group_col_calc',
                         default = 'trialwe', type = str)
+    parser.add_argument('--trial_shift_size', default=1, type=int)
     parser.add_argument('--block_names_to_use',
                         default = 'all', type = str)
+
+    parser.add_argument('--scale_X_robust', default = 0, type=int)
+    parser.add_argument('--scale_Y_robust', default = 0, type=int)
 
     parser.add_argument('--exit_after', default = 'end')
 
     parser.add_argument('--nskip_trial', default = 1, type=int)
+
+    parser.add_argument('--discard_hit_twice', default = 0, type=int)
+
+    parser.add_argument('--behav_file', type=str)
+    parser.add_argument('--fif_file', type=str)
 
     #parser.add_argument('--decode_merge_pert', default = 1, type = int)
     #parser.add_argument('--decode_per_pert', default = 1 , type = int)
@@ -317,6 +328,7 @@ def genArgParser():
     return parser
 
 def cleanEvents(events):
+    # check we have for stable events  tgtcode, 100, 30
     import warnings
     t = -1
     bad_trials = list()
@@ -345,6 +357,6 @@ def cleanEvents(events):
                         break
                     else:
                         bad_events.append(ii+iii)
-    print('cleanEvents: deleted {len(bad_events)} events')
+    print(f'cleanEvents: deleted {len(bad_events)} events')
     events_cleaned = np.delete(events, bad_events, 0)
     return events_cleaned

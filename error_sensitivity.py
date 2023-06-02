@@ -50,6 +50,7 @@ target_coords = calc_target_coordinates_centered(target_angs)
 # get raw and events from raw file
 # raw = read_raw_ctf(fname_raw, preload=True, system_clock='ignore')
 
+
 #modify behav_df in place
 def enforceTargetTriggerConsistency(behav_df, epochs, environment,
                                     do_delete_trials=1,
@@ -262,7 +263,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
                     enforce_consistency=0, time_locked='target',
                     correct_hit = 'inf', error_type = 'MPE',
                     colname_nh = 'non_hit_not_adj',
-                    colname_nh_out = None,
+                    coln_nh_out = None,
                     shiftsz=1,
                     err_sens_coln = 'err_sens',
                     addvars = [], recalc_non_hit = True, target_info_type = 'inds',
@@ -276,7 +277,6 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     '''
 
     assert shiftsz >= 1
-    #colname_nh = 'non_hit_shifted'
 
     # in read_beahav we compute
     # errors.append(feedback[trial] - target_locs[trial])
@@ -322,21 +322,46 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     #    nonhit_shifted = np.insert(nonhit, 0 , ins_nh)[:-shiftsz]
 
     #############################
+    tind_coln = 'trials'
 
-    trial_inds_glob = np.array( behav_df.loc[df_inds, 'trials'])
+    trial_inds_glob = np.array( behav_df.loc[df_inds, tind_coln])
 
-    trial_inds_glob1, valid_inds1, trial_inds_glob2, valid_inds2 = \
-            getIndShifts(trial_inds_glob, time_locked=time_locked, shiftsz=shiftsz)
+    if (df_fulltraj is not None) and shiftsz == 1:
+
+        prev_trial_inds_glob = np.array( behav_df.loc[df_inds, 'prev_trial_index_valid'])
+
+        if time_locked in ['target', 'trial_end']:
+            print('Using prev_trial_index_valid')
+            trial_inds_next      = trial_inds_glob
+            valid_inds_cur  = np.ones( len(trial_inds_glob), dtype=bool )
+            valid_inds_next = np.ones( len(trial_inds_glob), dtype=bool )
+            valid_inds_next[trial_inds_next < 0] = False
+
+            trial_inds_cur = prev_trial_inds_glob
+            trial_inds_cur[np.isnan(prev_trial_inds_glob)  ] = -1e6
+            trial_inds_cur = trial_inds_cur.astype(int)
+
+            #trial_inds_cur = np.insert(trial_inds, 0, insind)[:-shiftsz]
+            valid_inds_next[trial_inds_cur < 0] = False
+            valid_inds_next[trial_inds_next < 0] = False
+
+            trial_inds_glob1, valid_inds1, trial_inds_glob2, valid_inds2 = \
+                trial_inds_cur, valid_inds_cur, trial_inds_next, valid_inds_next
+        else:
+            raise ValueError('not impl')
+    else:
+        trial_inds_glob1, valid_inds1, trial_inds_glob2, valid_inds2 = \
+                getIndShifts(trial_inds_glob, time_locked=time_locked, shiftsz=shiftsz)
 
     trial_inds_loc = np.arange(len(trial_inds_glob ) )
     trial_inds_loc1, valid_inds1, trial_inds_loc2, valid_inds2 = \
             getIndShifts(trial_inds_loc, time_locked=time_locked, shiftsz=shiftsz)
 
     target_locs  = np.array(behav_df.loc[df_inds,'target_locs'])
+    movement      = np.array(behav_df.loc[df_inds, 'org_feedback'])
     if coln_correction_calc is None:
         #correction = (target_angs2 - next_movement) - (target_angs - movement)
-        movement      = np.array(behav_df.loc[df_inds, 'org_feedback'])
-
+        # -belief
         vals_for_corr = target_locs - movement
     else:
         vals_for_corr = behav_df.loc[df_inds, coln_correction_calc].to_numpy()
@@ -378,6 +403,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
             dftraj2 = dftraj2.loc[dftraj2.index[1: ] ]
 
             ab = trajPair2corr(dftraj1, dftraj2  )
+            #print(gti1,gti2, ab)
 
             correction_cur = ab
             correction += [correction_cur]
@@ -387,23 +413,6 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         # assuming it is ofb - target
         correction =  vals_for_corr1 - vals_for_corr2
 
-    if len(addvars):
-        raise ValueError('Not implemneted')
-        #for vn in addvars:
-        #    if vn not in vndef2vn.values():
-        #        if vn.startswith('prev_'):
-        #            vals = behav_df.loc[df_inds, vn[5:] ]
-        #            vals = np.array(vals)
-        #            vals = np.insert(vals, 0, 0)[:-1]
-        #        elif vn.startswith('next_'):
-        #            vals = behav_df.loc[df_inds, vn[5:] ]
-        #            vals = np.array(vals)
-        #            vals = np.insert(vals,len(vals),np.nan)[1:]
-        #        else:
-        #            assert vn in behav_df.columns
-        #            vals = behav_df.loc[df_inds, vn ]
-        #            vals = np.array(vals)
-        #        df_esv[vn] = vals
 
     df_esv = {}
     df_esv['trial_inds_glob'] = trial_inds_glob
@@ -411,10 +420,32 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     df_esv['trial_inds_glob_nextlike_error'] = trial_inds_glob2
     df_esv = pd.DataFrame( df_esv )
 
+    if len(addvars):
+        #raise ValueError('Not implemneted')
+        #df_esv['prevlike_error'] = errors1
+        #df_esv['nextlike_error'] = errors2
 
-    df_esv[colname_nh] = nonhit.astype(bool) 
-    if colname_nh_out is None:
-        colname_nh_out = colname_nh + '_shifted'
+        for vn in addvars:
+            if vn.startswith('prev_'):
+                valn = vn[5:]
+                vals = behav_df.loc[df_inds, valn ]
+                vals = shiftVals(vals, trial_inds_loc1, valid_inds1)
+            elif vn.startswith('next_'):
+                valn = vn[5:]
+                vals = behav_df.loc[df_inds, valn ]
+                vals = shiftVals(vals, trial_inds_loc2, valid_inds2)
+            else:
+                valn = vn
+                print(f'computeErrSens3: boring add {vn}')
+                vals = behav_df.loc[df_inds, valn ]
+
+            df_esv[vn] = vals
+
+
+
+    df_esv[colname_nh] = nonhit.astype(bool)
+    if coln_nh_out is None:
+        coln_nh_out = colname_nh + '_shifted'
 
     # todo rename cur to 1 and next to 2, otherwise it is confusing
 
@@ -429,11 +460,11 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         nonhit_err_compat = nonhit_err1_compat  # current trial error
 
 
-    #df_esv[colname_nh_out] = nonhit_shifted
-    df_esv[colname_nh_out] = nonhit_err_compat.astype(bool)
+    #df_esv[coln_nh_out] = nonhit_shifted
+    df_esv[coln_nh_out] = nonhit_err_compat.astype(bool)
 
     df_esv[err_sens_coln] = np.nan
-    c = df_esv[colname_nh_out]
+    c = df_esv[coln_nh_out]
 
     if time_locked == 'trial_end':
         errors_denom = errors2
@@ -451,37 +482,33 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     #import pdb; pdb.set_trace()
 
 
-    nh = np.sum( ~df_esv[colname_nh_out] )
+    nh = np.sum( ~df_esv[coln_nh_out] )
     if correct_hit == 'prev_valid':
-        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.inf
-        hit_inds = np.where(~df_esv[colname_nh_out] )[0]
+        df_esv.loc[~df_esv[coln_nh_out],err_sens_coln]  = np.inf
+        hit_inds = np.where(~df_esv[coln_nh_out] )[0]
         for hiti in hit_inds:
             prev = df_esv.loc[ :hiti, err_sens_coln ]
             good = np.where( ~ (np.isinf( prev ) | np.isnan(np.isinf) ) )[0]
             if len(good):
                 lastgood = good[-1]
                 df_esv.loc[ hiti, err_sens_coln ] = df_esv.loc[ lastgood, err_sens_coln ]
-        #df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  =
+        #df_esv.loc[~df_esv[coln_nh_out],err_sens_coln]  =
     elif correct_hit == 'zero':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = 0
+        df_esv.loc[~df_esv[coln_nh_out],err_sens_coln]  = 0
     elif correct_hit == 'inf':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.inf
+        df_esv.loc[~df_esv[coln_nh_out],err_sens_coln]  = np.inf
     elif correct_hit == 'nan':
         if verbose:
             print(f'correct_hit == {correct_hit}: setting {nh} out of {len(df_esv)}')
-        df_esv.loc[~df_esv[colname_nh_out],err_sens_coln]  = np.nan
+        df_esv.loc[~df_esv[coln_nh_out],err_sens_coln]  = np.nan
 
     #raise ValueError('debug')
-
     df_esv['correction'] = correction
     df_esv['error_type'] = error_type
-
-    df_esv['environment']  = np.array( behav_df.loc[df_inds, 'environment'] )
-    df_esv['perturbation'] = np.array( behav_df.loc[df_inds, 'perturbation'])
 
     # '_like' means that it is not necessarily stricly prev/next and depends on
     # time_locked
@@ -491,11 +518,20 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     df_esv['prevlike_target_loc'] = targets_locs1
     df_esv['nextlike_target_loc'] = targets_locs2
 
+    # for decoding later
+    df_esv['belief']      = -vals_for_corr
+    # this should be set here (not in behav_proc)
+    # because it depends on the coln_corr_calc
+    df_esv['prev_belief'] = -getPrev(vals_for_corr.astype(float) )
+    df_esv['prev_movement'] = getPrev(movement.astype(float))
+    #####
 
+    df_esv['environment']  = np.array( behav_df.loc[df_inds, 'environment'] )
+    df_esv['perturbation'] = np.array( behav_df.loc[df_inds, 'perturbation'])
     df_esv['prev_error']      = getPrev(errors0)
     df_esv['target_loc']      = target_locs.astype(float)
     df_esv['prev_target_loc'] = getPrev(target_locs.astype(float) )
-    df_esv[f'prev_{err_sens_coln}']   = getPrev( df_esv[err_sens_coln].to_numpy() )
+    df_esv[f'prev_{err_sens_coln}'] = getPrev( df_esv[err_sens_coln].to_numpy() )
 
     #raise ValueError('debug')
 
@@ -507,6 +543,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
                     enforce_consistency=0, time_locked='target',
                     correct_hit = 'inf', error_type = 'MPE',
                     colname_nh = 'non_hit_not_adj', shiftsz=1,
+                    coln_nh_out = 'non_hit_shifted', 
                     err_sens_coln = 'err_sens',
                     addvars = [], recalc_non_hit = True, target_info_type = 'inds',
                     coln_correction_calc = None,
@@ -517,7 +554,6 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
     '''
 
     assert shiftsz >= 1
-    #colname_nh = 'non_hit_shifted'
 
     # in read_beahav we compute
     # errors.append(feedback[trial] - target_locs[trial])
@@ -546,8 +582,6 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
     # after enforcing consistencey
     # environment_cur  = np.array(behav_df.loc[df_inds,'environment'])
     # feedback     = np.array(behav_d.locf['feedback'])
-    feedbackX_cur    = np.array(behav_df.loc[df_inds, 'feedbackX'])
-    feedbackY_cur    = np.array(behav_df.loc[df_inds, 'feedbackY'])
     movement_cur     = np.array(behav_df.loc[df_inds, 'org_feedback'])
 
     if error_type == 'MPE':
@@ -573,6 +607,8 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
     # it is a _mask_ of non_hit, not indices
     # mask is on df_inds only, not on entire behav_df
     if recalc_non_hit or ('non_hit_not_adj' not in behav_df.columns):
+        feedbackX_cur    = np.array(behav_df.loc[df_inds, 'feedbackX'])
+        feedbackY_cur    = np.array(behav_df.loc[df_inds, 'feedbackY'])
         if verbose:
             print('Creating new  "non_hit_not_adj"')
         non_hit_not_adj = point_in_circle(target_inds, target_coords,
@@ -686,7 +722,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
         #df_esv[ ]
 
     df_esv['non_hit_not_adj'] = non_hit_not_adj
-    df_esv['non_hit_shifted'] = valid
+    df_esv[coln_nh_out] = valid
     df_esv.loc[df_esv[colname_nh],err_sens_coln]  = correction / errors
     # recal that in the experiment code what goes to "errors" columns is
     # computed this way
@@ -1297,6 +1333,7 @@ def getEpochs(raw,is_short,bsl):
 def getTruncDep(df, qs_to_check):
     # dependence on truncation params
     from behav_proc import truncateDf
+    import pinguin as pg
     #truncateDf?
 
     #dfes_goog_noq = truncateDf( dfes, 'err_sens', q = None, infnan_handling='discard' )
@@ -1311,7 +1348,7 @@ def getTruncDep(df, qs_to_check):
     rs = []
     for truncapd in pds:
         print('   truncapd=',truncapd)
-        dfes_goog, locs = truncateDf( df, 'err_sens', **truncapd, 
+        dfes_goog, locs = truncateDf( df, 'err_sens', **truncapd,
                             infnan_handling='discard',
                              verbose=1, retloc=1 )
         for alt in ['greater','less','two-sided']:
@@ -1329,10 +1366,10 @@ def getTruncDep(df, qs_to_check):
                 r['hi_mean'] = hi.mean()
             else:
                 r['hi_mean'] = locs.get('hi',None)
-                
+
             r['qs'] = qs_to_check
             rs += [r]
-        
+
         del dfes_goog
         #break
         #display(pg.ttest(dfes_goog.query(qs_notspec)['err_sens'], 0 , alternative='less'))

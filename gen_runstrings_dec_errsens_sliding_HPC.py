@@ -15,28 +15,19 @@ hpasses = ['no_filter']
 
 #shift = 0.25
 dur   = 0.464
-shift = dur / 2
-#shift = dur / 4
-
-#dur   = 0.5
-#tmins = np.arange(-3,-0.5+shift,shift)
-#analysis_name = 'sliding_prevmovement_preverrors_errors_prevbelief'
+#shift = dur / 2
+shift = dur / 4
 
 
-#epochs_bsl = Epochs(raw, events, event_id=event_ids_tgt,
-#                    tmin=-0.46, tmax=-0.05, preload=True,
-#                    baseline=None, decim=6)
-
-# rts = rts[:1]
-# hpasses = hpasses[:1]
-#, decim=6)
-# decim=6)
 
 envs = ['stable', 'random']
 #envs = ['all']
 seeds = [0]
-trim_outliers_vs = [0, 1]
-trial_group_col_calc_vs = ['trialwe', 'trialwtgt_we']
+#trim_outliers_vs = [0, 1]
+
+trim_outliers_vs = [0]
+#trial_group_col_calc_vs = ['trials', 'trialwe', 'trialwtgt_we']
+trial_group_col_calc_vs = ['trials']
 time_lockeds = ['target', 'feedback']
 freq_names = list( freq_name2freq.keys())
 dists_rad_from_prevtgt = ['all', '0.00', '0.79', '1.57' ]
@@ -44,11 +35,41 @@ dists_trial_from_prevtgt = ['all', 1,2,4]
 
 
 # just to have less entries
-time_lockeds = ['target', 'feedback']
+#time_lockeds = ['target', 'feedback']
+time_lockeds = ['target'] 
 freq_names = ['broad']
-dists_rad_from_prevtgt =   ['all', '0.00', '1.57' ]
-dists_trial_from_prevtgt = ['all', 1,4]
+#dists_rad_from_prevtgt =   ['all', '0.00', '1.57' ]
+dists_rad_from_prevtgt =   ['all' ]
+#dists_trial_from_prevtgt = ['all', 1,4]
+dists_trial_from_prevtgt = ['all']
 
+control_types = ['movement', 'feedback']
+
+safety_time_bound = 0
+discard_hit_twice = 1
+#scale_X_robust = 1
+#scale_Y_robust = 1
+scale_X_robust = 0
+scale_Y_robust = 0
+
+windowstr = (f' --slide_window_dur {dur} --slide_window_shift {shift} '
+        '--slide_windows_type=auto')
+calc_name='slide'
+
+scale_X_robust = 1
+scale_Y_robust = 1
+discard_hit_twice = 0
+
+##### SPOC_home_ver
+#safety_time_bound = 0.05
+#windowstr = f' --slide_windows_type explicit --tmin -0.5 --tmax 0 '
+#time_lockeds = ['target']
+#calc_name='home'
+#discard_hit_twice = 0
+#
+#scale_X_robust = 1
+#scale_Y_robust = 1
+########
 
 #ipy = get_ipython()
 
@@ -62,7 +83,7 @@ run_test = 'ipython -i ' + os.path.join( path_code, script ) + ' -- '
 from itertools import product as itprod
 p = itprod(hpasses, time_lockeds, freq_names, subjects, rts, seeds,
            trim_outliers_vs, trial_group_col_calc_vs, dists_rad_from_prevtgt,
-           dists_trial_from_prevtgt)
+           dists_trial_from_prevtgt, control_types)
 #for hpass in hpasses:
 ##    for control_type in ['movement']:
 #    #for time_locked in ['target', 'feedback']:
@@ -79,7 +100,7 @@ p = itprod(hpasses, time_lockeds, freq_names, subjects, rts, seeds,
 #                    # for env_to_run in envs:
 for tpl in p:
     hpass, time_locked, freq_name, subject, regression_type, \
-        seed, trim_outliers, trial_group_col_calc, dr, dt  = tpl
+        seed, trim_outliers, trial_group_col_calc, dr, dt, control_type  = tpl
     freq_limits = freq_name2freq[freq_name]
 
     if trial_group_col_calc == 'trialwtgt_we' and ( (dists_rad_from_prevtgt != 'all') \
@@ -87,9 +108,9 @@ for tpl in p:
         continue
 
     s = run
-    start, end = stage2time_bounds[time_locked]
-    tmins = np.arange(start,end,shift)
-    tmaxs = dur + tmins
+    #start, end = stage2time_bounds[time_locked]
+    #tmins = np.arange(start,end,shift)
+    #tmaxs = dur + tmins
 
 
     s += f' --param_file dec_err_sens_sliding.ini'
@@ -97,25 +118,35 @@ for tpl in p:
     s += f' --output_folder corr_spoc_es_sliding2_{hpass}'
 
     s += f' --hpass {hpass}'
-    s += f' --slide_window_dur {dur}'
-    s += f' --slide_window_shift {shift}'
+    s += windowstr
+
+    s += f' --safety_time_bound {safety_time_bound}'
+
     s += f' --trial_group_col_calc {trial_group_col_calc}'
     s += f' --trim_outliers {trim_outliers}'
     s += f' --dists_rad_from_prevtgt {dr}'
     s += f' --dists_trial_from_prevtgt {dt}'
+
+    
+    s += f' --each_SPoC_fit_is_parallel 1'
+    s += f' --scale_X_robust {scale_X_robust}'
+    s += f' --scale_Y_robust {scale_Y_robust}'
+    s += f' --discard_hit_twice {discard_hit_twice}'
 
     #s += f' --slide_windows_type auto'
     #s += f' --tmin ' + ','.join( map(str,tmins) )
     #s += f' --tmax ' + ','.join( map(str,tmaxs) )
     s += f' --subject {subject}'
     s += f' --time_locked {time_locked}'
-    #s += f' --control_type {control_type}'
+    s += f' --control_type {control_type}'
     s += f' --regression_type ' + ','.join(rts)
     s += f' --freq_name {freq_name}'
     s += f' --freq_limits ' + f'{freq_limits[0]},{freq_limits[1]}'
     s += f' --env_to_run ' + ','.join(envs)
 
-    s += f' --custom_suffix trim{trim_outliers}_{trial_group_col_calc[5:]}_dr{dr}_dt{dt}'
+    s += (f' --custom_suffix {control_type}_CN{calc_name}_trim{trim_outliers}_'
+        f'dhittw{discard_hit_twice}'
+        f'_{trial_group_col_calc[5:]}_scX{scale_X_robust}Y{scale_Y_robust}_dr{dr}_dt{dt}')
     #s += 'analysis_name'] = analysis_name
     s += '\n'
     runstrings += [s]

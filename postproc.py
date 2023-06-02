@@ -10,6 +10,8 @@ def collectResults(subject,folder, freq_name='broad',
                    regression_type='Ridge', keys_to_extract=['par'],
                    time_locked=['feedback','target'], elem_var=None,
                    env = ['stable','random','all'],
+                   tmin = None,
+                   control_type = None,
                    parent_key = None, time_start=None, time_end = None,
                   fns = None, df=None, inc_tgc=1  ):
 
@@ -32,15 +34,18 @@ def collectResults(subject,folder, freq_name='broad',
 
         time_locked_all = ['feedback','target']
         tls = '|'.join(time_locked_all)
+        ctrls = '|'.join(['feedback', 'movement'] )
         env_all = ['stable','random','all']
-        envstr = '|'.join(env_all)
+        envstr = '|'.join(env)
         if inc_tgc:
-            tgcc_str = '(' + '|'.join(trial_group_cols_all) + ')_'
+            tgcc_str = '(' + '|'.join(trial_group_cols_all + ['trials']) + ')_'
         else:
             tgcc_str = ''
-        regex = re.compile(f'({envstr})_{tgcc_str}' + r'(Ridge|xgboost)_(' +
-                           tls + r')_(.*)_('+\
-                        freqstr+ r')_t=(.*),(.*)\.npz')
+        regex_str = (f'({envstr})_{tgcc_str}'
+                    r'(Ridge|xgboost)_(' + tls + r')_(' + ctrls +  r')_(.*)_('+\
+                    freqstr+ r')_t=(.*),(.*)\.npz')
+        print('regex_str = ',regex_str)
+        regex = re.compile(regex_str)
     if df is None:
         print(f'Found {len(fns)} files in total in {dir_full}')
     else:
@@ -50,6 +55,10 @@ def collectResults(subject,folder, freq_name='broad',
     def addRowInfo(f,row, index, elem_var_val=None, df_to_set=None):
         assert (row is None) or (index is None)
         if parent_key is not None:
+            if parent_key not in f.keys():
+                if row is not None:
+                    print(row['mtime'], row['SLURM_job_id'])
+                print( list(f.keys() ) )
             subf = f[parent_key][()]
         else:
             subf = f
@@ -57,6 +66,8 @@ def collectResults(subject,folder, freq_name='broad',
         kvs = []
         if elem_var is None:
             for kte in keys_to_extract:
+                if kte not in subf:
+                    print( list(subf.keys() ) )
                 kv0 = subf[kte]
                 if parent_key is None:
                     kv0 = kv0[()]
@@ -104,53 +115,78 @@ def collectResults(subject,folder, freq_name='broad',
 
     if df is None:
         rows = []
+        dts = []
+        dts_flt = []
         for fn_full in fns:
             dt = datetime.fromtimestamp(os.stat(fn_full).st_mtime)
+            dts += [dt]
             if time_start is not None and dt < time_start:
                 continue
             if time_end is not None and dt > time_end:
                 continue
+        
 
             fn = Path(fn_full).name
             r = re.match( regex, fn)
             #print(r )
             if r is None or r.groups() is None:
-                print(f'wrong fn = {fn}, for regex = {regex}')
+                print(f'wrong fn = {fn}, for regex = {regex_str}')
                 raise ValueError('aa')
             grps = r.groups(); #print(grps)
+            #print(grps ) 
             if inc_tgc:
-                env_cur,trial_group_col_calc_cur, rt_cur,time_locked_cur,analysis_name_cur,\
-                    freq_name_cur,tmin,tmax = grps
+                env_cur,trial_group_col_calc_cur, rt_cur,time_locked_cur,control_type0, analysis_name_cur,\
+                    freq_name_cur,tmin_cur,tmax_cur = grps
             else:
                 env_cur, rt_cur,time_locked_cur,analysis_name_cur,\
-                    freq_name_cur,tmin,tmax = grps
+                    freq_name_cur,tmin_cur,tmax_cur = grps
 
+            _,fn = os.path.split(fn_full)
             if env_cur not in env:
+                print(f'env: Reject {fn}, {dt}')
                 continue
             if time_locked_cur not in time_locked:
+                print(f'time_locked: Reject {fn}, {dt}')
                 continue
 
             if regression_type is not None:
                 if regression_type != rt_cur:
+                    print(f'regression_type: Reject {fn}, {dt}')
                     continue
             if freq_name is not None:
                 if freq_name != freq_name_cur:
+                    print(f'freq_name: Reject {fn}, {dt}')
+                    continue
+
+            if tmin is not None:
+                if tmin != tmin_cur:
+                    print(f'tmin: Reject {fn}, {dt} ( tmin={tmin}, tmin_cur={tmin_cur} )')
                     continue
 
             #fn_full = op.join(dir_full,fn)
             f = np.load( fn_full, allow_pickle=1)
             #print( list(f.keys() ), fn_full)
 
+            control_type_ = f['par'][()]['control_type']
+            if (control_type is not None) and \
+                    (control_type_ != control_type):
+                print(f'control_type_: Reject {fn}, {dt}')
+                continue
+
+            SLURM_job_id = f['par'][()]['SLURM_job_id']
+            print(SLURM_job_id)
+
+            dts_flt += [dt]
 
             if inc_tgc:
                 tgc = ['trial_group_col_calc']
             else:
                 tgc = []
-            cols = ['subject','mtime', 'fn', 'fn_full', 'env'] +\
-                tgc + ['rt','time_locked','custom_suffix',
+            cols = ['subject','mtime', 'fn', 'fn_full', 'SLURM_job_id', 'env'] +\
+                tgc + ['rt','time_locked','control_type', 'custom_suffix',
                         'freq_name','tmin','tmax'  ]
 
-            colvals = [ subject, dt, fn, fn_full, *grps ]
+            colvals = [ subject, dt, fn, fn_full, SLURM_job_id, *grps ]
             row = dict( zip(cols,colvals) )
 
 
@@ -169,7 +205,13 @@ def collectResults(subject,folder, freq_name='broad',
             #tuples += [ (os.stat(fn_full).st_mtime, fn, fn_full,
             #             par, *grps )  ]
             del f
-        print(f'{len(rows)} after filtering by time')
+
+        mi,mx = min(dts), max(dts)
+        if len(dts_flt):
+            mi_flt,mx_flt = min(dts_flt), max(dts_flt)
+        else:
+            mi_flt,mx_flt = None,None
+        print(f'{len(rows)} after filtering by time.\n  Min time  = {mi_flt}, Max time  = {mx_flt},\n  Min total = {mi}, Max total = {mx}')
         if len(rows) == 0:
             return None
 
@@ -214,6 +256,8 @@ def collectResults(subject,folder, freq_name='broad',
             # we need to add None keys because we want to have them in rows that we
             # will iter through later
             for kte in keys_to_extract:
+                if kte not in subf:
+                    print( list(subf.keys() ) )
                 kv0 = subf[kte]
                 for kvn,kvv in kv0.items():
                     key = f'{kte}_{kvn}'
@@ -222,7 +266,12 @@ def collectResults(subject,folder, freq_name='broad',
             for index,row in df.iterrows():
                 fn_full = row['fn_full']
                 f = np.load( fn_full, allow_pickle=1)
-                addRowInfo(f,row=None,index=index, df_to_set=df)
+                try:
+                    addRowInfo(f,row=None,index=index, df_to_set=df)
+                except KeyError as e:
+                    dt = datetime.fromtimestamp(os.stat(fn_full).st_mtime)
+                    print(fn_full, str(dt) )
+                    raise e
                 del f
             df_collect = df
         else:
