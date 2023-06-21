@@ -67,7 +67,7 @@ class ScoringAUC():
             return np.mean(_score, axis=0)
 
 
-def decod_stats(X, n_jobs=None):
+def decod_stats(X, n_jobs=None, n_permutations=2**10):
     from mne.stats import permutation_cluster_1samp_test
     """Statistical test applied across subjects"""
     # check input
@@ -80,7 +80,7 @@ def decod_stats(X, n_jobs=None):
     if n_jobs is None:
         from config2 import n_jobs
     T_obs_, clusters, p_values, _ = permutation_cluster_1samp_test(
-        X, out_type='mask', n_permutations=2**10, n_jobs=n_jobs,
+        X, out_type='mask', n_permutations = n_permutations, n_jobs=n_jobs,
         verbose=False)
 
     # format p_values to get same dimensionality as X
@@ -1042,5 +1042,49 @@ def scorer_spearman(y_true, y_pred, n_jobs=1):
     else:
         rho = rho[0]
     return rho
+
+def rescaleIfNeeded(Xcur, Y, par, centering = False): 
+    # X shape is trials x channels x time
+    # Y shape is trials x variables
+    # with centering=false it changes number of positive and negative
+     
+    onedim = False
+    if Y.ndim == 1:
+        onedim = True
+        Y = Y[:,None]
+    from sklearn.preprocessing import RobustScaler
+    if par['scale_X_robust']:
+        # X shape is trials x channels x time
+        #Xcur_reshape = Xcur.transpose((0, 2, 1)).reshape(Xcur.shape[0], -1)
+
+        # for RobustScaler we want samples x features and we want to rescale within channel
+
+        # bring channels in the end and rescale trials x time
+        Xcur_reshape0 = Xcur.transpose((0, 2, 1))  # to trials x time x channels  
+        Xcur_reshape = Xcur_reshape0.reshape(-1, Xcur_reshape0.shape[2] )
+        rscale = RobustScaler(with_centering=centering).fit(Xcur_reshape)
+        Xcur_reshape = rscale.transform(Xcur_reshape)
+
+        Xcur = Xcur_reshape.reshape(Xcur_reshape0.shape).transpose((0, 2, 1))
+
+        #Xcur = Xcur_reshape.reshape(Xcur.shape).transpose((0, 2, 1))
+        #Xcur = Xcur_reshape.reshape(Xcur.shape)
+
+    if par['scale_Y_robust'] == 1:
+        #if 'err_sens' in varnames:
+        #    raise ValueError('need to be more careful when scaling err sens')
+        rscale = RobustScaler(with_centering=centering).fit(Y)
+        Y = rscale.transform(Y)
+    elif par['scale_Y_robust'] == 2:
+        from sklearn.preprocessing import scale
+        # in Romain's orig code  centering = True (he does not specify it but this is the default value)
+        Y = scale(Y, with_mean = centering)
+    else:
+        print('Not scaling Y at all')
+    
+    if onedim:
+        Y = Y[:,0]
+
+    return Xcur, Y
 
 ##############################

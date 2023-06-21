@@ -134,7 +134,7 @@ def getCtxPairProps(ctxpair, canonical_context_pair_lists):
 def getAllValidDsnames( d ):
     from glob import glob
     from pathlib import Path
-    exclude = ['009', '010']
+    exclude = ['SE1-009_', 'SE1-010_']
     exclude += ['2023-SE1-020_context_change_20230502_141402'] # just was stopped after training
     fnbs = []
     for fnf in sorted( glob(d + '2023-SE1-0*[0-9].log') ):
@@ -143,6 +143,7 @@ def getAllValidDsnames( d ):
         for excl in exclude:
             if name.find(excl) >= 0:
                 skip = 1
+                print('Skip name',name,excl)
         if skip:
             continue
         fnb = name.replace('.log','')
@@ -304,6 +305,8 @@ def setContextSimilarityCols(dftmp, canonical_context_pair_lists):
     for subj in subjects:
         dfcc_tmp = dftmp.query(f'subject == "{subj}"')
         assert len(dfcc_tmp) > 0
+        assert ( dfcc_tmp['trial_index'].diff().iloc[1:] > 0) .all()
+
         inds = dfcc_tmp.index
 
         # maybe I could take 1: to skip first invalid after shift
@@ -342,10 +345,17 @@ def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
 
     return pert_seq_code
 
+def correctPertCol_NIH(df_all):
+    c = df_all['environment'] == 0
+    df_all['perturbation_'] = -100000
+    df_all.loc[c, 'perturbation_'] = df_all.loc[c,'perturbation']#.copy()
+    df_all.loc[~c, 'perturbation_'] = (df_all.loc[~c,'feedback'] - df_all.loc[~c,'org_feedback']) / np.pi * 180
+    df_all['perturbation'] = df_all['perturbation_']
+
 def addBehavCols(df_all, inplace=True, skip_existing = False,
-                 dset = 'Romain_Exp2_Cohen', fn_events_full = None):
+                 dset = 'Romain_Exp2_Cohen', fn_events_full = None, trial_col0 = 'trials'):
     '''
-    This is for NIH experiment
+    This is for NIH experiment (and for Bonaiuto data as well)
     inplace, does not change database lengths (num of rows)
     '''
     if not inplace:
@@ -356,8 +366,12 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
     subj = subjects[0]
 
+    # by default perturbation in NIH data is == 0 for random, which is confusing
+    correctPertCol_NIH(df_all)
+
 
     if fn_events_full is not None:
+        from meg_proc import addTrigPresentCol_NIH
         #fn_events = f'{task}_{hpass}_{ICAstr}_eve.txt'
         #fn_events_full = op.join(path_data, subject, fn_events )
         # these are all events, including non-target triggers
@@ -374,7 +388,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                 continue
             dfc = df_all[(df_all['subject'] == subj) & (df_all['target_inds'] == tgti)]
             df_all.loc[dfc.index,'dist_trial_from_prevtgt'] =\
-                df_all.loc[dfc.index, 'trials'].diff()
+                df_all.loc[dfc.index, trial_col0].diff()
 
     #dist_deg_from_prevtgt
     #dist_trial_from_prevtgt
@@ -408,7 +422,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         for subj in subjects:
             mask = df_all['subject'] == subj
             dfc = df_all[mask]
-            r = dfc.loc[dfc['trials'] == test_triali,'perturbation']
+            r = dfc.loc[dfc[trial_col0] == test_triali,'perturbation']
             assert len(r) == 1
             if r.values[0] > 5.:
                 pert_seq_code = 0
@@ -426,7 +440,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         if not (skip_existing and ('block_name' not in df_all.columns) ):
             def f(row):
                 env = envcode2env[ row['environment']]
-                triali = row['trials']
+                triali = row[trial_col0]
                 if env == 'stable' and triali < 200:
                     block_name = env + '1'
                 elif env == 'stable' and triali > 300:
@@ -458,19 +472,19 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     mask = df_all['subject'] == subj
     dfc = df_all[mask]
 
-    assert np.min( np.diff( dfc['trials'] ) ) > 0
+    assert np.min( np.diff( dfc[trial_col0] ) ) > 0
 
     trials_starts = {}
     for bn in block_names:
         fvi = dfc[dfc['block_name'] == bn].first_valid_index()
         assert fvi is not None
-        trials_starts[bn] = dfc.loc[fvi,'trials']
+        trials_starts[bn] = dfc.loc[fvi,trial_col0]
     assert np.max( list(trials_starts.values() ) ) <= 767
 
     def f(row):
         bn = row['block_name']
         start = trials_starts[bn]
-        return row['trials'] - start
+        return row[trial_col0] - start
 
     df_all['trialwb'] = -1
     for subj in subjects:
@@ -482,7 +496,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
     # within single subject
     if dset == 'Romain_Exp2_Cohen':
-        envchanges  = dfc.loc[dfc['environment'].diff() != 0,'trials'].values
+        envchanges  = dfc.loc[dfc['environment'].diff() != 0,trial_col0].values
         envchanges = list(envchanges) + [len(dfc)]
 
         envinterval = []
@@ -504,8 +518,8 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             add = 0
             if bn.endswith('2'):
                 add = end_first_rel
-            #return row['trials'] - start_cur + add
-            r = row['trials'] - start_cur + add
+            #return row[trial_col0] - start_cur + add
+            r = row[trial_col0] - start_cur + add
             if r < 0:
                 raise ValueError('r < 0 ')
         #     if bn == 'random2':
@@ -522,17 +536,19 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         for bn in ['stable1', 'stable2']:
             dfc_oneb = dfc[dfc['block_name'] == bn]
             df_starts = dfc_oneb.loc[dfc_oneb['perturbation'].diff() != 0]
-            trial_st = df_starts['trials'].values
+            trial_st = df_starts[trial_col0].values
 
-            last =  dfc_oneb.loc[dfc_oneb.last_valid_index(), 'trials']
+            last =  dfc_oneb.loc[dfc_oneb.last_valid_index(), trial_col0]
             trial_st = list(trial_st) +  [last + 1]
 
             bn2trial_st[bn] = trial_st
-            assert len(trial_st) == 6 # - 1
+            assert len(trial_st) == 6, len(trial_st) # - 1
+
+        #bn2trial_st = df_all.groupby('block_name')[trial_col0].min().to_dict()
         print(bn2trial_st)
 
         def f(row):
-            t = row['trials']
+            t = row[trial_col0]
             bn = row['block_name']
             if bn not in bn2trial_st:
                 return None
@@ -565,7 +581,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             if bn not in bn2trial_st:
                 return None
             start = bn2trial_st[bn][int(ps)]
-            return row['trials'] - start
+            return row[trial_col0] - start
 
         df_all['trialwpertstage_wb'] = df_all.apply(f,1)
 
@@ -583,7 +599,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             ps = int(ps)
             start = bn2trial_st[bn][ps]
             #2,4
-            r =  row['trials'] - start
+            r =  row[trial_col0] - start
 
             bnrebase = bn[:-1] + '1'
             l0 = bn2trial_st[bnrebase][1] - bn2trial_st[bnrebase][0]
@@ -617,7 +633,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             elif bn == 'random2':
                 add = bn2trial_st['random1'][int(ps) + 1]
             #start0 = bn2trial_st[bn][int(ps)]
-            return row['trials'] - start + add
+            return row[trial_col0] - start + add
 
         df_all['trialwpert_we'] = df_all.apply(f,1)
 
@@ -627,7 +643,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     for subj in subjects:
         for tgti in tgt_inds_all:
             mask = (df_all['target_inds'] == tgti) & (df_all['subject'] == subj)
-            trials = df_all.loc[mask, 'trials']
+            trials = df_all.loc[mask, trial_col0]
             assert np.all(np.diff(trials.values) > 0)
             df_all.loc[mask, 'trialwtgt'] = np.arange(len(trials) )
     #df_all['trialwtgt'] = df_all['trialwtgt'].astype(int)
@@ -659,11 +675,11 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                 if dset == 'Romain_Exp2_Cohen':
                     for bn in block_names:
                         mask_bn = mask_pert & (df_all['block_name'] == bn)
-                        trials = df_all.loc[mask_bn, 'trials']
+                        trials = df_all.loc[mask_bn, trial_col0]
                         df_all.loc[mask_bn, 'trialwtgt_wpert_wb'] = np.arange(len(trials) )
                     for envc in envcode2env:
                         mask_env = mask_pert & (df_all['environment'] == envc)
-                        trials = df_all.loc[mask_env, 'trials']
+                        trials = df_all.loc[mask_env, trial_col0]
                         df_all.loc[mask_env, 'trialwtgt_wpert_we'] = np.arange(len(trials) )
 
             if dset == 'Romain_Exp2_Cohen':
@@ -671,12 +687,12 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                     for bn in block_names:
                         mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
                                 ( df_all['block_name'] == bn )
-                        trials = df_all.loc[mask_ps, 'trials']
+                        trials = df_all.loc[mask_ps, trial_col0]
                         df_all.loc[mask_ps, 'trialwtgt_wpertstage_wb'] = np.arange( len(trials) )
                     for envc in envcode2env:
                         mask_ps = mask & (df_all['pert_stage_wb'] == float(pert_stage) ) &\
                                 (df_all['environment'] == envc)
-                        trials = df_all.loc[mask_ps, 'trials']
+                        trials = df_all.loc[mask_ps, trial_col0]
                         df_all.loc[mask_ps, 'trialwtgt_wpertstage_we'] = np.arange( len(trials) )
 
 
@@ -684,16 +700,16 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
             if dset == 'Romain_Exp2_Cohen':
                 for bn in block_names:
                     mask_bn = mask & (df_all['block_name'] == bn)
-                    trials = df_all.loc[mask_bn, 'trials']
+                    trials = df_all.loc[mask_bn, trial_col0]
                     df_all.loc[mask_bn, 'trialwtgt_wb'] = np.arange(len(trials) )
                 for envc in envcode2env:
                     mask_env = mask & (df_all['environment'] == envc)
-                    trials = df_all.loc[mask_env, 'trials']
+                    trials = df_all.loc[mask_env, trial_col0]
                     df_all.loc[mask_env, 'trialwtgt_we'] = np.arange(len(trials) )
     #df_all['trialwtgt_wpert_wb'] = df_all['trialwtgt_wpert_wb'].astype(int)
 
     # trial_group_cols_all = [s for s in df_all.columns if s.find('trial') >= 0]
-    tmax = df_all['trials'].max()
+    tmax = df_all[trial_col0].max()
     for tcn in trial_group_cols_all:
         if dset == 'Romain_Exp2_Cohen':
             assert df_all[tcn].max() <= tmax, tcn
@@ -705,6 +721,9 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
                 print(f'problem with {tcn}')
 
     if dset == 'Romain_Exp2_Cohen':
+        #pscAdj_NIH(df_all, ['error',  ] ) 
+        #pscAdj_NIH(df_all, [ 'org_feedback', 'feedback' ], subpi = np.pi ) 
+
         vars_to_pscadj = [ 'error']
         # 'prev_error' ?
         for varn in vars_to_pscadj:
@@ -729,6 +748,20 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
 
         addNonHitCol(df_all)
+    return df_all
+
+def pscAdj_NIH(df_all, cols, subpi = False, inplace=True):
+    if not inplace:
+        df_all = df_all.copy()
+    if subpi:
+        sub = np.pi
+    else:
+        sub = 0
+    vars_to_pscadj = cols
+    for varn in vars_to_pscadj:
+        df_all[f'{varn}_pscadj'] = df_all[varn] - np.pi
+        cond = df_all['pert_seq_code'] == 1
+        df_all.loc[cond, f'{varn}_pscadj']=  - ( df_all.loc[cond,varn]  - sub)
     return df_all
 
 def addNonHitCol(df):
@@ -1018,8 +1051,8 @@ def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc
 
 def getMaskNotNanInf(vals, axis = None):
     if (vals.ndim > 1) and (axis is not None):
-        #r = ~np.any( np.isinf(y), axis=1) 
-        r = ~ np.any ( np.isnan(vals) | np.isinf(vals), axis=1 ) 
+        #r = ~np.any( np.isinf(y), axis=1)
+        r = ~ np.any ( np.isnan(vals) | np.isinf(vals), axis=1 )
     else:
         r = ~ ( np.isnan(vals) | np.isinf(vals) )
     return r
@@ -1134,7 +1167,7 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
             #display(dftmp)
             dftmp.loc[mask_bad  , coln ] = np.nan
 
-            mask = mask & (~mask_bad) 
+            mask = mask & (~mask_bad)
 
             if np.all( (np.isnan(dftmp[coln]) | np.isinf(dftmp[coln]))  ):
                 display(dftmp[ ['subject','trials'] + cols_uniqify + ['err_sens']] )
@@ -2556,8 +2589,12 @@ def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
             colgrp = 'trial_index' ):
     # coln_time = 'time'
     assert operation in ['min','max']
+    from datetime import timedelta
     diffmin = df[coln_time].diff().min()
-    assert diffmin >= 0, diffmin  # need monotnicity
+    if isinstance(diffmin, timedelta):
+        assert diffmin.total_seconds() >= 0, diffmin  # need monotnicity
+    else:
+        assert diffmin >= 0, diffmin  # need monotnicity
     assert coltake is not None
 
     if grp is None:
@@ -3001,6 +3038,13 @@ def addBasicInfo(df, phase2trigger, params,
     coln_errs_to_propag = ['error_lh2_ang', 'error_unpert_lh2_ang', 'error_area2_signed_nn' ]
     coln_errs_to_propag_shift = ['trial_index' ]
     propagToValidErrCols(dfcc, coln_errs_to_propag, coln_errs_to_propag_shift)
+
+    dfcc['prev_block_pert'] = dfcc['prev_perturbation_valid']
+    c = dfcc['trialwb'] == 0
+    dfcc['prev_block_pert'] = dfcc['prev_block_pert'].where(c, np.nan)
+    dfcc['prev_block_pert'] = dfcc['prev_block_pert'].fillna(None, method='ffill')
+
+    dfcc_all['error_lh2_ang_deg'] = dfcc_all['error_lh2_ang'] * 180 / np.pi
 
     # df  -- row per screen update, with streak relations, all phases
     # dfc -- row per screen update, only TARGET_AND_FEEDBACK
@@ -3709,80 +3753,209 @@ def printBadTrialInfo(df, df_big, coln='err_sens'):
     print('inf = {:.2f}%,  nan = {:.2f}%  (total={:.2f}%)'.format( rinf * 100, rnan * 100, rtot *100) )
 
 
-def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridical = 1 ):
-    '''
+def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridical = 0,
+                  pert_change_handling = 'do_nothing', trialwbcol = 'trialwb_notfail' ):
+    '''  trialwbcol = 'trialwb_notfail' # or trialwb 
     calc drops of errror between the start of the block and the end
     excludes veridical
     '''
+    assert pert_change_handling in ['invalidate', 'do_nothing']
     # inds should be increasing
 #    from behav_proc import qs_notspec
-    qs = qs_notspec + ' and trialwb <= 4'
-    if inc_veridical:
-        qs +=' and vis_feedback_type != "veridical"'
-    df_notspec_notver = dfcc_all.query(qs)
+    assert inds[0] == 0
+    qs = qs_notspec + f' and trialwb <= {np.max(inds) }'
+    if not inc_veridical:
+        #qs +=' and vis_feedback_type != "veridical"'
+        qs +=' and prev_block_pert != perturbation'
+    df_to_use = dfcc_all.query(qs)
 
     dfdrops = []
-    for coln in cols:
-        assert inds[0] == 0
+    v1 = 0
+    if v1:
+        # loop across error columns
+        for coln in cols:
+            assert inds[0] == 0
 
-        def f(dfcur):
-            #print(dfcur[coln])
-            dfs = []
-            # takes slices with fixed index within trial
-            for ind in inds:
-                dfs += [dfcur.query('trialwb == @ind')]
+            def f(dfcur):
+                #print(dfcur[coln])
+                dfs = []
+                # takes slices with fixed index within trial
+                for ind in inds:
+                    dfs += [dfcur.query('trialwb == @ind')]
 
-            #print(df1[coln])
-            #print(df2[coln])
-            vss = []
-            # subtract value of error (largest) at first ind - given
-            # we look at absolut values only
-            # here we should only get one value per group
-            for df in dfs[1:]:
-                #vs = np.abs(dfs[0][coln].values - df[coln].values)
-                vs = np.abs(dfs[0][coln].values) - np.abs(df[coln].values)
-                vss += [vs]
-            if len(vs) == 0:
-                #display(dfcur)
-                return None
-            else:
-                assert len(vs) ==1, len(vs)
-                if dfs[0]['prev_ctx_pert_same'].values[0]:
-                    # Q: how to handle failed reaches?
-                    #print('Skipping due to same tgt')
+                #print(df1[coln])
+                #print(df2[coln])
+                vss = []
+                # subtract abs value of error (largest) at first ind - given
+                # we look at absolut values only
+                # here we should only get one value per group
+                for df in dfs[1:]:
+                    #vs = np.abs(dfs[0][coln].values - df[coln].values)
+                    vs = np.abs(dfs[0][coln].values) - np.abs(df[coln].values)
+                    vss += [vs]
+                if len(vs) == 0:
+                    #display(dfcur)
                     return None
                 else:
-                    #v = (df1[coln].values - df3[coln].values)[0]
-                    return [vs[0] for vs in vss]
-                    #return [abs( vs[0] ), abs(v)]
-        df_notspec_notver_difflearn = df_notspec_notver.\
-            groupby(['subject','block_ind','Nctx_app', 'ctxid']).apply(f).reset_index()
-        df_notspec_notver_difflearn= df_notspec_notver_difflearn.rename(columns={0:'absdrop'})
-        df_notspec_notver_difflearn['coln'] = coln
-        dfdrops += [df_notspec_notver_difflearn]
+                    assert len(vs) ==1, len(vs)
+                    if dfs[0]['prev_ctx_pert_same'].values[0]:
+                        # Q: how to handle failed reaches?
+                        #print('Skipping due to same tgt')
+                        return None
+                    else:
+                        #v = (df1[coln].values - df3[coln].values)[0]
+                        return [ vs[0] if len(vs) else np.nan  for vs in vss]
+                        #return [abs( vs[0] ), abs(v)]
+            df_notspec_notver_difflearn = df_to_use.\
+                groupby(['subject','block_ind','Nctx_app', 'ctxid']).apply(f).reset_index()
+            df_notspec_notver_difflearn= df_notspec_notver_difflearn.rename(columns={0:'absdrop'})
+            df_notspec_notver_difflearn['coln'] = coln
+            dfdrops += [df_notspec_notver_difflearn]
 
-    dfdrop = pd.concat(dfdrops, ignore_index=1)
+        dfdrop = pd.concat(dfdrops, ignore_index=1)
 
-    for i,ind in enumerate(inds[1:] ):
-        dfdrop[f'absdrop_{ind}'] = dfdrop['absdrop'].apply(lambda x: x[i] if x is not None else None)
+        dfdrops2 = []  # this is duplication but easier to plot later
+        rs = []
+        # loop across drop indices, except first (which is zero normally)
+        for i,ind in enumerate(inds[1:] ):
+            dfdrop[f'absdrop_{ind}'] = dfdrop['absdrop'].apply(lambda x: x[i] if x is not None else None)
+
+            dfdrop_ = dfdrop.copy()
+            dfdrop_['absdrop'] = dfdrop_[f'absdrop_{ind}']
+            dfdrop_.drop( columns=[f'absdrop_{ind}'] )
+            dfdrop_['droptoind'] = ind
+            dfdrops2 += [ dfdrop_ ]
+        dfdrop2 = pd.concat(dfdrops2)
+
+        # compute difference between drop on first and on last appearances
+        # has some NaNs :(
+        rs = []
+        # loop across drop indices, except first (which is zero normally)
+        for ind in inds[1:]:
+            coln = f'absdrop_{ind}'
+            # drop at last context apperence - drop at first one
+            lbd = lambda x: np.abs( x.loc[x['Nctx_app'].idxmax(), coln] ) -\
+                np.abs (x.loc[x['Nctx_app'].idxmin(), coln] )
+            r = dfdrop.groupby(['coln', 'subject','ctxid']).apply(lbd)
+            r = r.to_frame().rename(columns={0:coln})#.reset_index()
+            rs += [r]
+
+        dfdrop_last = pd.concat(rs, axis=1, ignore_index=0)
+    else:
+        df = df_to_use.copy()
+
+        # first trial when we experience new pert might be weird. Definitely for area, not so much so for angle
+        if pert_change_handling == 'invalidate':
+            pert_changed = df['prev_ctx_pert_same'] == False  # chagne of pert
+            # invalidate first after pert
+            df.loc[pert_changed, 'time_lh'] = np.nan
+        df['nan_count'] = df.groupby(['subject','block_ind'], group_keys=False )['time_lh'].apply(lambda x: x.isna().cumsum())
+        df['trialwb_notfail'] = df['trialwb'].sub(df['nan_count'])
+        df['trialwb_notfail'] = df['trialwb_notfail'].where( df['time_lh'].notna(), np.nan )
+        df = df.drop('nan_count', axis=1)
 
 
-    # compute difference between drop on first and on last appearances
-    # has some NaNs :(
-    rs = []
-    for ind in inds[1:]:
-        coln = f'absdrop_{ind}'
-        # drop at last context apperence - drop at first one
-        lbd = lambda x: np.abs( x.loc[x['Nctx_app'].idxmax(), coln] ) -\
-            np.abs (x.loc[x['Nctx_app'].idxmin(), coln] )
-        r = dfdrop.groupby(['coln', 'subject','ctxid']).apply(lbd)
-        r = r.to_frame().rename(columns={0:coln})#.reset_index()
-        rs += [r]
+        dfs3 = []
+        for coln in cols:
+            #cols_out0 = ['trial_index', 'block_ind', 'Nctx_app', 'ctxid', 'prev_ctx_pert_same']  + [coln]
+            cols_out = ['trial_index', coln ] 
+            cols_out0 = ['trial_index', 'prev_ctx_pert_same', coln]
 
-    dfdrop_last = pd.concat(rs, axis=1, ignore_index=0)
+            dfs = []
+            for ind in inds:
+                if ind == 0:
+                    cols_cur = cols_out0 
+                else:
+                    cols_cur = cols_out 
+
+                #def f(dftmp, ind):
+                #    dftmp = dftmp.query(f'{trialwbcol} == {ind}')
+                #    return dftmp[cols_cur]
+                    #if len(dftmp) == 0:
+                    #    return np.nan
+                    #else:
+                    #    assert len(dftmp) == 1, len(dftmp)
+                    #    #return [ dftmp[ coln ].values[0], dftmp[ 'trial_index' ].values[0]  ]
+                    #    return dftmp[cols_cur]
+
+                #def f2(dftmp, ind):
+                #    dftmp = dftmp.query('trialwb == @ind')
+                #    if len(dftmp) == 0:
+                #        return np.nan
+                #    else:
+                #        assert len(dftmp) == 1, len(dftmp)
+                #        return dftmp[ 'trial_index' ].values[0]
+
+                # I want to have all these columns in the output
+                dftmp = df.query(f'{trialwbcol} == {ind}').set_index(['subject','block_ind'] ).copy()
+
+                #dftmp = df.groupby(['subject','block_ind','Nctx_app', 'ctxid']).apply( lambda x: f(x, ind) )
+
+                #for coli, col in enumerate(cols_cur ):
+                #    dftmp[ '{}_{}'.format(col,ind) ] = dftmp[ col]
+
+                dftmp = dftmp.add_suffix(f'_{ind}')
+
+                #dftmp = dftmp.drop(columns=cols_cur)
+                    #dftmp[0].apply(lambda x: x[coli] if x is not None else None)
+
+                #dftmp = df.groupby(['subject','block_ind']).apply(lambda x: f(x, ind) )
+                #dftmp = dftmp.to_frame().rename(columns={0:f'coln_{ind}'} )
+
+                #dftmp2 = df.groupby(['subject','block_ind']).apply(lambda x: f2(x, ind) )
+                #dftmp2 = dftmp2.to_frame().rename(columns={0:f'trial_index_{ind}'} )
+                #dfs += [dftmp, dftmp2]
+
+                #df[[f'coln_{ind}', f'trial_index{ind}'] ] = df.groupby(['subject','block_ind']).apply(f, result_type='expand')
+
+                #dftmp = df.query('trialwb == @ind').set_index(['subject','block_ind'])
+                #if ind == 0:
+                #    cols_cur = cols_out0 
+                #else:
+                #    cols_cur = cols_out 
+                #dftmp = dftmp[cols_cur]
+                #dftmp = dftmp.rename(columns={coln: f'coln_{ind}', 'trial_index':f'trial_index{ind}' } )
+                dfs += [dftmp]
+
+            df2 = pd.concat(dfs, join='outer', axis=1).reset_index()
 
 
-    return dfdrop, dfdrop_last
+            dfs2 = []
+            # we won't need absdrop from inds[0] but we may need colnval
+            for ind in inds:  # [1:]:
+                #dftmp = df.query('prev_ctx_pert_same0 == False').copy()
+                dftmp = df2.copy()
+                dftmp['absdrop'] = dftmp[f'{coln}_0'].abs() - dftmp[f'{coln}_{ind}'].abs()
+                
+                dftmp['colnval'] = dftmp[f'{coln}_{ind}'].abs() 
+
+                dftmp['droptoind'] = ind
+                dfs2 += [dftmp]
+
+            #dfs2 = []
+            #for ind in inds[1:]:
+            #    dftmp = df2.query('prev_ctx_pert_same0 == False').copy()
+            #    dftmp['absdrop'] = dftmp[f'coln_{ind}'].abs() - dftmp['coln_0'].abs()
+            #    dftmp['droptoind'] = ind
+            #    dfs2 += [dftmp]
+
+
+            df3 = pd.concat(dfs2 , axis=0).reset_index(drop=True)   # copy to defragment
+            #df3 = df3.T.drop_duplicates().T
+            #df3 = df3.set_index(['subject','block_ind','droptoind'] )
+            df3['coln'] = coln
+            dfs3 += [ df3   ]
+
+        dfdrop2 = pd.concat(dfs3, axis=0, ignore_index=1)
+        dfdrop = None
+
+    columns = list(dfcc_all.columns) + ['trialwb_notfail']
+    rd = dict( zip(  [ c + '_0' for c in columns ], columns ) )
+    dfdrop2 = dfdrop2.rename( columns=rd)
+    dfdrop2['pert_change_handling'] = pert_change_handling
+    #return dfdrop, dfdrop2, dfdrop_last
+    return dfdrop2
+    #return locals()
 
 # make polynomial fits
 def plotPolys(ax, dftmp, fitcol, degs=range(2,6), mean=1):
@@ -4077,9 +4250,38 @@ def extractCtxChangeRelevantRows(df_all_multi_tsz, edfc, time_locked,
     return dfes_sw
 
 
-def plotAllTajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh',
+def shiftTrials(dfcc_all_sub, dfcc_all, shift=1):
+    if isinstance(shift, int):
+        shift = [shift]
+
+    rows = []
+    for i,row in dfcc_all_sub.iterrows():
+        tind = row['trial_index']
+        subj = row['subject']
+
+        row0 = dfcc_all.query('subject == @subj and trial_index == @tind')
+        
+        #row0['_sh'] = 0
+        #rows += [row0]
+        for sh in shift:
+            tind1 = tind + sh
+            df_ = dfcc_all.query('subject == @subj and trial_index == @tind1')
+            if len(df_):
+                row1 = dict( df_.iloc[0] )
+            else:
+                continue
+
+            row1['_sh'] = sh
+            rows += [row1]
+            # only mvt phase
+            #dfpretraj = dfc_all.query('subject == @subj')
+            #grp_perti = dfpretraj.groupby(['trial_index'])
+    return pd.DataFrame(rows).sort_values(['trial_index','_sh'])
+
+def plotAllTrajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh',
                 traj_to_plot= ['feedback'], separate_plots = False,
                 verbose=0):
+    assert isinstance(params,dict)
     for i,row in dfcc_all_sub.iterrows():
         tind = row['trial_index']
         subj = row['subject']
@@ -4093,12 +4295,12 @@ def plotAllTajs(dfcc_all_sub, dfc_all, params, exitpt_col='time_lh',
             plt.figure()
 
         ax = plt.gca()
-        plotTraj3(ax, row, dfc_all, None, None, params,
+        plotTraj3(ax, row, dfc_all, df_es=None, colscols=None, params = params,
                   exitpt_col = exitpt_col, traj_to_plot=traj_to_plot,
                  verbose=verbose)
 
 
-def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_lh',
+def plotAllTrajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_lh',
                 traj_to_plot= ['feedback'],
                 verbose=0):
 
@@ -4111,6 +4313,7 @@ def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_
         else:
             tinds = [tind0-1, tind0]
 
+        # curren traj has bigger markers
         mszs = [2,6]
         plt.figure()
 
@@ -4126,7 +4329,7 @@ def plotAllTajCouples(dfcc_all_sub, dfcc_all, dfc_all, params, exitpt_col='time_
             row = df_.iloc[0]
 
             ax = plt.gca()
-            plotTraj3(ax, row, dfc_all, None, None, params,
+            plotTraj3(ax, row, dfc_all, df_es=None, colscols=None, params = params,
                       exitpt_col = exitpt_col, traj_to_plot=traj_to_plot,
                      verbose=verbose, markersize = mszs[tindi] )
             ttl += f'S{subj[-3:]} ti={tind} ({row["trialwb"]}); pert={row["perturbation"]};\n'
@@ -4188,66 +4391,66 @@ def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
         print( df.loc[c & (~inf), 'err_sens'].abs().describe()  )
 
 
-def addTrigPresentCol_NIH(df, events, environment=None):
-    '''
-    events is 2-dim
-    '''
-    assert events.ndim == 2
-    from base2 import int_to_unicode
-    from Levenshtein import editops
-    assert (np.diff( np.array(df.index) ) > 0).all()
-
-
-    # remove some of the behav inds
-    # WARNING: this will fail (give empty)if epochs are based of time_locked=feedback
-    # (or maybe it was only in old code?)
-    meg_targets_ev = events[:, 2].copy()
-    #target_inds_behav = np.array( df['target_inds'] )
-
-    target_codes_behav = np.array( df['target_codes'] )
-
-    assert len(target_codes_behav)
-    assert len(meg_targets_ev)
-    print(  len(target_codes_behav) , len(meg_targets_ev) )
-    #if environment is None:
-    #    environment = df['environment']
-
-    # for different environments target signals stored in .fif have different codes (20+ vs 30+) so
-    # we convert to unified indices
-
-    #codes_allowed = [20, 21, 22, 23, 25, 26, 27, 28]
-    from config2 import event_ids_tgt
-    nbad = (~np.isin(meg_targets_ev, event_ids_tgt) ).sum()
-    print(nbad , 'non target code events' )
-    assert nbad == 0
-    #for env,envcode in env2envcode.items():
-    #    #trial_inds = np.where(environment == envcode)[0]
-    #    trial_inds = np.where( np.isin(meg_targets_ev,
-    #        stage2evn2event_ids['target'][env] ) )[0]
-    #    # it uses that target codes are conequitive integers
-    #    meg_targets_ev[trial_inds] = meg_targets_ev[trial_inds] - env2subtr[env]
-
-    # one can have less triggers than behav
-    changes = editops(int_to_unicode(target_codes_behav),
-                        int_to_unicode(meg_targets_ev))
-    # we have missing triggers in MEG file so we delete stuff from behav file
-    delete_trials = [change[1] for change in changes] # these are indices of rows
-    print( changes )
-    df['trigger_present'] = True
-    colind = df.columns.get_loc('trigger_present')
-    df.iloc[delete_trials, colind] = False
-
-    assert df['trigger_present'].sum() > 0
-    print(df['trigger_present'].astype(float).describe() )
-
-    target_codes_behav2 = df.query('trigger_present == True')['target_codes']
-
-    # respects ordering
-    if np.array_equal(meg_targets_ev, target_codes_behav2):
-        if len(delete_trials):
-            print(f'addTrigPresentCol: {len(delete_trials)} triggers missing for {len(delete_trials)} trials')
-    else:
-        #warnings.warn('MEG events and behavior file do not match')
-        raise ValueError('MEG events and behavior file do not match')
-
-    return df
+#def addTrigPresentCol_NIH(df, events, environment=None):
+#    '''
+#    events is 2-dim
+#    '''
+#    assert events.ndim == 2
+#    from base2 import int_to_unicode
+#    from Levenshtein import editops
+#    assert (np.diff( np.array(df.index) ) > 0).all()
+#
+#
+#    # remove some of the behav inds
+#    # WARNING: this will fail (give empty)if epochs are based of time_locked=feedback
+#    # (or maybe it was only in old code?)
+#    meg_targets_ev = events[:, 2].copy()
+#    #target_inds_behav = np.array( df['target_inds'] )
+#
+#    target_codes_behav = np.array( df['target_codes'] )
+#
+#    assert len(target_codes_behav)
+#    assert len(meg_targets_ev)
+#    print(  len(target_codes_behav) , len(meg_targets_ev) )
+#    #if environment is None:
+#    #    environment = df['environment']
+#
+#    # for different environments target signals stored in .fif have different codes (20+ vs 30+) so
+#    # we convert to unified indices
+#
+#    #codes_allowed = [20, 21, 22, 23, 25, 26, 27, 28]
+#    from config2 import event_ids_tgt
+#    nbad = (~np.isin(meg_targets_ev, event_ids_tgt) ).sum()
+#    print(nbad , 'non target code events' )
+#    assert nbad == 0
+#    #for env,envcode in env2envcode.items():
+#    #    #trial_inds = np.where(environment == envcode)[0]
+#    #    trial_inds = np.where( np.isin(meg_targets_ev,
+#    #        stage2evn2event_ids['target'][env] ) )[0]
+#    #    # it uses that target codes are conequitive integers
+#    #    meg_targets_ev[trial_inds] = meg_targets_ev[trial_inds] - env2subtr[env]
+#
+#    # one can have less triggers than behav
+#    changes = editops(int_to_unicode(target_codes_behav),
+#                        int_to_unicode(meg_targets_ev))
+#    # we have missing triggers in MEG file so we delete stuff from behav file
+#    delete_trials = [change[1] for change in changes] # these are indices of rows
+#    print( changes )
+#    df['trigger_present'] = True
+#    colind = df.columns.get_loc('trigger_present')
+#    df.iloc[delete_trials, colind] = False
+#
+#    assert df['trigger_present'].sum() > 0
+#    print(df['trigger_present'].astype(float).describe() )
+#
+#    target_codes_behav2 = df.query('trigger_present == True')['target_codes']
+#
+#    # respects ordering
+#    if np.array_equal(meg_targets_ev, target_codes_behav2):
+#        if len(delete_trials):
+#            print(f'addTrigPresentCol: {len(delete_trials)} triggers missing for {len(delete_trials)} trials')
+#    else:
+#        #warnings.warn('MEG events and behavior file do not match')
+#        raise ValueError('MEG events and behavior file do not match')
+#
+#    return df

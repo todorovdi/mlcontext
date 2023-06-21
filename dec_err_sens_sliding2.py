@@ -8,17 +8,16 @@ from mne.io import read_raw_fif
 from csp_my import SPoC
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import KFold, GroupKFold
-from sklearn.linear_model import RidgeCV, LinearRegression
+from sklearn.linear_model import Ridge, RidgeCV, LinearRegression
 #from sklearn.metrics import make_scorer
 from scipy.stats import spearmanr
-from sklearn.preprocessing import RobustScaler
 from mne import Epochs
 import pandas as pd
 import warnings
 import sys
 from base2 import (getXGBparams,
                    calc_target_coordinates_centered,
-                   target_angs, getGPUavail, B2B_SPoC)
+                   target_angs, getGPUavail, B2B_SPoC, rescaleIfNeeded)
 from config2 import n_jobs as n_jobs_def
 from config2 import (min_event_duration,genFnSliding,
                      path_data,path_data_tmp,freq_name2freq,
@@ -30,6 +29,7 @@ from error_sensitivity import (enforceTargetTriggerConsistency,
                                 checkTgtConsistency,
                                computeErrSens2,adjustNonHit, adjustNonHitDf,
                                getAnalysisVarnames)
+from meg_proc import addTrigPresentCol_NIH
 #from error_sensitivity import enforceTargetTriggerConsistency
 
 from behav_proc import addBehavCols, computeErrSensVersions, truncateDf
@@ -121,6 +121,7 @@ def prepNonHit(subdf, var, env, time_locked):
         nh &= non_hit_adj_prevtr
     return nh
 
+n_channels_to_use = par.get('n_channels_to_use', -1)
 
 target_inds_to_use = par.get('target_inds_to_use' )
 
@@ -159,12 +160,21 @@ output_folder = par.get('output_folder',f'corr_spoc_es_sliding2_{hpass}')
 ICAstr = par.get('ICAstr','with_ICA'  )  # empty string is allowed
 time_locked = par.get('time_locked')
 control_type = par.get('control_type')
+coln_error = 'error'
+#coln_ES = 'err_sens'
+colns_ES = par.get('colns_ES', 'err_sens').split(',')
 
-vars_to_decode_classic_def = ['err_sens', 'correction', 'prev_error', 'error']
+#,error_pred_Herz
+defcolns_classic = [ 'prev_error,error,trials' ]   #correction,
+colns_classic = par.get('colns_classic', defcolns_classic).split(',')
+
+vars_to_decode_classic_def = colns_ES + colns_classic
 #vars_to_decode_classic_def = [] # DEBUG
-vars_to_decode_b2b_def     = ['err_sens', 'correction', 'prev_error', 'error' ]
+#vars_to_decode_b2b_def     = [colns_ES[0] ] + [ 'prev_error', 'error' ] # b2b does not allow full linear dependence, so cannot put correction here
 #vars_to_decode_classic_def = []
 #vars_to_decode_b2b_def = []
+vars_to_decode_b2b_def =  [  [coln_ES_cur] + [ 'prev_error', 'error' ] for coln_ES_cur in colns_ES ] 
+
 
 print('vars_to_decode_classic_def = ', vars_to_decode_classic_def)
 print('vars_to_decode_b2b_def = ', vars_to_decode_b2b_def)
@@ -209,7 +219,7 @@ if DEBUG:
 task = par.get('task','VisuoMotor')
 
 do_classic_dec            = int( par.get('do_classic_dec',1)            )
-#do_partial_dec            = int( par.get('do_partial_dec',1)            )
+do_b2b_dec            = int( par.get('do_b2b_dec',1)            )
 est_parallel_across_dims  = int( par.get('est_parallel_across_dims',1)  )
 est_parallel_within_dim   = int( par.get('est_parallel_within_dim',0)   )
 b2b_each_fit_is_parallel  = int( par.get('b2b_each_fit_is_parallel',0)   )
@@ -224,7 +234,7 @@ B2B_SPoC_parallel_type = par.get('B2B_SPoC_parallel_type', 'across_splits')
 # 'across_splits_and_dims'
 
 nskip_trial               = int( par.get('nskip_trial',1)                   )
-nb_fold                   = int( par.get('nb_fold',6)                   )
+nb_fold                   = int( par.get('nb_fold',6)  ) # generavl CV fold num
 decim_epochs              = int( par.get('decim_epochs',2)                   )
 n_splits_B2B              = int( par.get('n_splits_B2B',30)             )
 SPoC_n_components         = int( par.get('SPoC_n_components',5)         )
@@ -324,7 +334,8 @@ if 'subject' not in behav_df_full.columns:
     behav_df_full['subject'] = subject
 else:
     behav_df_full = behav_df_full.query('subject == @subject').copy()
-if 'err_sens' not in behav_df_full.columns:
+
+if 'pert_seq_code' not in behav_df_full.columns:
     addBehavCols(behav_df_full, inplace=True)
 
 print('Behav file has {} dup entries'.format(
@@ -343,6 +354,19 @@ assert (behav_df_full['trials'].diff().iloc[1:] > 0).all()
 
 behav_df_full['movement'] = behav_df_full['org_feedback']
 targets_codes_full      = np.array(behav_df_full['target_codes'])
+
+#####
+for coln in vars_to_decode_classic_def:
+    assert coln in behav_df_full.columns, coln
+for colnset in vars_to_decode_b2b_def:
+    for coln in colnset:
+        assert coln in behav_df_full.columns, coln
+
+# argument in RidgeCV
+n_ridgeCV_alphas = par.get('n_ridgeCV_alphas', 12)
+alphas = np.logspace(-5, 5, n_ridgeCV_alphas)
+fit_intercept_classic_dec = True
+fit_intercept_b2b = False
 
 # time_locked = 'target'  # 'target' or 'reach'
 # Read raw to extra MEG event triggers
@@ -376,7 +400,8 @@ fn_flt_raw_full = op.join(path_data_tmp_cursubj, fn_flt_raw )
 fn_events = f'{task}_{hpass}_{ICAstr}_eve.txt'
 fn_events_full = op.join(path_data, subject, fn_events )
 
-from config2 import cleanEvents
+#from config2 import cleanEvents
+from meg_proc import cleanEvents_NIH
 
 #################  load filtered raw if present
 loaded_flt_raw = False
@@ -394,14 +419,13 @@ if load_flt_raw and os.path.exists(fn_flt_raw_full) \
                                         min_duration=min_event_duration)
             events[:, 0] += delay_trig_photodi
 
-            events = cleanEvents(events)
+            events = cleanEvents_NIH(events)
         else:
             events = mne.read_events(fn_events_full)
         loaded_flt_raw = True
     except Exception as e:
         print('loading filtered raw failed, got exception ',str(e))
 
-from behav_proc import addTrigPresentCol_NIH
 
 # if raw is not present, re-filter it from zero
 if (raw is None) or ( (not loaded_flt_raw) and \
@@ -416,7 +440,7 @@ if (raw is None) or ( (not loaded_flt_raw) and \
     events = mne.find_events(raw, stim_channel=stim_channel_name,
                                 min_duration=min_event_duration)
     events[:, 0] += delay_trig_photodi
-    events = cleanEvents(events)
+    events = cleanEvents_NIH(events)
 
     raw.filter(freq[0], freq[1], n_jobs=n_jobs_MNE)
 
@@ -447,17 +471,29 @@ if (raw is None) or ( (not loaded_flt_raw) and \
 #############################################################
 ##################################    Start calc
 #############################################################
+# this needed for alignment later, does not dep on tmin,tmax
+event_ids_all_both = stage2evn2event_ids['feedback']['all'] + stage2evn2event_ids['target']['all'] 
+epochs_for_EC = Epochs(raw, events, event_id = event_ids_all_both,                                                                                 
+            tmin=-0.01, tmax=0.01, preload=True, decim=decim_epochs)                                               
+
 for tmin_cur,tmax_cur in tminmax:
     print('------------- Starting {:.2f},{:.2f}'.format(tmin_cur,tmax_cur) )
-    bsl = None
+    bsl = par.get('baseline','None')
+    bsl = eval(bsl)
 
     ####################   ensure consistency ################
-    # _EC means Ensure Consistency
-    event_ids_all_for_EC = stage2evn2event_ids['target']['all']
-    epochs_for_EC = Epochs(raw, events, event_id = event_ids_all_for_EC,
+    event_ids_all = stage2evn2event_ids[time_locked]['all']
+    epochs = Epochs(raw, events, event_id = event_ids_all,
                     tmin=tmin_cur, tmax=tmax_cur, preload=True,
                     baseline=bsl, decim=decim_epochs)
 
+
+    # if tmin and/or tmax are large then we can lose correspondance between target and feedback target indices, which in turn would make
+    # it difficult to insure correspondance between log target sequence and trigger target sequence
+    # so here we get target codes from epochs regardless whether for which time locked they were (I use sample to sample correspondance)
+    from meg_proc import getTargetCodes_NIH
+    dfev = getTargetCodes_NIH(epochs_for_EC, epochs)
+    target_codes = dfev['target_code'].values
 
     #environment_full = np.array(behav_df_full['environment'])
     ## modifies in place
@@ -465,20 +501,32 @@ for tmin_cur,tmax_cur in tminmax:
     #                                epochs_for_EC,
     #                                environment_full, save_fname = fname_EC_full)
 
-    behav_df_cur = addTrigPresentCol_NIH(behav_df_full, epochs_for_EC.events)
+    #behav_df_cur = addTrigPresentCol_NIH(behav_df_full, epochs_for_EC.events)
+    behav_df_cur = addTrigPresentCol_NIH(behav_df_full, target_codes)
     behav_df_cur = behav_df_cur.query('trigger_present == True')
     print('Trigger consist: before={}, after={}'.format( len(behav_df_full) ,
         len(behav_df_cur) ))
+
     assert len(behav_df_cur) > 0
+    #assert len(behav_df_cur) == len(epochs_for_EC)
+    assert len(behav_df_cur) == len(epochs)
 
+    behav_df_cur =behav_df_cur.sort_values('trials')
+    assert np.all( behav_df_cur['trials'].diff()[1:] > 0 )
 
-    print(len(behav_df_cur))
+    # this assertion is violated if ediops asks to delete first entry in behav_df
+    #assert np.array_equal( dfev['trial_index_ev'].values , behav_df_cur['trials'].values)
+    dfev['trial_index'] =  behav_df_cur['trials'].values
+
+    if exit_after == 'enforce_consist':
+        sys.exit(0)
+
     # after this behav_df['target_inds'] and epochs.events[:,2] are equal
     vars_to_decode_b2b_tmp, aname = \
             getAnalysisVarnames(time_locked, control_type)
     # list of lists
     if len(vars_to_decode_b2b_def):
-        vars_to_decode_b2b = [vars_to_decode_b2b_tmp, vars_to_decode_b2b_def]
+        vars_to_decode_b2b = [vars_to_decode_b2b_tmp ] +  vars_to_decode_b2b_def
     else:
         vars_to_decode_b2b = [vars_to_decode_b2b_tmp ]
 
@@ -497,21 +545,29 @@ for tmin_cur,tmax_cur in tminmax:
     if par['recalc_err_sens']:
         print('Recalc err sens')
         behav_df_cur, vndef2vn = computeErrSensVersions(behav_df_cur,
-            env_to_run,block_names_cur,pertvals_cur,gseqcs_cur,tgt_inds_cur,
-            dists_rad_from_prevtgt_cur,dists_trial_from_prevtgt_cur,
+            env_to_run,block_names_cur,pertvals_cur,gseqcs_cur,
+            tgt_inds_cur, dists_rad_from_prevtgt_cur,
+            dists_trial_from_prevtgt_cur,
             error_type = error_type, allow_duplicating = False,
             computation_ver = computation_ver,
             coln_nh='non_hit_not_adj',
             coln_nh_out='non_hit_shfited',
+            coln_error = coln_error,
             addvars=vars_to_decode_b2b_tmp, time_locked = time_locked_EScalc)
+        # output can be not properly ordered because of filtering used inside
+        behav_df_cur = behav_df_cur.sort_values('trials')
         if vndef2vn is None:
             vndef2vn = {}
     else:
         assert  set(vars_to_decode_b2b_tmp ) < set(behav_df_cur.columns)
         vndef2vn = {}
+
     #assert len(behav_df_cur) == len(behav_df_full)
     # it can be smaller than behav_df_full because we filter inside
     assert len(behav_df_cur) > 0
+
+    # make sure trial index consistency was not destroyed in compute err sens
+    assert np.array_equal( dfev['trial_index'].values , behav_df_cur['trials'].values)
 
     for vn in vars_to_decode_b2b_tmp:
         assert vn in behav_df_cur.columns
@@ -519,14 +575,7 @@ for tmin_cur,tmax_cur in tminmax:
 
     ####################################
 
-
-    # first we need to take all events to ensure consistency
-    event_ids_all = stage2evn2event_ids[time_locked]['all']
-    epochs = Epochs(raw, events, event_id = event_ids_all,
-                    tmin=tmin_cur, tmax=tmax_cur, preload=True,
-                    baseline=bsl, decim=decim_epochs)
-
-    if exit_after == 'enforce_consist':
+    if exit_after == 'recalc_ES':
         sys.exit(0)
 
     # let's reread after ensuring consistency
@@ -550,11 +599,11 @@ for tmin_cur,tmax_cur in tminmax:
 
         # whether we remove only inf nan or also outliers
         if trim_outliers:
-            subdf, mask_trunc = truncateDf(subdf0, 'err_sens',
+            subdf, mask_trunc = truncateDf(subdf0, colns_ES[0],
                         q=0.05, verbose=0, infnan_handling='discard',
                        return_mask = True)
         else:
-            subdf, mask_trunc = truncateDf(subdf0, 'err_sens',
+            subdf, mask_trunc = truncateDf(subdf0, colns_ES[0],
                         q=0, verbose=0, infnan_handling='discard',
                        return_mask = True)
 
@@ -562,17 +611,24 @@ for tmin_cur,tmax_cur in tminmax:
               f': {sum(mask_trunc)} / {len(mask_trunc) } ')
 
         ################################  prepare X
-        times = epochs.times
+        trials_left = subdf['trials']
+        dfev_cur_trunc = dfev.query('trial_index_ev in @trials_left')
         # idk why but its really important to have str values here instead of ints
-        ep = epochs[ stage2evn2event_ids_str[time_locked][env] ]
-        checkTgtConsistency(subdf, ep) # checks if epochs and df are consistent
+        #ep = epochs[ stage2evn2event_ids_str[time_locked][env] ]
+
+        #dfev_cur = getTargetCodes_NIH(epochs_for_EC, ep)
+        #dfev_cur = dfev_cur.sort_values('sample')
+        #dfev_cur_trunc = dfev_cur.query('trial_index in @subdf.trial_index.values')
+
+        # remember that we ensured consistency of indices earlier
+        epochs_curenv = epochs[dfev_cur_trunc.index.values ] 
+        checkTgtConsistency(subdf, epochs_curenv) # checks if epochs and df are consistent
 
         tmin_safe = tmin_cur + safety_time_bound
         tmax_safe = tmax_cur - safety_time_bound
 
-        X = ep.pick_types(meg=True, ref_meg=False)._data
-        #if trim_outliers:
-        X = X[mask_trunc]
+        X = epochs_curenv.pick_types(meg=True, ref_meg=False)._data
+        times = epochs_curenv.times
 
         assert X.shape[0] == len(subdf), (X.shape, len(subdf) )
 
@@ -641,11 +697,27 @@ for tmin_cur,tmax_cur in tminmax:
             y    = y[mask_good]
             Xcur = Xcur[mask_good]
 
+
             print('Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  ( ~np.isnan(y) ).sum()  ) )
+            if len(y) < 5:
+                print('Too short y, return None')
+                res['dec_error'] = str(f'Too short y {len(y)}')
+                return res
+            Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0) )
+
+            if exit_after == 'rescale':
+                print(y.shape)
+                print(y[:10])
+                return y
+                #sys.exit(0)
 
             if nskip_trial > 1:
                 y = y[::nskip_trial]
                 Xcur = Xcur[::nskip_trial]
+
+            # for quicker tests, -1 means all channels
+            if n_channels_to_use > 0:
+                Xcur = Xcur[:,:n_channels_to_use]
 
             #if debug_save_Xy_exit:
             #    fnf =pjoin( results_folder , f'Xy_classical_{env}_{varname}.npz')
@@ -659,9 +731,12 @@ for tmin_cur,tmax_cur in tminmax:
                                             rank='full', n_jobs=n_jobs_per_dim_classical_dec,
                                             fit_log_level=mne_fit_log_level)
             # Regression for classic decoding
-            if regression_type == 'Ridge':
-                alphas = np.logspace(-5, 5, 12)
-                est = make_pipeline(spoc_est, RidgeCV())
+            if regression_type == 'Ridge_noCV': #this is ungly but just for back compat, earlier I was using 'Ridge' for 'RidgeCV'
+                est = make_pipeline(spoc_est, Ridge(alpha = alphas[5], fit_intercept = fit_intercept_classic_dec))
+            elif regression_type in ('RidgeCV','Ridge'):
+                # def alphas = (0.1, 1, 10), in the original code Romain was not supplying them in classical case for some reason
+                # alpha_per_target = False by def meaning that it will take the best alpha only
+                est = make_pipeline(spoc_est, RidgeCV(alphas = alphas, fit_intercept = fit_intercept_classic_dec))
             elif regression_type == 'xgboost':
                 import xgboost
                 from xgboost import XGBRegressor
@@ -679,26 +754,31 @@ for tmin_cur,tmax_cur in tminmax:
             scores = list()
             print(f'{addvar}: Starting CV for regression_type={regression_type}')
             nsplit = 0
-            for train, test in cv.split(Xcur, y):
-                print(f'Starting split N={nsplit}')
-                with mne.use_log_level(mne_fit_log_level):
-                    est.fit(Xcur[train], y[train])
-                y_preds[test] = est.predict(Xcur[test])
-                score = spearmanr(y_preds[test], y[test])
-                scores.append(score[0])
-                nsplit += 1
-            diff = np.abs(y - y_preds)
+            try:
+                for train, test in cv.split(Xcur, y):
+                    print(f'Starting split N={nsplit}')
+                    with mne.use_log_level(mne_fit_log_level):
+                        est.fit(Xcur[train], y[train])
+                    y_preds[test] = est.predict(Xcur[test])
+                    score = spearmanr(y_preds[test], y[test])
+                    scores.append(score[0])
+                    nsplit += 1
+                diff = np.abs(y - y_preds)
 
-            res['non_hit'] = non_hit
-            res['non_hit_mask'] = non_hit_mask
-            res['diff']   = diff
-            res['scores'] = scores
-            res['vals']   = y  # non_hit
-            res['mask_valid'] = mask_not_inf
-            res['dec_type'] = 'classic'
-            res['Xshape'] = Xcur.shape
+                res['non_hit'] = non_hit
+                res['non_hit_mask'] = non_hit_mask
+                res['diff']   = diff
+                res['scores'] = scores
+                res['vals']   = y  # non_hit
+                res['mask_valid'] = mask_not_inf
+                res['dec_type'] = 'classic'
+                res['Xshape'] = Xcur.shape
+                res['dec_error'] = None
+                print(f'Finished classical {addvar} {name} scores average = {np.mean(scores):.4f}' )
+            except Exception as e:
+                print(f'!!!! Error during fit for {addvar} {name}: ',str(e) )
+                res['dec_error'] = str(e)
 
-            print(f'Finished classical {addvar} {name} scores average = {np.mean(scores):.4f}' )
             return res
 
 
@@ -751,7 +831,7 @@ for tmin_cur,tmax_cur in tminmax:
             y    = y[mask_good]
             Xcur = Xcur[mask_good]
 
-            print('Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  mask_not_nan.sum()  ) )
+            print('B2B: Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  mask_not_nan.sum()  ) )
 
             if debug_save_Xy_exit:
                 np.savez( pjoin( results_folder , f'Xy_b2b_{env}.npz'),
@@ -759,44 +839,31 @@ for tmin_cur,tmax_cur in tminmax:
                 print('DEBUG: saved Xy b2b and exiting')
                 return {}
 
+            if len(y) < 5:
+                print('Too short y, return None')
+                res['dec_error'] = str(f'Too short y {len(y)}')
+                return res
+
+            Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0))
+
             if nskip_trial > 1:
                 y = y[::nskip_trial]
                 Xcur = Xcur[::nskip_trial]
 
-            if par['scale_X_robust']:
-                # X shape is trials x channels x time
-                #Xcur_reshape = Xcur.transpose((0, 2, 1)).reshape(Xcur.shape[0], -1)
-
-                # for RobustScaler we want samples x features and we want to rescale within channel
-
-                # bring channels in the end and rescale trials x time
-                Xcur_reshape0 = Xcur.transpose((0, 2, 1))  # to trials x time x channels  
-                Xcur_reshape = Xcur_reshape0.reshape(-1, Xcur_reshape0.shape[2] )
-                rscale = RobustScaler(with_centering=False).fit(Xcur_reshape)
-                Xcur_reshape = rscale.transform(Xcur_reshape)
-
-                Xcur = Xcur_reshape.reshape(Xcur_reshape0.shape).transpose((0, 2, 1))
-
-                #Xcur = Xcur_reshape.reshape(Xcur.shape).transpose((0, 2, 1))
-                #Xcur = Xcur_reshape.reshape(Xcur.shape)
-
-            if par['scale_Y_robust']:
-                #if 'err_sens' in varnames:
-                #    raise ValueError('need to be more careful when scaling err sens')
-                rscale = RobustScaler(with_centering=False).fit(y)
-                y = rscale.transform(y)
-            else:
-                from sklearn.preprocessing import scale
-                y = scale(y)
-
+            # for quicker tests, -1 means all channels
+            if n_channels_to_use > 0:
+                Xcur = Xcur[:,:n_channels_to_use]
             ##############################
             spoc = SPoC(n_components=SPoC_n_components, log=True, reg='oas',
                         rank='full', n_jobs=min(n_jobs_SPoC, Xcur.shape[0] ),
                         fit_log_level=mne_fit_log_level)
             # Regression for classic decoding
-            if regression_type == 'Ridge':
-                alphas = np.logspace(-5, 5, 12)
-                G = make_pipeline(spoc, RidgeCV(alphas=alphas, fit_intercept=False))
+            if regression_type == 'Ridge_noCV':
+                #est = make_pipeline(spoc_est, Ridge(alpha = alphas[5], fit_intercept = fit_intercept_classic_dec))
+                G = make_pipeline(spoc, Ridge(alphas=alphas, fit_intercept=fit_intercept_b2b))
+            elif regression_type in ('RidgeCV','Ridge'):
+                # def alphas = (0.1, 1, 10)
+                G = make_pipeline(spoc, RidgeCV(alphas=alphas, fit_intercept=fit_intercept_b2b))
             elif regression_type == 'xgboost':
                 from xgboost import XGBRegressor
                 xgb = XGBRegressor(**add_clf_creopts)
@@ -821,61 +888,76 @@ for tmin_cur,tmax_cur in tminmax:
             b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
                 parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
 
-            b2b.fit(Xcur,y)
-            ##############################
-            partial_scores = np.diag(b2b.E_)
+            try:
+                b2b.fit(Xcur,y)
+                ##############################
+                partial_scores = np.diag(b2b.E_)
 
-            res['non_hit'] = non_hit
-            res['non_hit_mask'] = non_hit_mask
-            #res['diff']   = diff
-            res['scores'] = partial_scores
-            res['vals']   = y  # non_hit
-            res['mask_valid'] = mask_not_inf
-            res['varnames'] = varnames
-            res['dec_type'] = 'b2b'
-            res['Xshape'] = Xcur.shape
+                res['non_hit'] = non_hit
+                res['non_hit_mask'] = non_hit_mask
+                #res['diff']   = diff
+                res['scores'] = partial_scores
+                res['vals']   = y  # non_hit
+                res['mask_valid'] = mask_not_inf
+                res['varnames'] = varnames
+                res['dec_type'] = 'b2b'
+                res['Xshape'] = Xcur.shape
+                res['dec_error'] = None
 
-            print(f'Finished b2b for {varnames} {name} partial_scores = {partial_scores}' )
+                print(f'Finished b2b for {varnames} {name} partial_scores = {partial_scores}' )
+            except Exception as e:
+                print(f'!!!! Error during fit for {addvar} {name}: ',str(e) )
+                res['dec_error'] = str(e)
             return res
 
         #if decode_merge_pert:
         ####################################################################
-        if len(vars_to_decode_classic):
-            print('-------------  Just decoding')
+        if do_classic_dec and len(vars_to_decode_classic):
+            print('-------------  Classical decoding')
         ####################################################################
+            addvar_dict = {}
+            for addvar in vars_to_decode_classic:
+                res = ML_classic(addvar)
+                if exit_after == 'rescale':
+                    sys.exit(0)
 
-        addvar_dict = {}
-        for addvar in vars_to_decode_classic:
-            res = ML_classic(addvar)
-            addvar_dict[addvar] = res
+                addvar_dict[addvar] = res
 
-        #if debug_save_Xy_exit:
-        #    print('debug_save_Xy_exit')
-        #    sys.exit(0)
 
-        svd['decoding_per_var'] = addvar_dict
+                if exit_after == 'classic_1st':
+                    sys.exit(0)
 
-        if save_result:
-            dfpath = fname_full.replace('.npz','.pkl')
-            subdf.to_pickle(dfpath )
-            svd['dfpath'] = dfpath
-            np.savez(fname_full, **svd)
-            print(f'after classic decoding and saved results to {fname_full}')
+            #if debug_save_Xy_exit:
+            #    print('debug_save_Xy_exit')
+            #    sys.exit(0)
+
+            svd['decoding_per_var'] = addvar_dict
+
+            if save_result:
+                dfpath = fname_full.replace('.npz','.pkl')
+                subdf.to_pickle(dfpath )
+                svd['dfpath'] = dfpath
+                np.savez(fname_full, **svd)
+                print(f'after classic decoding and saved results to {fname_full}')
 
 
         ####################################################################
         print('-------------  B2B decoding')
         ####################################################################
 
-        addvar_dict = {}
-        for addvars in vars_to_decode_b2b:
-            res = ML_b2b(addvars)
-            addvar_dict[','.join(addvars) ] = res
-        svd['decoding_per_var_b2b'] = addvar_dict
+        if do_b2b_dec and len(vars_to_decode_b2b):
+            addvar_dict = {}
+            for addvars in vars_to_decode_b2b:
+                res = ML_b2b(addvars)
+                addvar_dict[','.join(addvars) ] = res
 
-        if debug_save_Xy_exit:
-            print('debug_save_Xy_exit')
-            sys.exit(0)
+                if exit_after == 'b2b_1st':
+                    sys.exit(0)
+            svd['decoding_per_var_b2b'] = addvar_dict
+
+            if debug_save_Xy_exit:
+                print('debug_save_Xy_exit')
+                sys.exit(0)
 
         #if decode_per_pert:
         #    addvar_dict = {}
@@ -900,7 +982,7 @@ for tmin_cur,tmax_cur in tminmax:
         #svd['prev_error']    = prev_error
         #svd['prev_movement'] = prev_movement
 
-        #svd['err_sens'] = err_sens_non_hit
+        #svd[coln_ES] = err_sens_non_hit
         # these are varnames related to err sens
         #svd['non_hit'] = non_hit
         #svd['correction'] = correction_non_hit
@@ -911,3 +993,14 @@ for tmin_cur,tmax_cur in tminmax:
             svd['dfpath'] = dfpath
             np.savez(fname_full, **svd)
             print(f'Finished and saved results to {fname_full}')
+
+        print('Decoding errors summary:')
+        ks = ['decoding_per_var','decoding_per_var_b2b']
+        for kk in ks:
+            if kk not in svd:
+                print(f'!!  {kk} not present')
+            else:
+                for k,v in svd[kk].items():
+                    err = v['dec_error']
+                    if err is not None:
+                        print(k, v['dec_error'] )

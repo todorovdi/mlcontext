@@ -118,6 +118,8 @@ def enforceTargetTriggerConsistency(behav_df, epochs, environment,
     return behav_df_res
 
 def checkTgtConsistency(behav_df, epochs):
+    assert len(behav_df) == len(epochs), (len(behav_df), len(epochs) )
+
     meg_targets = epochs.events[:, 2].copy()
     target_inds_behav = np.array( behav_df['target_inds'] )
 

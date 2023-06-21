@@ -778,7 +778,7 @@ class VisuoMotor:
             f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indiquera la fin de la pause\n'
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
         f'{retpos_str}\n'
-        "Après avoir terminé, vous recevrez une récompense en euros\n proportionnelle à votre performance :)")
+        "Après avoir terminé, vous recevrez une récompense (bonus) en euros\n proportionnelle à votre performance :)")
         if instr_calib:
             self.instuctions_str += '\n\nAppuyez sur "c" pour calibrer le joystick'
         if instr_cursor_size:
@@ -1479,7 +1479,7 @@ class VisuoMotor:
 
         ###################   FRENCH TEXT BEGIN #####################
         monetary_value_tot = self.reward_accrued * self.reward2EUR_coef
-        perfinfo =  f'Récompense totale = {monetary_value_tot:.2f} Eur'
+        perfinfo =  f'Récompense bonus totale = {monetary_value_tot:.2f} Eur'
 
         if pause_str is None:
             pause_str = 'La pause commence maintenant ! '
@@ -1602,13 +1602,13 @@ class VisuoMotor:
             perfinfo += [ f'Mouvement numéro {self.trial_index}/{len(self.trial_infos)}'  ]
         if 'hit' in reward_type:
             perfinfo += [ f'# hits                                = {self.counter_hit_trials}' ]
-            perfinfo += [ f'Récompense totale                     = {self.reward_accrued:.2f}' ]
+            perfinfo += [ f'Récompense bonus totale                     = {self.reward_accrued:.2f}' ]
             if inc_last_reward:
                 perfinfo += [ f'Récompense pour le dernier mouvement  = {self.reward:.2f}' ]
 
 
         if 'money' in reward_type:
-            perfinfo += [ f'Récompense totale                     =  {monetary_value_tot:.2f} Eur' ]
+            perfinfo += [ f'Récompense bonus totale                     =  {monetary_value_tot:.2f} Eur' ]
             if inc_last_reward:
                 perfinfo += [ f'Récompense pour le dernier mouvement  =  {monetary_value_last:.2f} Eur' ]
 

@@ -233,7 +233,12 @@ class VisuoMotorMEG(VisuoMotor):
                 f' Mean block num trials is (almost) = {np.diff(block_starts).mean():.2f}')
 
 
-        tis_break = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break'] + [len(self.trial_infos) - 1]
+        tis_break0 = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break'] 
+        tis_break = tis_break0 + [len(self.trial_infos) - 1]
+        if tis_break[-1] - tis_break[-2] < 25:
+            print('Reset short break at the end')
+            tis_break = tis_break0[:-1] + [len(self.trial_infos) - 1]
+
         difftis_break = np.diff( np.hstack([0, tis_break]) )
         difftis_break_dur = difftis_break * self.trial_dur_expected
         print( f'tis_break = {tis_break}, in sec (excl break dur) ={tis_break}')
@@ -797,7 +802,7 @@ class VisuoMotorMEG(VisuoMotor):
         tdif = tc - self.phase_start_times['current_trial']
         self.phase_start_times['current_trial'] = tc
 
-        print(f'Trial index change! {prev_trial_index} -> {self.trial_index}')
+        print(f'Trial index change! {prev_trial_index} -> {self.trial_index} (N total {len(self.trial_infos)})')
         print(f'TIME: trial completed in {tdif:.2f} sec')
         print(f'  prev trial = {prev_trial_info}')
         print(f'  new trial  = {trial_info2}')

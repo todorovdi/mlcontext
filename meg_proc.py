@@ -1,6 +1,69 @@
 import pandas as pd
 import numpy as np
 
+def cleanEvents_NIH(events):
+    # code by Romain
+    # check we have for stable events  tgtcode, 100, 30
+    # make sure feedback phase goes after target, otherwise delete
+    import warnings
+    t = -1
+    bad_trials = list()
+    bad_events = list()
+    for ii, event in enumerate(events):
+        if event[2] in event_ids_tgt_stable:
+            t += 1
+            if events[ii+1, 2] == 100:
+                if events[ii+2, 2] != 30:
+                    bad_trials.append(t)
+                    warnings.warn('Bad sequence of triggers')
+                    # Delete bad events until the next beginning of a trial (10)
+                    bad_events.append(ii - 1)
+                    for iii in range(5):
+                        if events[ii + iii, 2] == 10:
+                            break
+                        else:
+                            bad_events.append(ii+iii)
+            elif events[ii+1, 2] != 30:
+                bad_trials.append(t)
+                warnings.warn('Bad sequence of triggers')
+                # Delete bad events until the next beginning of a trial (10)
+                bad_events.append(ii - 1)
+                for iii in range(5):
+                    if events[ii + iii, 2] == 10:
+                        break
+                    else:
+                        bad_events.append(ii+iii)
+    print(f'cleanEvents_NIH: deleted {len(bad_events)} events')
+    events_cleaned = np.delete(events, bad_events, 0)
+    return events_cleaned
+
+def events2df_NIH(events, advcols=True):
+    from config2 import stage2evn2event_ids
+    event_ids_all_tgt = stage2evn2event_ids['target']['all'] 
+    dfev = pd.DataFrame({'code':events[:,2], 'sample':events[:,0]})
+    dfev['type'] = dfev['code'].apply( lambda x: 'target' if x in event_ids_all_tgt else 'feedback' )
+
+    if advcols:
+        dfev['prev_type'] = dfev['type'].shift(1)
+        dfev['prev_prev_type'] = dfev['type'].shift(2)
+        # check alternation
+        assert (dfev['sample'].diff()[1:] > 0).all()
+        assert (dfev['prev_prev_type'] == dfev['type']).iloc[2:].all()
+
+        dfev['prev_code'] = dfev['code'].shift(1, fill_value=-10000) # fill_value so that we have int and not float type
+        dfev['target_code'] = dfev.apply( lambda x: x['code'] if x['type'] == 'target' else x['prev_code'], 1 )
+
+        # here we may miss some of the trials because triggers did not always arrive
+        dfev['trial_index_ev'] = (dfev['type'] == 'target').cumsum() - 1
+    return dfev
+
+def getTargetCodes_NIH(epochs_both, epochs_subset):
+    # epochs_both should be created with minimal tmin tmax around zero to capture really all events
+    # both epochs objects have to be 
+    dfev = events2df_NIH(epochs_both.events)
+    dfev2 = events2df_NIH(epochs_subset.events, advcols =False)
+    dfev2_ = dfev2.merge(dfev, on='sample', how='left')
+    return dfev2_
 
 def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_DICT, 
               params, restmintime):
@@ -303,9 +366,6 @@ def decode_naive2(X, y, nperm= 2, n_jobs = 10, nbfold=5, nbfold_perm=2,
     from sklearn.metrics import make_scorer
     import mne
 
-
-
-
     assert len(X) == len(y), (X.shape, y.shape)
     good =  ~np.isnan(y) 
     print( f'Removing {np.sum(~good)} bad (nan) datapoints')
@@ -350,3 +410,68 @@ def decode_naive2(X, y, nperm= 2, n_jobs = 10, nbfold=5, nbfold_perm=2,
 
     
     return scores, scores_perm
+
+def addTrigPresentCol_NIH(df, meg_targets_ev, environment=None):
+    '''
+    events is 2-dim
+    '''
+    assert meg_targets_ev.ndim == 1
+    from base2 import int_to_unicode
+    from Levenshtein import editops
+    assert (np.diff( np.array(df.index) ) > 0).all()
+
+
+    # remove some of the behav inds
+    # WARNING: this will fail (give empty)if epochs are based of time_locked=feedback
+    # (or maybe it was only in old code?)
+    #meg_targets_ev = events[:, 2].copy()
+    #target_inds_behav = np.array( df['target_inds'] )
+
+    target_codes_behav = np.array( df['target_codes'] )
+
+    assert len(target_codes_behav)
+    assert len(meg_targets_ev)
+    print(  len(target_codes_behav) , len(meg_targets_ev) )
+    #if environment is None:
+    #    environment = df['environment']
+
+    # for different environments target signals stored in .fif have different codes (20+ vs 30+) so
+    # we convert to unified indices
+
+    #codes_allowed = [20, 21, 22, 23, 25, 26, 27, 28]
+    from config2 import event_ids_tgt
+    nbad = (~np.isin(meg_targets_ev, event_ids_tgt) ).sum()
+    print(nbad , 'non target code events' )
+    assert nbad == 0
+    #for env,envcode in env2envcode.items():
+    #    #trial_inds = np.where(environment == envcode)[0]
+    #    trial_inds = np.where( np.isin(meg_targets_ev,
+    #        stage2evn2event_ids['target'][env] ) )[0]
+    #    # it uses that target codes are conequitive integers
+    #    meg_targets_ev[trial_inds] = meg_targets_ev[trial_inds] - env2subtr[env]
+
+    # one can have less triggers than behav
+    changes = editops(int_to_unicode(target_codes_behav),
+                        int_to_unicode(meg_targets_ev))
+    # we have missing triggers in MEG file so we delete stuff from behav file
+    delete_trials = [change[1] for change in changes] # these are indices of rows
+    print('addTrigPresentCol: ediops changes = ', changes )
+    df['trigger_present'] = True
+    colind = df.columns.get_loc('trigger_present')
+    # we can use iloc becahse editoops was computed on the same-indexed dataset
+    df.iloc[delete_trials, colind] = False
+
+    assert df['trigger_present'].sum() > 0
+    print(df['trigger_present'].astype(float).describe() )
+
+    target_codes_behav2 = df.query('trigger_present == True')['target_codes']
+
+    # respects ordering
+    if np.array_equal(meg_targets_ev, target_codes_behav2):
+        if len(delete_trials):
+            print(f'addTrigPresentCol: {len(delete_trials)} triggers missing for {len(df)} trials')
+    else:
+        #warnings.warn('MEG events and behavior file do not match')
+        raise ValueError('MEG events and behavior file do not match')
+
+    return df

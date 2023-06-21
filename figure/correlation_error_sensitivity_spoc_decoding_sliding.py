@@ -67,8 +67,7 @@ fnames_failed = []
 #all_preverror_random = list()
 
 #tpls = []
-df_persubj=[]
-from postproc import collectResults
+from postproc import collectDecodingResults
 
 if isinstance(env,str):
     envstr = env
@@ -87,100 +86,18 @@ if not use_preload_df:
 
         df_mode = 'loaded'
     else:
-        for subject in np.array(subjects)[subject_inds]:
-            print(f'Starting collecting subject {subject}')
-            #df_collect = collectResults(subject,hpass)
-            #df_collect = collectResults(subject,output_folder,freq_name,
-            #        keys_to_extract = ['par','scores_err_sens','diff_err_sens_pred',
-            #                           'err_sens', 'prev_error', 'correction'] )
-            # , 'non_hit' is not per dec var
-            df_collect1 = collectResults(subject,output_folder,freq_name,
-                    keys_to_extract = ['par'], env=env,
-                    control_type = control_type,
-                    time_locked = time_locked,
-                    tmin = tmin_desired,
-                    time_start=time_start, time_end=time_end )
-            if df_collect1 is None or len(df_collect1) == 0:
-                print(f'Found nothing for subject {subject}')
-                continue
-            fns = list( df_collect1['fn'] )
-
-            df_collect2 = collectResults(subject, output_folder, freq_name,
-                    keys_to_extract = varnames,
-                                        parent_key = 'decoding_per_var',
-                                        df = df_collect1.copy(),
-                                        time_start=time_start, time_end=time_end)
-            df_collect2['dec_type'] = 'classic'
-
-            df_collect3 = collectResults(subject, output_folder, freq_name,
-                    keys_to_extract = varnames_b2b,
-                                        parent_key = 'decoding_per_var_b2b',
-                                        df = df_collect1,
-                                        time_start=time_start, time_end=time_end)
-            df_collect3['dec_type'] = 'b2b'
-
-            vnpostfix = '_varnames'
-            for ci in np.where(df_collect3.columns.str.endswith(vnpostfix))[0]:
-                bn = df_collect3.columns[ci][:-len(vnpostfix)]
-                #TODO: problem here: if I have same varname decoded
-                # in two different sets of vars for b2b, it will overwrite
-                # so maybe I have to duplicate df_collect3 for each set
-                order = df_collect3[f'{bn}{vnpostfix}']._values[0]
-                order_sc = [f'{s}_scores' for s in order]
-                def f(x):
-                    vns = x[f'{bn}_varnames']
-                    scores = x[f'{bn}_scores']
-                    #correction,error_varnames
-                    r = []
-                    for vn,sc in zip(vns,scores):
-                        #x[ f'{vn}_scores'] = [sc]  # one-el list
-                        r += [sc]
-                    return tuple(r)
-                df_collect3[order_sc ] = df_collect3.apply(f,1, result_type = 'expand')
-
-                order_vals = [f'{s}_vals' for s in order]
-                def f(x):
-                    vns = x[f'{bn}_varnames']
-                    vals = x[f'{bn}_vals']
-                    #correction,error_varnames
-                    r = []
-                    for vi in range( vals.shape[1]):
-                        #x[ f'{vn}_scores'] = [sc]  # one-el list
-                        r += [ vals[:,vi] ]
-                    return tuple(r)
-                df_collect3[order_vals ] = df_collect3.apply(f,1, result_type = 'expand')
-            # TODO: some info from params
-            # trim_outliers
-            # trial_group_col_calc
-            # freq_name
-            # time_locked
-
-            #df_collect2['perturbation'] = np.nan
-            #df_collect3 = collectResults(subject, output_folder, freq_name,
-            #        keys_to_extract = varnames,
-            #                            parent_key = 'decoding_per_var_and_pert',
-            #                            df = df_collect2,
-            #                            cokey = 'perturbation',
-            #                            time_start=time_start, time_end=time_end)
-
-            #for kte in set(df_collect2.columns) - set(df_collect1.columns):
-            #    df_collect1[kte] = df_collect2[kte]
-
-            #df_persubj += [df_collect2] #, df_collect3]
-            df_persubj += [df_collect2, df_collect3] #, df_collect3]
-            if not DEBUG:
-                del df_collect1
-                del df_collect2
-                del df_collect3
-            #tmins = df_persubj[df_persubj[env] == 'stable' ]   ['tmin']
-        df = pd.concat( df_persubj, ignore_index=True )
-        #df.reset_index(inplace=True)
-        #df.drop('index',1,inplace=True)
-
+        eh = 'raise'
+        if not require_all_subjects:
+            eh = 'ignore'
+        df = collectDecodingResults(subjects, subject_inds, output_folder,freq_name, env, control_type, time_locked, custom_prefix,
+                tmin_desired, 
+                varnames, varnames_b2b,
+                time_start, time_end, error_handling = eh)
         df_mode = 'new'
 
-assert set( df['subject'] ) == set(np.array(subjects)[subject_inds]), \
-        set( df['subject'] ) ^ set(np.array(subjects)[subject_inds]) 
+if require_all_subjects:
+    assert set( df['subject'] ) == set(np.array(subjects)[subject_inds]), \
+            set( df['subject'] ) ^ set(np.array(subjects)[subject_inds]) 
 
 row  =df.iloc[0]
 for kte in varnames:
@@ -278,12 +195,27 @@ ppnames = [ 'pp:diff_es_pe:r', 'pp:diff_es:r',    'pp:diff_abscorr:r', 'pp:abspe
 # decreases.
 
 # classical scores
+from postproc import ListWrap
+def f(x):
+    if x is None:
+        return np.nan
+    if isinstance(x, ListWrap):
+        x = x.data
+    return np.mean(x)
+def f2(x):
+    if x is None:
+        return np.nan
+    if isinstance(x, ListWrap):
+        x = x.data
+    return np.std(x)
 for kte in varnames:
-    df[f'{kte}_scores_mean_over_folds'] =  df[f'{kte}_scores'].apply(lambda x: np.mean(x) if x is not None else np.nan)
-    df[f'{kte}_scores_std_over_folds']  =  df[f'{kte}_scores'].apply(lambda x: np.std(x) if x is not None else np.nan)
+    df[f'{kte}_scores_mean_over_folds'] =  df[f'{kte}_scores'].apply(f)
+    df[f'{kte}_scores_std_over_folds']  =  df[f'{kte}_scores'].apply(f2)
 
-df.to_pickle( fname_df_full )
-print(f'df saved to {fname_df_full}')
+
+if save_df:
+    df.to_pickle( fname_df_full )
+    print(f'df saved to {fname_df_full}')
 
 if exit_after == 'collect':
     sys.exit(0)

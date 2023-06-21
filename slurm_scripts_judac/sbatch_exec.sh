@@ -20,7 +20,8 @@
 ##SBATCH --time=00:40:00             # 7 days by default on htc partition
 ##SBATCH --time=00:20:00             # 7 days by default on htc partition
 ##SBATCH --time=05:40:00             # 7 days by default on htc partition
-#SBATCH --time=10:40:00             # 7 days by default on htc partition
+#SBATCH --time=16:00:00             # 7 days by default on htc partition
+# 13:40 was not enough for some when running from -15 to +15
 
 # I get only 77 jobs running at the same time on hpc. At least when I as for 32 procs
 

@@ -273,11 +273,16 @@ def genArgParser_decodeNIH():
 
 
     parser.add_argument('--do_classic_dec', default = 1, type = int)
-    parser.add_argument('--do_partial_dec', default = 1, type = int)
+    #parser.add_argument('--do_partial_dec', default = 1, type = int)
+    parser.add_argument('--do_b2b_dec', default = 1, type = int)
+    parser.add_argument('--n_ridgeCV_alphas', type=int)
     parser.add_argument('--est_parallel_across_dims', default = 1, type = int)
     parser.add_argument('--est_parallel_within_dim', default = 0, type = int)
     parser.add_argument('--b2b_each_fit_is_parallel', default = 0, type = int)
     parser.add_argument('--classic_dec_verbose', default = 3)
+
+    parser.add_argument('--colns_ES',      type=str)
+    parser.add_argument('--colns_classic', type=str)
 
     parser.add_argument('--B2B_SPoC_parallel_type', default = 'across_splits')
 
@@ -289,6 +294,8 @@ def genArgParser_decodeNIH():
     parser.add_argument('--random_seed', default=0, type=int)
     parser.add_argument('--trim_outliers', default=0, type=int)
     parser.add_argument('--crop')
+    parser.add_argument('--n_channels_to_use', type=int)
+
     parser.add_argument('--custom_suffix')
 
     parser.add_argument('--use_preloaded_raw', default = 0, type = int)
@@ -299,6 +306,8 @@ def genArgParser_decodeNIH():
     parser.add_argument('--save_epochs',  default = 0, type = int)
     parser.add_argument('--load_flt_raw', default = 1, type = int)
     parser.add_argument('--save_flt_raw', default = 1, type = int)
+
+    parser.add_argument('--XYcentering', default = 0, type = int)
 
     parser.add_argument('--error_type', default = 'MPE', type = str)
     parser.add_argument('--recalc_err_sens', default = 1, type = int)
@@ -314,6 +323,7 @@ def genArgParser_decodeNIH():
     parser.add_argument('--exit_after', default = 'end')
 
     parser.add_argument('--nskip_trial', default = 1, type=int)
+    parser.add_argument('--baseline', default = 'None', type=str)  # or t0,t1 (no spaces)
 
     parser.add_argument('--discard_hit_twice', default = 0, type=int)
 
@@ -327,36 +337,15 @@ def genArgParser_decodeNIH():
 
     return parser
 
-def cleanEvents(events):
-    # check we have for stable events  tgtcode, 100, 30
-    import warnings
-    t = -1
-    bad_trials = list()
-    bad_events = list()
-    for ii, event in enumerate(events):
-        if event[2] in event_ids_tgt_stable:
-            t += 1
-            if events[ii+1, 2] == 100:
-                if events[ii+2, 2] != 30:
-                    bad_trials.append(t)
-                    warnings.warn('Bad sequence of triggers')
-                    # Delete bad events until the next beginning of a trial (10)
-                    bad_events.append(ii - 1)
-                    for iii in range(5):
-                        if events[ii + iii, 2] == 10:
-                            break
-                        else:
-                            bad_events.append(ii+iii)
-            elif events[ii+1, 2] != 30:
-                bad_trials.append(t)
-                warnings.warn('Bad sequence of triggers')
-                # Delete bad events until the next beginning of a trial (10)
-                bad_events.append(ii - 1)
-                for iii in range(5):
-                    if events[ii + iii, 2] == 10:
-                        break
-                    else:
-                        bad_events.append(ii+iii)
-    print(f'cleanEvents: deleted {len(bad_events)} events')
-    events_cleaned = np.delete(events, bad_events, 0)
-    return events_cleaned
+import pprint
+class FormatPrinter(pprint.PrettyPrinter):
+
+    def __init__(self, formats):
+        super(FormatPrinter, self).__init__()
+        self.formats = formats
+
+    def format(self, obj, ctx, maxlvl, lvl):
+        if type(obj) in self.formats:
+            return self.formats[type(obj)] % obj, 1, 0
+        return pprint.PrettyPrinter.format(self, obj, ctx, maxlvl, lvl)
+#{float: "%.2f", int: "%06X"}

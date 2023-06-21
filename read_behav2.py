@@ -66,6 +66,7 @@ for trial in range(nb_trials):
     for ii, (x, y) in enumerate(zip(log[i[target_phase[:]], 4],
                                     log[i[target_phase[:]], 5])):
         dist = ((x-width/2.)**2 + (y-height/2.)**2)**(1/2.)
+        # first time we exit home
         if dist > home_radius:
             reaction_time.append(log[i[target_phase[ii]], 12] -
                                  log[i[target_phase[0]], 12])
