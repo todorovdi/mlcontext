@@ -8,11 +8,12 @@ from mne.cov import _regularized_covariance
 from mne.fixes import pinv
 from mne.utils import fill_doc, _check_option, _validate_type, copy_doc
 
-def _regularized_covariance_silent(epoch, reg, method_params, rank, fit_log_level):
+def _regularized_covariance_silent(epoch, reg, method_params, rank, fit_log_level, addpar):
+    # addpar is to identify
     import mne
     with mne.use_log_level(fit_log_level):
-        r = _regularized_covariance( epoch, reg=reg, method_params=method_params, rank=rank)
-    return r
+        cov = _regularized_covariance( epoch, reg=reg, method_params=method_params, rank=rank)
+    return cov,addpar
 
 class CSP(TransformerMixin, BaseEstimator):
     """M/EEG signal decomposition using the Common Spatial Patterns (CSP).
@@ -642,12 +643,14 @@ class SPoC(CSP):
 
     def __init__(self, n_components=4, reg=None, log=None,
                  transform_into='average_power', cov_method_params=None,
-                 rank=None,n_jobs=1,fit_log_level='warning'):
+                 rank=None,n_jobs=1,fit_log_level='warning',
+                 precalc_covs = None ):
         """Init of SPoC."""
-        super(SPoC, self).__init__(n_components=n_components, reg=reg, log=log,
-                                   cov_est="epoch", norm_trace=False,
-                                   transform_into=transform_into, rank=rank,
-                                   cov_method_params=cov_method_params)
+        super(SPoC, self).__init__(n_components=n_components, 
+                reg=reg, log=log,
+               cov_est="epoch", norm_trace=False,
+               transform_into=transform_into, rank=rank,
+               cov_method_params=cov_method_params)
         # Covariance estimation have to be done on the single epoch level,
         # unlike CSP where covariance estimation can also be achieved through
         # concatenation of all epochs from the same class.
@@ -655,6 +658,7 @@ class SPoC(CSP):
         delattr(self, 'norm_trace')
         self.n_jobs = n_jobs
         self.fit_log_level=fit_log_level
+        self.precalc_covs = precalc_covs
 
     def fit(self, X, y):
         """Estimate the SPoC decomposition on epochs.
@@ -694,23 +698,29 @@ class SPoC(CSP):
         from joblib import Parallel, delayed
         #with mne.use_log_level(self.fit_log_level):
         # Estimate single trial covariance
-        covs = np.empty((n_epochs, n_channels, n_channels))
-        if self.n_jobs == 1:
-            print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
-            for ii, epoch in enumerate(X):
-                #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
-                assert epoch.size > 0
-                covs[ii] = _regularized_covariance_silent(
-                    epoch, reg=self.reg, method_params=self.cov_method_params,
-                    rank=self.rank, fit_log_level=self.fit_log_level)
+        if self.precalc_covs is None:
+            covs = np.empty((n_epochs, n_channels, n_channels))
+            if self.n_jobs == 1:
+                print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
+                for ii, epoch in enumerate(X):
+                    #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+                    assert epoch.size > 0
+                    covs[ii],addpar = _regularized_covariance_silent(
+                        epoch, reg=self.reg, method_params=self.cov_method_params,
+                        rank=self.rank, fit_log_level=self.fit_log_level,
+                    addpar = ii)
+            else:
+                print(f'Start parallel SPoC with n_jobs={self.n_jobs} for {X.shape[0]} epochs')
+                r = Parallel(n_jobs=self.n_jobs)(
+                    delayed(_regularized_covariance_silent)( epoch, reg=self.reg,
+                        method_params=self.cov_method_params,
+                        rank=self.rank,
+                        fit_log_level=self.fit_log_level,
+                        addpar = epochi) for epochi,epoch in enumerate(X))
+                covs, addpars = list(zip(*r))
+                covs = np.array(covs)
         else:
-            print(f'Start parallel SPoC with n_jobs={self.n_jobs} for {X.shape[0]} epochs')
-            covs = Parallel(n_jobs=self.n_jobs)(
-                delayed(_regularized_covariance_silent)( epoch, reg=self.reg,
-                    method_params=self.cov_method_params,
-                    rank=self.rank,
-                    fit_log_level=self.fit_log_level  ) for epoch in X)
-            covs = np.array(covs)
+            covs = self.precalc_covs
 
         C = covs.mean(0)
         Cz = np.mean(covs * target[:, np.newaxis, np.newaxis], axis=0)
@@ -738,6 +748,351 @@ class SPoC(CSP):
         # To standardize features
         self.mean_ = X.mean(axis=0)
         self.std_ = X.std(axis=0)
+
+        return self
+
+    # original ver, no parallel
+    def fit0(self, X, y):
+        """Estimate the SPoC decomposition on epochs.
+
+        Parameters
+        ----------
+        X : ndarray, shape (n_epochs, n_channels, n_times)
+            The data on which to estimate the SPoC.
+        y : array, shape (n_epochs,)
+            The class for each epoch.
+
+        Returns
+        -------
+        self : instance of SPoC
+            Returns the modified instance.
+        """
+        from scipy import linalg
+        self._check_Xy(X, y)
+
+        if len(np.unique(y)) < 2:
+            raise ValueError("y must have at least two distinct values.")
+
+        # The following code is directly copied from pyRiemann
+
+        # Normalize target variable
+        target = y.astype(np.float64)
+        target -= target.mean()
+        target /= target.std()
+
+        n_epochs, n_channels = X.shape[:2]
+
+        # Estimate single trial covariance
+        covs = np.empty((n_epochs, n_channels, n_channels))
+        for ii, epoch in enumerate(X):
+            covs[ii] = _regularized_covariance(
+                epoch, reg=self.reg, method_params=self.cov_method_params,
+                rank=self.rank)
+
+        C = covs.mean(0)
+        Cz = np.mean(covs * target[:, np.newaxis, np.newaxis], axis=0)
+
+        # solve eigenvalue decomposition
+        evals, evecs = linalg.eigh(Cz, C)
+        evals = evals.real
+        evecs = evecs.real
+        # sort vectors
+        ix = np.argsort(np.abs(evals))[::-1]
+
+        # sort eigenvectors
+        evecs = evecs[:, ix].T
+
+        # spatial patterns
+        self.patterns_ = linalg.pinv(evecs).T  # n_channels x n_channels
+        self.filters_ = evecs  # n_channels x n_channels
+
+        pick_filters = self.filters_[:self.n_components]
+        X = np.asarray([np.dot(pick_filters, epoch) for epoch in X])
+
+        # compute features (mean band power)
+        X = (X ** 2).mean(axis=-1)
+
+        # To standardize features
+        self.mean_ = X.mean(axis=0)
+        self.std_ = X.std(axis=0)
+
+        return self
+
+    def transform(self, X):
+        """Estimate epochs sources given the SPoC filters.
+
+        Parameters
+        ----------
+        X : array, shape (n_epochs, n_channels, n_times)
+            The data.
+
+        Returns
+        -------
+        X : ndarray
+            If self.transform_into == 'average_power' then returns the power of
+            CSP features averaged over time and shape (n_epochs, n_sources)
+            If self.transform_into == 'csp_space' then returns the data in CSP
+            space and shape is (n_epochs, n_sources, n_times).
+        """
+        return super(SPoC, self).transform(X)
+
+
+
+def precalcRegCov(X, reg, cov_method_params,
+                  rank, fit_log_level, n_jobs):
+    Xind2covs = precalcRegCov_list([X], reg, cov_method_params,
+                  rank, fit_log_level, n_jobs)
+    return Xind2covs[0]
+    #from joblib import Parallel, delayed
+    #n_epochs, n_channels = X.shape[:2]
+    #assert X.size > 0
+    #covs = np.empty((n_epochs, n_channels, n_channels))
+    #if n_jobs == 1:
+    #    print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
+    #    for ii, epoch in enumerate(X):
+    #        #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+    #        assert epoch.size > 0
+    #        covs[ii] = _regularized_covariance_silent(
+    #            epoch, reg=reg, method_params=cov_method_params,
+    #            rank=rank, fit_log_level=fit_log_level)
+    #else:
+    #    print(f'Start parallel SPoC with n_jobs={n_jobs} for {X.shape[0]} epochs')
+    #    covs = Parallel(n_jobs=n_jobs)(
+    #        delayed(_regularized_covariance_silent)( epoch, reg=reg,
+    #            method_params=cov_method_params,
+    #            rank=rank,
+    #            fit_log_level=fit_log_level  ) for epoch in X)
+    #    covs = np.array(covs)
+    #return covs
+
+def precalcRegCov_list(Xs, reg, cov_method_params,
+                  rank, fit_log_level, n_jobs):
+    # here I wanted to calc in parallel over all epochs AND Xs
+    # but then decided that maybe it's not necessary since differnt
+    # time bins will have different sizes of X
+    from joblib import Parallel, delayed
+    for X in Xs:
+        assert X.size > 0
+
+    Xind2covs = [] # this is a list, not array indeed because different Xs can have different shapes
+    for Xind, X in enumerate(Xs):
+        n_epochs, n_channels = X.shape[:2]
+        covs = np.empty((n_epochs, n_channels, n_channels))
+        Xind2covs += [covs]
+
+    if n_jobs == 1:
+        print(f'Start NON-parallel precalcRegCov for {len(Xs)} Xs')
+        for Xi, X in enumerate(Xs):
+            print(f'  Start NON-parallel precalcRegCov for {X.shape[0]} epochs')
+            #n_epochs, n_channels = X.shape[:2]
+            #covs = np.empty((n_epochs, n_channels, n_channels))
+            for ii, epoch in enumerate(X):
+                #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+                assert epoch.size > 0
+                r = _regularized_covariance_silent(
+                    epoch, reg=reg, method_params=cov_method_params,
+                    rank=rank, fit_log_level=fit_log_level,
+                    addpar =(Xi,ii) )
+                cov,addpar = r
+                Xind2covs[Xi][ii] = cov
+    else:
+        print(f'Start parallel precalcRegCov with n_jobs={n_jobs} for {len(Xs)} Xs ')
+        r = Parallel(n_jobs=n_jobs)(
+            delayed(_regularized_covariance_silent)( epoch, reg=reg,
+                method_params=cov_method_params,
+                rank=rank,
+                fit_log_level=fit_log_level, addpar=(Xi, ii)  ) \
+                for ii,epoch in enumerate(X) \
+                    for Xi,X in enumerate(Xs) )
+        #rr = list(zip(*r))
+        for cov,addpar in r:
+            Xi,ii = addpar
+            Xind2covs[Xi][ii] = cov
+
+        #new_list = [y for x in nested_list for d, y in enumerate(x) if d == 1]
+        #covs = np.array(covs)
+    return Xind2covs
+
+
+
+
+# from MNE csp.py
+class SPoC_multidim(CSP):
+    """Implementation of the SPoC spatial filtering.
+
+    Source Power Comodulation (SPoC) :footcite:`DahneEtAl2014` allows to
+    extract spatial filters and
+    patterns by using a target (continuous) variable in the decomposition
+    process in order to give preference to components whose power correlates
+    with the target variable.
+
+    SPoC can be seen as an extension of the CSP driven by a continuous
+    variable rather than a discrete variable. Typical applications include
+    extraction of motor patterns using EMG power or audio patterns using sound
+    envelope.
+
+    Parameters
+    ----------
+    n_components : int
+        The number of components to decompose M/EEG signals.
+    reg : float | str | None (default None)
+        If not None (same as ``'empirical'``, default), allow
+        regularization for covariance estimation.
+        If float, shrinkage is used (0 <= shrinkage <= 1).
+        For str options, ``reg`` will be passed to ``method`` to
+        :func:`mne.compute_covariance`.
+    log : None | bool (default None)
+        If transform_into == 'average_power' and log is None or True, then
+        applies a log transform to standardize the features, else the features
+        are z-scored. If transform_into == 'csp_space', then log must be None.
+    transform_into : {'average_power', 'csp_space'}
+        If 'average_power' then self.transform will return the average power of
+        each spatial filter. If 'csp_space' self.transform will return the data
+        in CSP space. Defaults to 'average_power'.
+    cov_method_params : dict | None
+        Parameters to pass to :func:`mne.compute_covariance`.
+
+        .. versionadded:: 0.16
+    %(rank_none)s
+
+        .. versionadded:: 0.17
+
+    Attributes
+    ----------
+    filters_ : ndarray, shape (n_channels, n_channels)
+        If fit, the SPoC spatial filters, else None.
+    patterns_ : ndarray, shape (n_channels, n_channels)
+        If fit, the SPoC spatial patterns, else None.
+    mean_ : ndarray, shape (n_components,)
+        If fit, the mean squared power for each component.
+    std_ : ndarray, shape (n_components,)
+        If fit, the std squared power for each component.
+
+    See Also
+    --------
+    mne.preprocessing.Xdawn, CSP
+
+    References
+    ----------
+    .. footbibliography::
+    """
+
+    def __init__(self, n_components=4, reg=None, log=None,
+                 transform_into='average_power', cov_method_params=None,
+                 rank=None,n_jobs=1,fit_log_level='warning',
+                 center=True, normalize=True, precalc_covs = None):
+        """Init of SPoC."""
+        super(SPoC, self).__init__(n_components=n_components, reg=reg, log=log,
+                cov_est="epoch", norm_trace=False,
+                transform_into=transform_into, rank=rank,
+                cov_method_params=cov_method_params)
+        # Covariance estimation have to be done on the single epoch level,
+        # unlike CSP where covariance estimation can also be achieved through
+        # concatenation of all epochs from the same class.
+        delattr(self, 'cov_est')
+        delattr(self, 'norm_trace')
+        self.n_jobs = n_jobs
+        self.center = center
+        self.normalize = normalize
+        self.fit_log_level=fit_log_level
+        self.precalc_covs = precalc_covs
+
+    def fit(self, X, Y):
+        """Estimate the SPoC decomposition on epochs.
+
+        Parameters
+        ----------
+        X : ndarray, shape (n_epochs, n_channels, n_times)
+            The data on which to estimate the SPoC.
+        Y : array, shape (n_epochs, n_variables)
+            The class for each epoch.
+
+        Returns
+        -------
+        self : instance of SPoC
+            Returns the modified instance.
+        """
+        assert X.size > 0
+        from scipy import linalg
+        self._check_Xy(X, Y[:,0] )
+
+        for i in range(Y.shape[1] ):
+            if len(np.unique(Y[:,i] )) < 2:
+                raise ValueError("y must have at least two distinct values.")
+
+        # The following code is directly copied from pyRiemann
+
+        # Normalize target variable
+        target = Y.astype(np.float64)
+        if self.center:
+            target -= target.mean(axis = 0)[None,:]
+        if self.normalize:
+            target /= target.std(axis = 0)[None,:]
+
+        n_epochs, n_channels = X.shape[:2]
+
+
+        # to avoid mesages like "Computing rank from data with rank='full' all
+        # the time
+        import mne
+        from joblib import Parallel, delayed
+        #with mne.use_log_level(self.fit_log_level):
+        # Estimate single trial covariance
+        # this step does NOT depend on Y at all
+        if self.precalc_covs is None:
+            covs = np.empty((n_epochs, n_channels, n_channels))
+            if self.n_jobs == 1:
+                print(f'Start NON-parallel SPoC for {X.shape[0]} epochs')
+                for ii, epoch in enumerate(X):
+                    #print(f'SPoC: starting reg cov for epoch {ii}/{X.shape[0]}')
+                    assert epoch.size > 0
+                    covs[ii] = _regularized_covariance_silent(
+                        epoch, reg=self.reg, method_params=self.cov_method_params,
+                        rank=self.rank, fit_log_level=self.fit_log_level)
+            else:
+                print(f'Start parallel SPoC with n_jobs={self.n_jobs} for {X.shape[0]} epochs')
+                covs = Parallel(n_jobs=self.n_jobs)(
+                    delayed(_regularized_covariance_silent)( epoch, reg=self.reg,
+                        method_params=self.cov_method_params,
+                        rank=self.rank,
+                        fit_log_level=self.fit_log_level  ) for epoch in X)
+                covs = np.array(covs)
+        else:
+            covs = self.precalc_covs
+
+        C = covs.mean(0)
+        self.patterns_ = []
+        self.filters_ = []
+        self.mean_ = []
+        self.std_ = []
+        for targeti in target.shape[1]:
+            target_cur = target[:,targeti]
+            Cz = np.mean(covs * \
+                target_cur[:, np.newaxis, np.newaxis], axis=0)
+
+            # solve eigenvalue decomposition
+            evals, evecs = linalg.eigh(Cz, C)
+            evals = evals.real
+            evecs = evecs.real
+            # sort vectors
+            ix = np.argsort(np.abs(evals))[::-1]
+
+            # sort eigenvectors
+            evecs = evecs[:, ix].T
+
+            # spatial patterns
+            self.patterns_ += [ linalg.pinv(evecs).T ] # n_channels x n_channels
+            self.filters_  += [ evecs ] # n_channels x n_channels
+
+            pick_filters = self.filters_[-1][:self.n_components]
+            Xf = np.asarray([np.dot(pick_filters, epoch) for epoch in X])
+
+            # compute features (mean band power)
+            Xf = (Xf ** 2).mean(axis=-1)
+
+            # To standardize features
+            self.mean_ += [ Xf.mean(axis=0) ]
+            self.std_  += [ Xf.std(axis=0)  ]
 
         return self
 

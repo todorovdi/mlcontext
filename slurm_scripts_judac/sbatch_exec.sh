@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=icei-hbp-2020-0012
+#SBATCH --account=icei-hbp-2022-0017
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=128
@@ -40,10 +40,23 @@ echo "$JOBID"_"$ID"
 unset PYTHONPATH
 . $HOME/.bashrc
 unset PYTHONPATH
+#/p/project/icei-hbp-2022-0017/mambaforge/envs/merr/bin
+__conda_setup="$('/p/project/icei-hbp-2022-0017/mambaforge/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+eval "$__conda_setup"
+. "/p/project/icei-hbp-2022-0017/mambaforge/etc/profile.d/mamba.sh"
+
+eval "#(conda shell.bash hook)"
+mamba deactivate
+mamba deactivate
 mamba activate merr
 mamba deactivate
 mamba activate merr
 export PYTHONPATH="$CODE_MEMORY_ERRORS"
+which python
+which ipython
+
+PYPATH=/p/project/icei-hbp-2022-0017/mambaforge/envs/merr/bin/
+#which python
 
 #jutil env activate -p icei-hbp-2022-0017
 #module load Stages/2023
@@ -97,7 +110,7 @@ MAXJOBS=256 # better this than 64, otherwise more difficult on the level of indt
 export OPENBLAS_NUM_THREADS=1
 
 NUMRS=`wc -l $RUNSTRINGS_FN | awk '{print $1;}'`
-echo "Start now"
+echo "Start now="`date`
 echo "SBATCH TYPE: CPU MULTIRUN"
 while [ $NUMRS -gt $SHIFT_ID ]; do
   EFF_ID=$((ID+SHIFT_ID))
@@ -113,7 +126,7 @@ while [ $NUMRS -gt $SHIFT_ID ]; do
   #############################   Execute 
   sedind=$(( $EFF_ID + 1 ))
   runstr=`sed -n "$sedind"p $RUNSTRINGS_FN`
-  runstr="$runstr --SLURM_job_id $SLURM_JOB_ID"_"$ID" 
+  runstr=$PYPATH"$runstr --SLURM_job_id $SLURM_JOB_ID"_"$ID" 
   echo "$runstr"
   # execute
   $runstr

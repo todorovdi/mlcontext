@@ -326,6 +326,7 @@ class VisuoMotor:
                 self.counter_inside = self.counter_inside+1
             else:
                 self.counter_inside = 0
+            # switch to TARGET_PHASE if stayed inside long enough
             if (self.counter_inside == self.params['FPS']*self.params['time_inside']):
                 self.current_phase = self.TARGET_PHASE
 

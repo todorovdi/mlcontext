@@ -64,8 +64,10 @@ from state_space_fit_toolbox.pyEMtoolbox import generalized_expectation_maximiza
 
 def state_space_fit(behavior, perturb, params_init=None,
     params_search_ranges=None, fit_method='lmse', search_method='norm',
-                    linalg_error_handling='raise', use_mex = 1):
+                    linalg_error_handling='raise', use_mex = 1,
+                    sep_err_begend = 0):
     # Add EM-toolbox to path using os module functions
+    # behavior is perturb - measured_err
     em_toolbox_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'EM-toolbox')
     os.sys.path.append(em_toolbox_path)
 
@@ -130,10 +132,25 @@ def state_space_fit(behavior, perturb, params_init=None,
         # S: set of parameters [a1, ..., as, b1, ... bs, x01, ..., x0s]
         #print('deterministic_ss_mse: S = ',S)
         #print('deterministic_ss_mse: S shape = ',S.shape)
+
+        # this simulation does not really uses behavior even though it takes it
+        # as a parameter
+        # search_method is either norm or log
         model_estimate,state_estim = \
             simulate_deterministic_state_space(S, perturb, behavior,
             search_method)
         #print(model_estimate.shape, behavior.shape)
+        mse = np.mean((model_estimate - behavior)**2)
+        return mse
+
+    def deterministic_ss_mse2(S, perturb, behavior, search_method):
+        #beh = pert - meas_err => err = pert - beh
+        model_estimate,state_estim,err_pred = \
+            simulate_deterministic_state_space2(S, perturb, behavior,
+            search_method)
+        #obs_error = perturb - behavior
+        #mse = np.mean((obs_error - err_pred)**2)
+
         mse = np.mean((model_estimate - behavior)**2)
         return mse
 
@@ -185,7 +202,11 @@ def state_space_fit(behavior, perturb, params_init=None,
             bds = list(zip(params_search_ranges[0, ::2],
                     params_search_ranges[0, 1::2]))
             #print(bds )
-            res = minimize(deterministic_ss_mse, params_init.flatten(),
+            if sep_err_begend:
+                f = deterministic_ss_mse2
+            else:
+                f = deterministic_ss_mse
+            res = minimize(f, params_init.flatten(),
                 args=(perturb, behavior, search_method),
                 bounds=bds)
 
@@ -282,13 +303,6 @@ def state_space_fit(behavior, perturb, params_init=None,
     return output, params, asymptote, noises_var, states, performances
 
 def simulate_deterministic_state_space(S, perturb, behavior, search_space):
-    # Author: Lucas Struber
-    # Email: lucas.struber@univ-grenoble-alpes.fr
-    # Institution: University Grenoble Alpes
-    # Lab: TIMC Laboratory
-    # Advisor: Fabien Cignetti
-    # Date: June 28, 2021
-    # Version: 1.0
     # Summary: simulate a state-space model ignoring noises from a set of
     # parameters
     #
@@ -296,10 +310,11 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     #    S: set of parameters [a1, ..., as, b1, ... bs, x01, ..., x0s]
     #       where s is the number of states
     #    b_i is constant learning rate for certain state
-    #    behavior: the motor output on each trial
+    #    behavior: the motor output on each trial (not really used)
     #    perturb: the perturbation on each trial
     #    search_space: a string "norm" or "log". If set to "log", it considers
     #       that provided parameters are in the 0-1 log space
+    #       only needed to unpack params right
     #
     # Output description:
     #    y_pred: model output (sum of states)
@@ -312,6 +327,7 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
 
     nbStates = len(S) // 3 # Use integer division to get the number of states
 
+    # unpack params
     A = S[:nbStates] # Use slicing to get the first nbStates elements of S
     b = S[nbStates:2*nbStates] # Use slicing to get the next nbStates elements of S
     X0 = S[2*nbStates:] # Use slicing to get the remaining elements of S
@@ -331,9 +347,91 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     y_pred[0] = np.sum(state[0]) # Use numpy.sum to calculate the sum of an array
 
     for t in range(1, len(behavior)):
+        pert_to_use = perturb[t]
         for s in range(nbStates):
-            state[t][s] = A[s]*state[t-1][s] + b[s]*(perturb[t] - y_pred[t-1])
+            state[t][s] = A[s]*state[t-1][s] +\
+                b[s]*(pert_to_use - y_pred[t-1]) # pred err
 
+        # for offline feedback it should be y_pred[t+1] = state[t]
+        # y_pred[t] will be compared in the end with behavior[t]
         y_pred[t] = np.sum(state[t])
+        # if offline fb
+        # in the end of trial t-1 we will have info about perturb[t-1]
+        # we update y_pred[t] (before making movement) 
+        # based on prev state and discrepancy between reality and this state
 
+    # later y_pred will be compared with behavior
     return y_pred, state
+
+def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verbose=0):
+    # Summary: simulate a state-space model ignoring noises from a set of
+    # parameters
+    #
+    # Input description:
+    #    S: set of parameters [a1, ..., as, b1, ... bs, x01, ..., x0s]
+    #       where s is the number of states
+    #    b_i is constant learning rate for certain state
+    #    behavior: the motor output on each trial (not really used)
+    #    perturb: the perturbation on each trial
+    #    search_space: a string "norm" or "log". If set to "log", it considers
+    #       that provided parameters are in the 0-1 log space
+    #       only needed to unpack params right
+    #
+    # Output description:
+    #    y_pred: model output (sum of states)
+    #    state: states' vector
+
+    if len(S) % 3 != 0:
+        print('S shape = ',S.shape)
+        print('S = ',S)
+        raise ValueError("S must contain A, B and X0")
+
+    nbStates = len(S) // 3 # Use integer division to get the number of states
+
+    # unpack params
+    A = S[:nbStates] # Use slicing to get the first nbStates elements of S
+    b = S[nbStates:2*nbStates] # Use slicing to get the next nbStates elements of S
+    X0 = S[2*nbStates:] # Use slicing to get the remaining elements of S
+
+    assert nbStates == 1
+
+    if search_space == 'log':
+        A = 1 / (1 + np.exp(-A)) # Use numpy.exp for element-wise
+        b = 1 / (1 + np.exp(-b))
+
+    y_pred = np.zeros_like(behavior) # Use numpy.zeros_like to create an array
+    # of zeros with the same shape and type as behavior
+
+    state = np.zeros((len(behavior), nbStates)) # Use numpy.zeros to create a
+    # 2D array of zeros with the given shape
+
+    err_pred = np.zeros(len(behavior)) # Use numpy.zeros to create a
+
+    for s in range(nbStates):
+        state[0][s] = X0[s] # Use indexing to access and assign elements of an array
+    y_pred[0] = np.sum(state[0]) # Use numpy.sum to calculate the sum of an array
+
+    # not shifted pert. I.e. pert[n] pertubation indeed happening on trial n, even if not percieved until the end of trial
+    for t in range(1, len(behavior)):
+        err_est_before_mvt = perturb[t-1] - y_pred[t]
+        err_observed = perturb[t] - y_pred[t]
+
+        #pert_to_use = perturb[t]
+        for s in range(nbStates):
+            state[t][s] = A[s]*state[t-1][s] +\
+                b[s]*err_est_before_mvt 
+
+        # for offline feedback it should be y_pred[t+1] = state[t]
+        # y_pred[t] will be compared in the end with behavior[t]
+        y_pred[t] = np.sum(state[t])
+        err_pred[t] = err_est_before_mvt
+
+        if verbose:
+            print(f'{t}: p[t-1]={perturb[t-1]:.3f} p[t]={perturb[t]:.3f} y_pred[t-1]={y_pred[t-1]:.3f} ep={err_est_before_mvt:.3f} eo={err_observed:.3f} y_pred[t]={y_pred[t]:.3f}')
+        # if offline fb
+        # in the end of trial t-1 we will have info about perturb[t-1]
+        # we update y_pred[t] (before making movement) 
+        # based on prev state and discrepancy between reality and this state
+
+    # later y_pred will be compared with behavior
+    return y_pred, state, err_pred

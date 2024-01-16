@@ -66,9 +66,8 @@ class ScoringAUC():
                 break
             return np.mean(_score, axis=0)
 
-
-def decod_stats(X, n_jobs=None, n_permutations=2**10):
-    from mne.stats import permutation_cluster_1samp_test
+def decod_stats2(X, n_jobs=None, n_permutations=2**10):
+    from mne.stats import permutation_cluster_test
     """Statistical test applied across subjects"""
     # check input
     X = np.array(X)
@@ -79,16 +78,55 @@ def decod_stats(X, n_jobs=None, n_permutations=2**10):
     # T_obs, p_values_ = ttest_1samp(X, null, axis=0)
     if n_jobs is None:
         from config2 import n_jobs
-    T_obs_, clusters, p_values, _ = permutation_cluster_1samp_test(
+    T_obs_, clusters, p_values, _ = permutation_cluster_test(
         X, out_type='mask', n_permutations = n_permutations, n_jobs=n_jobs,
         verbose=False)
+
+    #print(type(T_obs_), type(clusters), type(p_values) )
+    #print(T_obs_.shape, len(clusters), p_values.shape)
+    #print(clusters[0], p_values)
+
+    # clusters is a list of array slices
+    # each cluster is a slice
+    # format p_values to get same dimensionality as X
+    p_values_ = np.ones_like(X[0][0]).T
+    for cluster, pval in zip(clusters, p_values):
+        p_values_[cluster] = pval
+
+    r = np.squeeze(p_values_)
+    #print('rshpe',r.shape)
+    return r
+
+def decod_stats(X, n_jobs=None, n_permutations=2**10, tail=0):
+    from mne.stats import permutation_cluster_1samp_test, ttest_1samp_no_p
+    """Statistical test applied across subjects"""
+    # check input
+    X = np.array(X)
+
+    # stats function report p_value for each cluster
+    # null = np.repeat(chance, len(times))
+    # Non-corrected t-test...
+    # T_obs, p_values_ = ttest_1samp(X, null, axis=0)
+    stat_fun = ttest_1samp_no_p
+    if n_jobs is None:
+        from config2 import n_jobs
+    T_obs_, clusters, p_values, _ = permutation_cluster_1samp_test(
+        X, out_type='mask', n_permutations = n_permutations, n_jobs=n_jobs,
+        stat_fun = stat_fun, tail=tail, verbose=False)
+
+    #print(type(T_obs_), type(clusters), type(p_values) )
+    #print(T_obs_.shape, len(clusters), p_values.shape)
+    ## clusters is a lit of array
+    #print(clusters[0], p_values)
 
     # format p_values to get same dimensionality as X
     p_values_ = np.ones_like(X[0]).T
     for cluster, pval in zip(clusters, p_values):
         p_values_[cluster] = pval
 
-    return np.squeeze(p_values_)
+    r = np.squeeze(p_values_)
+    #print('rshpe',r.shape)
+    return r
 
 
 def gat_stats(X):
@@ -307,19 +345,25 @@ def calc_rad_angle_from_coordinates(X, Y, radius_ = None):
     so 1,0 gives 90
     '''
     if radius_ is None:
-        radius_cur = radius_
-    else:
         radius_cur = radius
+    else:
+        radius_cur = radius_
 
     angles = np.arctan2(Y/float(radius_cur),
-                        X/float(radius_cur))
+                        X/float(radius_cur)) # [-pi,pi]
     # change the 0 angle (0 is now bottom vertical in the circle)
-    angles = angles + np.pi/2.
-    # make the angle between 0 and 2*np.pi
-    for i in np.where(angles < 0):
-        angles[i] = angles[i] + 2*np.pi
-    for i in np.where(angles > 2*np.pi):
-        angles[i] = angles[i] - 2*np.pi
+    angles = angles + np.pi/2. 
+    # make the angle between 0 and np.pi
+
+    c = angles < 0
+    angles[c] = angles[c] + 2*np.pi
+    c = angles > np.pi
+    angles[c] = angles[c] - 2*np.pi
+
+    #for i in np.where(angles < 0):
+    #    angles[i] = angles[i] + 2*np.pi
+    #for i in np.where(angles > np.pi):
+    #    angles[i] = angles[i] - 2*np.pi
     return angles
 
 
@@ -336,7 +380,7 @@ class B2B(BaseEstimator):
         self.ensemble = ensemble
         assert not ( ( self.random_state_split is not None ) and ( self.ensemble is not None )  )
 
-    def fit(self, X, Y):
+    def fit(self, X, Y, verbose=True):
         from joblib import Parallel, delayed
         if self.ensemble is None:
             ensemble = ShuffleSplit(n_splits=self.n_splits, test_size=.5, random_state = self.random_state_split)
@@ -345,22 +389,28 @@ class B2B(BaseEstimator):
 
         split = ensemble.split(X, Y)
         if self.each_fit_is_parallel:
-            print('B2B start NOT parllel (across splits)')
-            H_hats = list()
+            if verbose:
+                print('B2B start NOT parallel (across splits)')
+            r = []
             for G_set, H_set in split:
-                H_hat = _b2b_fit_one_split2( X,Y,G_set,H_set,self.G,self.H  )
+                r_ = _b2b_fit_one_split2( X,Y,G_set,H_set,self.G,self.H  )
                 #Y_hat = self.G.fit(X[G_set], Y[G_set]).predict(X)
                 #H_hat = self.H.fit(Y[H_set], Y_hat[H_set]).coef_
-                H_hats.append(H_hat)
+                #H_hats.append(H_hat)
+                r.append(r_)
+            rr = list( zip(*r) )
+            H_hats = np.array(rr[0])
             self.E_ = np.mean(H_hats, 0)
 
             self.H_hats = H_hats
         else:
-            print(f'B2B start parllel (across splits) with {self.n_jobs} jobs')
-            H_hats = Parallel(n_jobs=self.n_jobs)(
+            if verbose:
+                print(f'B2B start parallel (across splits) with {self.n_jobs} jobs')
+            r = Parallel(n_jobs=self.n_jobs)(
                 delayed(_b2b_fit_one_split2)( X,Y,G_set,H_set,self.G,self.H  ) \
                     for (G_set, H_set) in split)
-            H_hats = np.array(H_hats)
+            rr = zip(*r)
+            H_hats = np.array(rr[0])
             self.E_ = np.mean(H_hats, 0)
 
             self.H_hats = H_hats
@@ -390,26 +440,41 @@ def _b2b_fit_one_split2(X,Y,G_set,H_set,G,H):
     with mne.use_log_level('warning'):
         Y_hat = G.fit(X[G_set], Y[G_set]).predict(X)
         H_hat = H.fit(Y[H_set], Y_hat[H_set]).coef_
-    return H_hat
+    return H_hat, G.coef_, G.intercept_, H.coef_, H_intercept_
 
 
 # this one cycles over dims so within a dim it does not make sense to
 # parallelize perhaps
-def _b2b_fit_one_split(isplit, X,Y,G_set,H_set,G,H):
+def _b2b_fit_one_split(isplit, X,Y,G_set,H_set,G,H, verbose = 0):
     #print(f'_b2b_fit_one_split: isplit = {isplit};')
     #Y_hats = [0] * dim
     dim = Y.shape[1]
     Y_hats = np.zeros( Y.shape )
     # over all dims
     import mne
-    verbose = 0
+    
     with mne.use_log_level('warning'):
         # across dims, take corres Y dimension, fig G on X[G_set],y[G_set]
         if verbose:
             print(f'_b2b_fit_one_split: (isplit={isplit}) G_set = {G_set}\n')
+
+        G_coefs = []
+        G_intercepts = []
+
+        # we are doing it separately per dim here because SPoC 
+        # cannot take multidim y
         for dim_ind in range(dim):
             y = Y[:, dim_ind]
             Y_hat = G.fit(X[G_set], y[G_set]).predict(X)
+                    
+            from sklearn.pipeline import Pipeline
+            if isinstance(G,Pipeline):
+                ridge = G.steps[1][1]
+            else:
+                ridge = G
+            G_coefs += [ridge.coef_]
+            G_intercepts += [ridge.intercept_]
+
             Y_hats[:,dim_ind] = Y_hat
             if verbose:
                 print(f'_b2b_fit_one_split: (isplit={isplit}, {dim_ind}) y[G_set] = {y[G_set]}\n')
@@ -422,7 +487,7 @@ def _b2b_fit_one_split(isplit, X,Y,G_set,H_set,G,H):
             print(f'_b2b_fit_one_split: (isplit={isplit}) Yshape={Y.shape}, Yhatsshape ={Y_hats.shape} \n')
             print(f'_b2b_fit_one_split: (isplit={isplit}) H_hat={H_hat}\n')
 
-    return H_hat
+    return H_hat, np.array(G_coefs), np.array(G_intercepts), H.coef_, H.intercept_
 
 
 def _b2b_fit_one_split_back(isplit, Y, Yhat, H_set, H):
@@ -489,6 +554,8 @@ class B2B_SPoC(BaseEstimator):
     def __init__(self, G, H, n_splits=30, parallel_type = 'across_splits_and_dims',
                  n_jobs=None, random_state_split = None, ensemble = None,
                  back_each_dim_sep = 0):
+        # H is usually LinearRegression w/o intercept
+        # G is usually  SPoC + Ridge
         self.n_splits = n_splits
         self.G = G
         self.H = H
@@ -518,6 +585,23 @@ class B2B_SPoC(BaseEstimator):
             ensemble = self.ensemble
 
         dim = Y.shape[1]
+        # 0. split data into two parts half-half: G_set and H_set
+        # 1. using G (SPoC + Ridge) fit and
+        #    predict G_set _on training data_, call it Y_hat
+        #   1.1 do it separately for every variable Y[:,i]
+        # 2. fit with H (linear reg w/o intercept) Y on Y_hat
+        # 3. diag of this fit is said to be the outcome of the alg
+        # NOTE!:  in the paper by J.R.King et al the X and Y are swapped
+        # and they have Y being MEG signal (dep vars) and
+        # X being behav vars (indep vars, putative causes)
+        # "causal inﬂuences" matrix S of shape dimX x dimX
+        # (square of putative causes)
+        # Ghat -- lin reg coef from "Y to X" and calc Xhat = Y*Ghat
+        # [in Romain's code called Y_hat]
+        # S is unbiased, in the sense that it is centered around zero
+        # when there is no effect, only if the second regression
+        # H is not regularized.
+        # NOT! in the paper S is binary (unless in case of additive noise)!
 
         #mne.use_log_level('warning')
         # cycle over splits
@@ -529,15 +613,21 @@ class B2B_SPoC(BaseEstimator):
             for isplit,(G_set, H_set) in enumerate(split):
                 H_hat = _b2b_fit_one_split(isplit, X,Y,G_set,H_set,self.G,self.H)
                 H_hats.append(H_hat)
+
+            rr = list( zip(*r) )
+            H_hats = rr[0]
             self.E_ = np.mean(H_hats, 0)
 
             self.H_hats = H_hats
         else:
             if self.parallel_type == 'across_splits':
                 print(f'B2B_SPoC start parllel (across splits) with {self.n_jobs} jobs')
-                H_hats = Parallel(n_jobs=self.n_jobs, backend =self.parallel_backend)(
+                r = Parallel(n_jobs=self.n_jobs, backend =self.parallel_backend)(
                     delayed(_b2b_fit_one_split)( isplit,X,Y,G_set,H_set,self.G,self.H  ) \
                         for isplit,(G_set, H_set) in enumerate(split) )
+
+                rr = list( zip(*r) )
+                H_hats = rr[0]
                 H_hats = np.array(H_hats)
                 self.E_ = np.mean(H_hats, 0)
 
@@ -594,6 +684,14 @@ class B2B_SPoC(BaseEstimator):
                 self.E_ = np.mean(H_hats, 0)
 
                 self.H_hats = H_hats
+
+        #R_full = corr(Y_test * H, X_test * G)
+        # Y_test cannot be H_set because H was fitted on it
+        # it also cannot be G_set because G was fitted on it
+        #R_full = corr(H.predict(Y_test), G.predict(X_test) )
+        # it is pretty close to H_hat.coef_ perhaps 
+        #   modulo different folds and if we assume that corr is well approximated by linear regression coefficient
+
 
         return self
 
@@ -917,7 +1015,7 @@ def rot(xs,ys, ang=20. * np.pi / 180., startpt =(0.,0.) ):
     # ang is in radians
     xs = np.array(xs, dtype = float) - startpt[0]
     ys = np.array(ys, dtype = float) - startpt[1]
-    assert ang < 2 * np.pi + 1e-5, ang
+    assert ang < np.pi + 1e-5, ang
     xs2 = xs * np.cos(ang) - ys * np.sin(ang)
     ys2 = xs * np.sin(ang) + ys * np.cos(ang)
 
@@ -1087,4 +1185,26 @@ def rescaleIfNeeded(Xcur, Y, par, centering = False):
 
     return Xcur, Y
 
-##############################
+def pipeline2vars(ppl):
+    from sklearn.pipeline import Pipeline
+    if isinstance(ppl,list):
+        r = []
+        for ppl_ in ppl:
+            r.append( pipeline2vars(ppl_) )
+        return r
+    else:
+        r = []
+        for pplel in ppl.steps:
+            tpl = (pplel[0],vars(pplel[1]))
+            r.append(tpl)
+        return r
+
+def subAngles(ang1, ang2):
+    import pandas as pd
+    if isinstance(ang1, pd.Series):
+        ang1 = ang1.values
+    if isinstance(ang2, pd.Series):
+        ang2 = ang2.values
+    r = np.exp(ang1 * 1j) * np.exp(-ang2 * 1j)
+    return np.log(r).imag
+

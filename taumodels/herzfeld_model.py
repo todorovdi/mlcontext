@@ -1,7 +1,23 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from numba import jit
 
-def calc(args, verbose=0):
+@jit(nopython=True)
+def calc(error_region, initial_sensitivity,
+        gaussian_variance, # of gaussians
+        eta,  # weight update speed
+        alpha,  # retention
+        alpha_w, # retention of weights
+        execution_noise_variance,
+        sensory_noise_variance,
+        target_loc,
+        pause_mask,
+        weight_retention_pause,
+        perturbation,
+        channel_mask,
+        true_errors = None,
+        num_bases = 10 ,
+         verbose=0):
     #for k,v in args.items():
     #    if k != 'perturbation':
     #        print(k,v)
@@ -20,15 +36,16 @@ def calc(args, verbose=0):
 
     # Generate the perturbations
     if 'perturbation' not in args:
+        print(f'Using Markov pert with z={args["zeta"]}')
         perturbations = gen_markov_perturbation(100, args['zeta'])
         perturbations[perturbations < 0] = 0
         perturbations[perturbations > 0] = 1
     else:
         perturbations = args['perturbation']
 
-    pauses = args.get('pause_mask', None) 
+    pauses = args.get('pause_mask', None)
     if pauses is None:
-        pauses = [0] * len(perturbations) 
+        pauses = np.zeros_like(perturbations)
 
     # Check to see if any of these are channel trials
     if 'channel_mask' not in args:
@@ -49,7 +66,7 @@ def calc(args, verbose=0):
     # motor output is org_feedback - target_loc
     motor_output = np.zeros(len(perturbations))
     motor_output[0] = x_0
-    errors = np.zeros(len(perturbations))
+    errors = np.zeros(len(perturbations)) # predicted errors
     err_sens = [np.nan]
     ws = []
     for i in range(len(perturbations) - 1):
@@ -73,6 +90,7 @@ def calc(args, verbose=0):
                 s_ * (errors[i-1] + np.random.randn() * \
                      args['sensory_noise_variance'])
         else:
+            # know it in the end of the trial
             errors[i] = motor_output[i] - (target_reach[i] + perturbations[i]) + \
                     np.random.randn() * args['execution_noise_variance']
             if channels[i]:
@@ -159,6 +177,7 @@ def plot_binned_adaptation(errors, motor_output):
     plt.ylabel('Adaptation')
     plt.show()
 
+@jit(nopython=True)
 def get_sensitivity(error, weights, centers, variances):
     sensitivity = 0
     #print(weights.shape)
@@ -169,6 +188,7 @@ def get_sensitivity(error, weights, centers, variances):
         #print(sensitivity)
     return sensitivity
 
+@jit(nopython=True)
 def update_weights(error, weights, centers, variances, tde, eta,
                    alpha_w):
     g_x = np.exp(-(error - centers)**2 / (2 * variances**2))

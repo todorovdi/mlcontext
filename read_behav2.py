@@ -1,7 +1,6 @@
 import os
 import os.path as op
 import numpy as np
-from pandas import DataFrame as df
 from config2 import *
 from base2 import (width, height, radius, calc_target_coordinates_centered,
                   calc_rad_angle_from_coordinates)
@@ -17,6 +16,15 @@ task = 'visuomotor'
 #sl = slice(None,2)
 #sl = slice(None,None,None)
 #for subject in subjects[sl]:
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--subject', required = True, type=str)
+parser.add_argument('--save_suffix',  default='', type=str )
+args = parser.parse_args()
+
+subject = args.subject
+
 folder = op.join(path_data, subject, 'behavdata')
 files = os.listdir(folder)
 fname_behavior = list()
@@ -42,9 +50,9 @@ movement_duration = list()
 feedback_duration = list()
 ITI_duration = list()
 for trial in range(nb_trials):
-    i = np.where(log[:, 0] == trial)[0]
+    i = np.where(log[:, 0] == trial)[0]  # indieces of time points
     home_phase = np.where(log[i, 1] == 10)[0]
-    target_phase = np.where(log[i, 1] == 20)[0]
+    target_phase = np.where(log[i, 1] == 20)[0]  # indices of indices of time points with target phase for given trial
     feedback_phase = np.where(log[i, 1] == 30)[0]
     ITI_phase = np.where(log[i, 1] == 40)[0]
     if task == 'visuomotor':
@@ -230,7 +238,8 @@ belief = np.array(belief)
 
 
 task = 'VisuoMotor'
-behav_df = df({'trials': range(nb_trials),
+import pandas as pd
+behav_df = pd.DataFrame({'trials': range(nb_trials),
                'perturbation': perturbations,
                'error': errors,
                'err': err,
@@ -247,15 +256,16 @@ behav_df = df({'trials': range(nb_trials),
                'trial_duration': trial_duration,
                'movement_duration': movement_duration,
                'environment': environment})
+behav_df['subject'] = subject
 
 fname = op.join(path_data, subject, 'behavdata',
-                f'err_sens_{task}.npz')
+                f'err_sens_{task}{args.save_suffix}.npz')
 # save inside
-r = computeErrSens(behav_df, subject, fname=fname)
-print(fname)
+#r = computeErrSens(behav_df, subject, fname=fname)
+#print(fname)
 
 fname = op.join(path_data, subject, 'behavdata',
-                f'behav_{task}_df.pkl')
+                f'behav_{task}_dfv1{args.save_suffix}.pkl')
 print(fname)
 behav_df.to_pickle(fname)
 

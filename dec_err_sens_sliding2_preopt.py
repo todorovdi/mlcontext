@@ -15,6 +15,7 @@ from mne import Epochs
 import pandas as pd
 import warnings
 import sys
+from base2 import pipeline2vars
 from base2 import (getXGBparams,
                    calc_target_coordinates_centered,
                    target_angs, getGPUavail, B2B_SPoC, rescaleIfNeeded)
@@ -66,14 +67,8 @@ else:
                 par[pn] = pv
 
 #################################################
+
 dec_error_handling = par.get('dec_error_handling', 'ignore' )
-
-if par['scale_Y_robust'] >= 3:
-    # normal scalers cannot work with 3 dim arrays (which is the case of epochs)
-    # puttting it in the middle of the pipeline is weird
-    # at the end also not possible because we need transform of target vars, not features
-    raise ValueError('Not implemented')
-
 target_coords = calc_target_coordinates_centered(target_angs)
 
 n_jobs            = int( par.get('n_jobs', n_jobs_def) )
@@ -168,18 +163,21 @@ ICAstr = par.get('ICAstr','with_ICA'  )  # empty string is allowed
 time_locked = par.get('time_locked')
 control_type = par.get('control_type')
 coln_error = 'error'
-colns_ES = par.get('colns_ES', 'err_sens').split(',')
+#coln_ES = 'err_sens'
+colns_ES_ = par.get('colns_ES', 'prev_error,error,err_sens').split(';')
+colns_ES = [cns.split(',') for cns in colns_ES_]
 
 #,error_pred_Herz
-defcolns_classic = [ 'prev_error,error,trials' ]   #correction,
+defcolns_classic = 'prev_error,error,trials'   #correction,
 colns_classic = par.get('colns_classic', defcolns_classic).split(',')
 
-vars_to_decode_classic_def = colns_ES + colns_classic
+vars_to_decode_classic_def = list(set(sum(colns_ES,[]) ) | set(colns_classic) )
 #vars_to_decode_classic_def = [] # DEBUG
 #vars_to_decode_b2b_def     = [colns_ES[0] ] + [ 'prev_error', 'error' ] # b2b does not allow full linear dependence, so cannot put correction here
 #vars_to_decode_classic_def = []
 #vars_to_decode_b2b_def = []
-vars_to_decode_b2b_def =  [  [coln_ES_cur] + [ 'prev_error', 'error' ] for coln_ES_cur in colns_ES ]
+#vars_to_decode_b2b_def =  [  [coln_ES_cur] + [ 'prev_error', 'error' ] for coln_ES_cur in colns_ES ] 
+vars_to_decode_b2b_def = colns_ES  # list of lists
 
 
 print('vars_to_decode_classic_def = ', vars_to_decode_classic_def)
@@ -200,14 +198,20 @@ elif par['slide_windows_type'] == 'explicit':
     tmax = par.get('tmax',None)
 
     if ',' in tmin:
-        tmin = tmin.split(',')
-        tmin = map(float,tmin)
+        if tmin[0] == '(':
+            tmin = list(eval(tmin))
+        else:
+            tmin = tmin.split(',')
+            tmin = map(float,tmin)
     else:
         tmin = [float(tmin) ]
 
     if ',' in tmax:
-        tmax = tmax.split(',')
-        tmax = map(float,tmax)
+        if tmax[0] == '(':
+            tmax = list(eval(tmax))
+        else:
+            tmax = tmax.split(',')
+            tmax = map(float,tmax)
     else:
         tmax = [float(tmax)]
     tminmax = zip(tmin,tmax)
@@ -336,10 +340,20 @@ behav_fnf = par.get('behav_file', fname_full_def)
 fname_EC_full = op.join(path_data, subject, 'behavdata',
                 f'behav_{task}_df_EC.pkl' )
 behav_df_full = pd.read_pickle(behav_fnf)
+print(f'behav_df_full mtime  = {dt.fromtimestamp(os.path.getmtime(behav_fnf))}') 
 if 'subject' not in behav_df_full.columns:
     behav_df_full['subject'] = subject
 else:
     behav_df_full = behav_df_full.query('subject == @subject').copy()
+
+behav_df_full['next_error'] = behav_df_full['error'].shift(-1)
+behav_df_full['next_belief'] = behav_df_full['belief'].shift(-1)
+#behav_df_full['next_movement'] = behav_df_full['movement'].shift(-1)
+
+if 'err_sens' in behav_df_full:
+    behav_df_full.loc[behav_df_full['trialwb'] == 0, 'err_sens'] = np.inf
+    from behav_proc import truncateNIHDfFromErr#(df, err_col = 'error', varn = 'err_sens'):
+    behav_df_full = truncateNIHDfFromErr(behav_df_full)
 
 if 'pert_seq_code' not in behav_df_full.columns:
     addBehavCols(behav_df_full, inplace=True)
@@ -409,6 +423,8 @@ fn_events_full = op.join(path_data, subject, fn_events )
 #from config2 import cleanEvents
 from meg_proc import cleanEvents_NIH
 
+#########
+# fn_flt_raw_full
 #################  load filtered raw if present
 loaded_flt_raw = False
 if load_flt_raw and os.path.exists(fn_flt_raw_full) \
@@ -478,9 +494,9 @@ if (raw is None) or ( (not loaded_flt_raw) and \
 ##################################    Start calc
 #############################################################
 # this needed for alignment later, does not dep on tmin,tmax
-event_ids_all_both = stage2evn2event_ids['feedback']['all'] + stage2evn2event_ids['target']['all']
-epochs_for_EC = Epochs(raw, events, event_id = event_ids_all_both,
-            tmin=-0.01, tmax=0.01, preload=True, decim=decim_epochs)
+event_ids_all_both = stage2evn2event_ids['feedback']['all'] + stage2evn2event_ids['target']['all'] 
+epochs_for_EC = Epochs(raw, events, event_id = event_ids_all_both,                                                                                 
+            tmin=-0.01, tmax=0.01, preload=True, decim=decim_epochs)                                               
 
 for tmin_cur,tmax_cur in tminmax:
     print('------------- Starting {:.2f},{:.2f}'.format(tmin_cur,tmax_cur) )
@@ -545,7 +561,7 @@ for tmin_cur,tmax_cur in tminmax:
     #behav_df_cur['non_hit'] = True;  print('DEBUG VER OF NONHIT!!!!')
 
 
-    computation_ver = 'computeErrSens3'
+    computation_ver = 'computeErrSens3'                    
     #time_locked_EScalc = 'target'
     time_locked_EScalc = time_locked
     if par['recalc_err_sens']:
@@ -605,16 +621,19 @@ for tmin_cur,tmax_cur in tminmax:
 
         # whether we remove only inf nan or also outliers
         if trim_outliers:
-            subdf, mask_trunc = truncateDf(subdf0, colns_ES[0],
+            # want to tuncated based on empir ES
+            subdf, mask_trunc = truncateDf(subdf0, colns_ES[0][-1],
                         q=0.05, verbose=0, infnan_handling='discard',
                        return_mask = True)
-        else:
-            subdf, mask_trunc = truncateDf(subdf0, colns_ES[0],
-                        q=0, verbose=0, infnan_handling='discard',
-                       return_mask = True)
+        #else:
+        #    subdf, mask_trunc = truncateDf(subdf0, colns_ES[0],
+        #                q=0, verbose=0, infnan_handling='discard',
+        #               return_mask = True)
 
-        print(f'After cleaning outliers (trim_outliers={trim_outliers}) and nan/infs'
+            print(f'After cleaning outliers (trim_outliers={trim_outliers}) and nan/infs'
               f': {sum(mask_trunc)} / {len(mask_trunc) } ')
+        else:
+            subdf = subdf0.copy() # just in case copy
 
         ################################  prepare X
         trials_left = subdf['trials']
@@ -627,7 +646,7 @@ for tmin_cur,tmax_cur in tminmax:
         #dfev_cur_trunc = dfev_cur.query('trial_index in @subdf.trial_index.values')
 
         # remember that we ensured consistency of indices earlier
-        epochs_curenv = epochs[dfev_cur_trunc.index.values ]
+        epochs_curenv = epochs[dfev_cur_trunc.index.values ] 
         checkTgtConsistency(subdf, epochs_curenv) # checks if epochs and df are consistent
 
         tmin_safe = tmin_cur + safety_time_bound
@@ -649,6 +668,9 @@ for tmin_cur,tmax_cur in tminmax:
 
         ##################################
         svd = {'par':par}
+        svd['epoch_info'] = epochs_curenv.info
+        svd['fn_flt_raw_full'] = fn_flt_raw_full
+        svd['fn_events_full']  = fn_events_full
         svd['varnames'] = list( vndef2vn.values() )
         svd['varnames_def2varnames'] = vndef2vn
         ##################################  run classif
@@ -656,34 +678,287 @@ for tmin_cur,tmax_cur in tminmax:
         #debug_save_Xy_exit = 1
         debug_save_Xy_exit = 0
 
-        from meg_proc import precalcRegCov, ML_classic, ML_b2b
-        #covs = np.empty((n_epochs, n_channels, n_channels))
-        
-        precalc_covs_only_notnaninf = False
-        if precalc_covs_only_notnaninf:
-            # just need to getMaskNotNanInf for every variable and make &
-            # should not loose that much because mostly they fail together
-            # need to take into acc discard_hit_twice
-            raise ValueError('not implemented')
+        def ML_classic(varname, mask=None, name=''):
+            print(f'-- decoding {varname}')
+            assert len(varname)
+            addvar = varname
+            #if addvar in behav_df_cur.columns:
+            #    vals       = np.array(behav_df_cur[addvar])
+            #elif addvar in df_esv.columns:
+            #    vals       = np.array(df_esv[addvar])
+            vals       = np.array(subdf[addvar])
 
-        varnames_good_epochs_calc = list(set(vars_to_decode_classic +\
-                sum(vars_to_decode_b2b, [])))
-        mask_good_epochs = getCleanEpochsMaskForDec(subdf, 
-                varnames_good_epochs_calc, env, time_locked, 
-                par['discard_hit_twice']) 
+            #if mask is None:
+            #    mask = np.ones(len(vals), dtype=bool)
 
-        print('precalcRegCov')
-        # n_skip_trial will be done insde fit functions
-        X_for_fit = X[mask_good_epochs,:n_channels_to_use, :] 
-        covs = precalcRegCov(X_for_fit, reg, cov_method_params,
-                  rank, fit_log_level, n_jobs)
-        print('precalcRegCov finishsed')
+            non_hit = np.ones(len(subdf), dtype=bool)
+            if use_non_hit_recalc:
+                non_hit      = prepNonHit(subdf, varname, env, time_locked)
+            if par['discard_hit_twice']:
+                non_hit = subdf['non_hit_not_adj']
+
+            res = {}
+            # mask is done based on df_esv and X is based on epochs. But they
+            # were supposed to be aligned by ensure consistency
+            if mask is not None:
+                #y = vals_non_hit[mask]
+                #Xcur = Xnh[mask]
+
+                non_hit_mask = non_hit & mask
+                vals_non_hit = vals[non_hit_mask]  # already non_hit
+                Xhn = X[non_hit_mask]
+
+                y = vals_non_hit
+                Xcur = Xhn
+            else:
+                non_hit_mask = non_hit
+
+                vals_non_hit = vals[non_hit]  # already non_hit
+                Xhn = X[non_hit]
+
+                y = vals_non_hit
+                Xcur = Xhn
+
+            mask_not_inf = ~np.isinf(y)
+             
+            mask_good = getMaskNotNanInf(y)
+            y    = y[mask_good]
+            Xcur = Xcur[mask_good]
+
+
+            print('Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  ( ~np.isnan(y) ).sum()  ) )
+            if len(y) < 5:
+                print('Too short y, return None')
+                res['dec_error'] = str(f'Too short y {len(y)}')
+                return res
+            Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0) )
+
+            if exit_after == 'rescale':
+                print(y.shape)
+                print(y[:10])
+                return y
+                #sys.exit(0)
+
+            if nskip_trial > 1:
+                y = y[::nskip_trial]
+                Xcur = Xcur[::nskip_trial]
+
+            # for quicker tests, -1 means all channels
+            if n_channels_to_use > 0:
+                Xcur = Xcur[:,:n_channels_to_use]
+
+            #if debug_save_Xy_exit:
+            #    fnf =pjoin( results_folder , f'Xy_classical_{env}_{varname}.npz')
+            #    np.savez( fnf, X=Xcur, y=y, varname = varname  )
+            #    print(f'DEBUG: saved Xy classic to {fnf}, return')
+            #    return {}
+
+
+            ##############################
+            spoc_est = SPoC(n_components=SPoC_n_components, log=True, reg='oas',
+                                            rank='full', n_jobs=n_jobs_per_dim_classical_dec,
+                                            fit_log_level=mne_fit_log_level)
+            # Regression for classic decoding
+            if regression_type == 'Ridge_noCV': #this is ungly but just for back compat, earlier I was using 'Ridge' for 'RidgeCV'
+                est = make_pipeline(spoc_est, Ridge(alpha = alphas[5], fit_intercept = fit_intercept_classic_dec))
+            elif regression_type in ('RidgeCV','Ridge'):
+                # def alphas = (0.1, 1, 10), in the original code Romain was not supplying them in classical case for some reason
+                # alpha_per_target = False by def meaning that it will take the best alpha only
+                est = make_pipeline(spoc_est, RidgeCV(alphas = alphas, fit_intercept = fit_intercept_classic_dec))
+            elif regression_type == 'xgboost':
+                import xgboost
+                from xgboost import XGBRegressor
+                xgb = XGBRegressor(**add_clf_creopts)
+
+                add_clf_creopts['n_jobs'] = n_jobs_per_dim_classical_dec
+                xgb_est = XGBRegressor(**add_clf_creopts_est)
+                est = make_pipeline(spoc_est, xgb_est)
+            else:
+                raise ValueError('wrong regression value')
+
+            ##############################
+
+            y_preds = np.zeros(len(y))
+            scores = list()
+            print(f'{addvar}: Starting CV for regression_type={regression_type}')
+            nsplit = 0
+            try:
+                ests = []
+                folds = list(cv.split(Xcur, y)  )
+                for train, test in folds:
+                    print(f'Starting split N={nsplit}')
+                    with mne.use_log_level(mne_fit_log_level):
+                        est.fit(Xcur[train], y[train])
+                    y_preds[test] = est.predict(Xcur[test])
+                    score = spearmanr(y_preds[test], y[test])
+                    scores.append(score[0])
+                    nsplit += 1
+
+                    #ests.append(est)
+                    ests.append ( pipeline2vars(ests) )
+                    #raise ValueError('stop')
+                diff = np.abs(y - y_preds)
+
+                #res['ests'] = pipeline2vars(ests)
+                res['ests'] = ests
+                res['folds'] = folds
+                res['non_hit'] = non_hit
+                res['non_hit_mask'] = non_hit_mask
+                res['diff']   = diff
+                res['scores'] = scores
+                res['vals']   = y  # non_hit
+                res['mask_valid'] = mask_not_inf
+                res['dec_type'] = 'classic'
+                res['Xshape'] = Xcur.shape
+                res['dec_error'] = None
+                print(f'Finished classical {addvar} {name} scores average = {np.mean(scores):.4f}' )
+            except Exception as e:
+                print(f'!!!! Error during fit for {addvar} {name}: ',str(e) )
+                res['dec_error'] = str(e)
+                if dec_error_handling == 'raise':
+                    raise e
+
+            return res
+
+
+        def ML_b2b(varnames, mask=None, name=''):
+            print(f'-- decoding {varnames}')
+            assert len(varnames)
+            vals       = subdf[varnames]._values
+
+            #if mask is None:
+            #    mask = np.ones(len(vals), dtype=bool)
+
+            assert vals.shape[0] == X.shape[0]
+
+            non_hit = np.ones(len(subdf), dtype=bool)
+            if use_non_hit_recalc:
+                non_hit  = prepNonHit(subdf, varnames[0], env, time_locked)
+                for varname in varnames[1:]:
+                    non_hit &= prepNonHit(subdf, varname, env, time_locked)
+
+            if par['discard_hit_twice']:
+                non_hit = subdf['non_hit_not_adj']
+
+            res = {}
+            # mask is done based on df_esv and X is based on epochs. But they
+            # were supposed to be aligned by ensure consistency
+            if mask is not None:
+                #y = vals_non_hit[mask]
+                #Xcur = Xnh[mask]
+
+                non_hit_mask = non_hit & mask
+                vals_non_hit = vals[non_hit_mask]  # already non_hit
+                Xhn = X[non_hit_mask]
+
+                y = vals_non_hit
+                Xcur = Xhn
+            else:
+                non_hit_mask = non_hit
+
+                vals_non_hit = vals[non_hit]  # already non_hit
+                Xhn = X[non_hit]
+
+                y = vals_non_hit
+                Xcur = Xhn
+
+            mask_not_inf = ~np.any( np.isinf(y), axis=1)
+            mask_not_nan = ~np.any( np.isnan(y), axis=1)
+            #print('infs ', (~mask_not_inf).sum(), len(mask_not_inf) )
+
+            mask_good = getMaskNotNanInf(y, axis=1)
+            y    = y[mask_good]
+            Xcur = Xcur[mask_good]
+
+            print('B2B: Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  mask_not_nan.sum()  ) )
+
+            if debug_save_Xy_exit:
+                np.savez( pjoin( results_folder , f'Xy_b2b_{env}.npz'),
+                         X=Xcur, y=y, varnames=varnames )
+                print('DEBUG: saved Xy b2b and exiting')
+                return {}
+
+            if len(y) < 5:
+                print('Too short y, return None')
+                res['dec_error'] = str(f'Too short y {len(y)}')
+                return res
+
+            Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0))
+
+            if nskip_trial > 1:
+                y = y[::nskip_trial]
+                Xcur = Xcur[::nskip_trial]
+
+            # for quicker tests, -1 means all channels
+            if n_channels_to_use > 0:
+                Xcur = Xcur[:,:n_channels_to_use]
+            ##############################
+            spoc = SPoC(n_components=SPoC_n_components, log=True, reg='oas',
+                        rank='full', n_jobs=min(n_jobs_SPoC, Xcur.shape[0] ),
+                        fit_log_level=mne_fit_log_level)
+            # Regression for classic decoding
+            if regression_type == 'Ridge_noCV':
+                #est = make_pipeline(spoc_est, Ridge(alpha = alphas[5], fit_intercept = fit_intercept_classic_dec))
+                G = make_pipeline(spoc, Ridge(alphas=alphas, fit_intercept=fit_intercept_b2b))
+            elif regression_type in ('RidgeCV','Ridge'):
+                # def alphas = (0.1, 1, 10)
+                G = make_pipeline(spoc, RidgeCV(alphas=alphas, fit_intercept=fit_intercept_b2b))
+            elif regression_type == 'xgboost':
+                from xgboost import XGBRegressor
+                xgb = XGBRegressor(**add_clf_creopts)
+                # Regressions for the B2B
+                G = make_pipeline(spoc, xgb)
+                # Regressions for the B2B
+
+                #param_grid = {
+                #    'pca__n_components': [5, 10, 15, 20, 25, 30],
+                #    'model__max_depth': [2, 3, 5, 7, 10],
+                #    'model__n_estimators': [10, 100, 500],
+                #}
+                #grid = GridSearchCV(pipeline, param_grid,
+                #  cv=5, n_jobs=-1, scoring='roc_auc')
+            else:
+                raise ValueError('wrong regression value')
+
+
+            H = LinearRegression(fit_intercept=False, n_jobs= n_jobs_SPoC)
+            #G = direct pipeline (spoc + regerssor)
+            #H = back pipeline
+            b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
+                parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
+
+            try:
+                b2b.fit(Xcur,y)
+                ##############################
+                partial_scores = np.diag(b2b.E_)
+
+                #from base2 import pipeline2vars
+                #res['b2b'] = vars(b2b) #pipeline2vars(ests)
+
+                res['non_hit'] = non_hit
+                res['non_hit_mask'] = non_hit_mask
+                #res['diff']   = diff
+                res['scores'] = partial_scores
+                res['vals']   = y  # non_hit
+                res['mask_valid'] = mask_not_inf
+                res['varnames'] = varnames
+                res['dec_type'] = 'b2b'
+                res['Xshape'] = Xcur.shape
+                res['dec_error'] = None
+
+                print(f'Finished b2b for {varnames} {name} partial_scores = {partial_scores}' )
+            except Exception as e:
+                print(f'!!!! Error during fit for {addvar} {name}: ',str(e) )
+                res['dec_error'] = str(e)
+                if dec_error_handling == 'raise':
+                    raise e
+            return res
 
         #if decode_merge_pert:
-        ##################################################################
+        ####################################################################
         if do_classic_dec and len(vars_to_decode_classic):
             print('-------------  Classical decoding')
-        ##################################################################
+        ####################################################################
             addvar_dict = {}
             for addvar in vars_to_decode_classic:
                 res = ML_classic(addvar)
@@ -707,13 +982,12 @@ for tmin_cur,tmax_cur in tminmax:
                 subdf.to_pickle(dfpath )
                 svd['dfpath'] = dfpath
                 np.savez(fname_full, **svd)
-                print(f'after classic decoding and saved '
-                        'results to {fname_full}')
+                print(f'after classic decoding and saved results to {fname_full}')
 
 
-        ##################################################################
+        ####################################################################
         print('-------------  B2B decoding')
-        ##################################################################
+        ####################################################################
 
         if do_b2b_dec and len(vars_to_decode_b2b):
             addvar_dict = {}
@@ -764,8 +1038,9 @@ for tmin_cur,tmax_cur in tminmax:
             np.savez(fname_full, **svd)
             print(f'Finished and saved results to {fname_full}')
 
-        print(f'Decoding errors summary tmin={tmin_cur}, env={env}:')
+        print('Decoding errors summary:')
         ks = ['decoding_per_var','decoding_per_var_b2b']
+        nerr = 0
         for kk in ks:
             if kk not in svd:
                 print(f'!!  {kk} not present')
@@ -774,3 +1049,7 @@ for tmin_cur,tmax_cur in tminmax:
                     err = v['dec_error']
                     if err is not None:
                         print(k, v['dec_error'] )
+                        nerr += 1
+
+        if nerr == 0:
+            print('       No errors!')

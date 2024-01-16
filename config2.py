@@ -239,8 +239,8 @@ def genArgParser_decodeNIH():
     parser.add_argument('--control_type', default='movement')
     parser.add_argument('--time_bounds_slide_target',   type=str )
     parser.add_argument('--time_bounds_slide_feedback', type=str  )
-    parser.add_argument('--tmin')
-    parser.add_argument('--tmax')
+    parser.add_argument('--tmin', type=str)
+    parser.add_argument('--tmax', type=str)
     parser.add_argument('--slide_windows_type', type=str)
     parser.add_argument('--slide_window_dur', type=float)
     parser.add_argument('--slide_window_shift', type=float)
@@ -319,6 +319,7 @@ def genArgParser_decodeNIH():
 
     parser.add_argument('--scale_X_robust', default = 0, type=int)
     parser.add_argument('--scale_Y_robust', default = 0, type=int)
+    parser.add_argument('--dec_error_handling', default = 'ignore', type=str)
 
     parser.add_argument('--exit_after', default = 'end')
 

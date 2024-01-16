@@ -24,6 +24,167 @@ class ListWrap:
             b = np.isna(self.data)
         return a and b
 
+def collectResults0(subjects, folder, regex = None, wildcard='*.npz'):
+    # just collect filenames and mtime
+    from datetime import datetime
+    from pathlib import Path
+    import glob
+    fns_subj_all = []
+    for subject in subjects:
+        dir_full = op.join(path_data, subject, 'results', folder)
+        fns = glob.glob(dir_full + '/' + wildcard)  # gives full path
+        fns_subj_all +=  list( zip([subject] * len(fns) ,fns)  )
+
+    rows = []
+    for subject, fnf in fns_subj_all:
+        d = {}
+        d['fn_full'] = fnf
+        fn = Path(fnf).name
+        dt = datetime.fromtimestamp(os.stat(fnf).st_mtime)
+        d['fn'] = fn
+        d['fsz'] = os.path.getsize(fnf)
+        d['mtime'] = dt
+        d['subject'] = subject
+        rows += [ d ]
+
+    #return pd.DataFrame(rows)
+    #rows = []
+    #for rowi,row in df0.iterrows():
+    rows2 = []
+    for row in rows:
+        pr = parseFn(row, regex=regex)
+        rows2 += [ pr ]
+    df = pd.DataFrame(rows2)
+
+    return df
+
+def parseFn(row, regex=None, inc_tgc = 1):
+    fn = row['fn']
+    from behav_proc import trial_group_cols_all
+
+    if regex is None:
+        freqstr = '|'.join( freq_name2freq.keys() )
+        time_locked_all = ['feedback','target']
+        tls = '|'.join(time_locked_all)
+        ctrls = '|'.join(['feedback', 'movement'] )
+        env_all = ['stable','random','all']
+        envstr = '|'.join(['random','stable'] )
+        if inc_tgc:
+            tgcc_str = '(' + '|'.join(trial_group_cols_all + ['trials']) + ')_'
+        else:
+            tgcc_str = ''
+        regex_str = (f'({envstr})_{tgcc_str}'
+                    r'(Ridge|Ridge_noCV|xgboost)_(' + tls + r')_(' + ctrls +  r')_(.*)_('+\
+                    freqstr+ r')_t=(.*),(.*)\.npz')
+        #print('regex_str = ',regex_str)
+        regex = re.compile(regex_str)
+
+    r = re.match( regex, fn)
+    #print(r )
+    if r is None or r.groups() is None:
+        print(f'parseFn: wrong fn = {fn}, for regex = {regex_str}')
+        raise ValueError('Did not match')
+    grps = r.groups(); #print(grps)
+    #print(grps ) 
+    env_cur,trial_group_col_calc_cur, rt_cur,time_locked_cur,control_type0, analysis_name_cur,\
+            freq_name_cur,tmin_cur,tmax_cur = grps
+    cols = ['env','trial_group_col_calc','rt','time_locked','control_type','custom_suffix',
+                        'freq_name','tmin','tmax'  ]
+
+    d = dict(zip(cols,   grps ) )
+    row = dict(row)
+    row.update(d)
+    return row
+
+# slow-ish, loads the file
+def extractPar(row, parnames = ['SLURM_job_id']):
+    if 'par' in row:
+        par = row['par']
+    else:
+        fn_full = row['fn_full']
+        print('Loading ',fn_full)
+        f = np.load( fn_full, allow_pickle=1)
+        #control_type_ = f['par'][()]['control_type']
+        #if (control_type is not None) and \
+        #        (control_type_ != control_type):
+        #    if verbose > 0:
+        #        print(f'control_type_: Reject {fn}, {dt}')
+        #    continue
+        par = f['par'][()]
+
+    d = {}
+    for pn in parnames:
+        pv = par[pn]
+        d[pn] = pv
+    return d
+
+def collectResultsPrefilled(df, keys_to_extract=None, use_scratch_when_available = True,
+        force_reload=False, verbose=False): #$, parent_key=None):
+    rows = []
+
+    #dec_type2varnames = {}
+    ctr = 0
+    for rowi,row in df.iterrows():
+        fnf = None
+        if use_scratch_when_available:
+            coln = 'fn_full_scratch'
+            if coln in row:
+                fnf = row[coln]
+        if fnf is None:
+            print('Scratch not available, loading from $PROJECT')
+            coln = 'fn_full'
+            fnf = row['fn_full']
+
+        print(f'{ctr}/{len(df)}:  Loading ',fnf)
+        f = np.load(fnf,allow_pickle=True)
+
+        par = f['par'][()]
+        row['par'] = par
+        row['SLURM_job_id'] = par.get('SLURM_job_id',None)
+        #df.loc[rowi,'f'] = dict(f)
+
+        try:
+            if keys_to_extract is None:
+                keys_to_extract = ['alphas','scores','dec_type','Xshape','dec_error']
+
+            for dectype, pk in zip(['classic','b2b'],['decoding_per_var','decoding_per_var_b2b']):
+                row1 = row.copy()
+                if pk not in f:
+                    print(f'WARNING: {pk} not found inf {fnf}')
+                    continue
+                # take one of decoding dicts
+                dpv = f[pk][()]
+
+                # take dec results for one variable
+                for varname,d in dpv.items():
+                    if 'dec_type' in d:
+                        assert dectype == d['dec_type']
+        #               print(pk, d['dec_type'])
+
+                    # take info found for this variable
+                    for k in d.keys():
+                        if k not in keys_to_extract:
+                            continue
+                        v = d[k]
+                        row1[ f'{varname}_{k}' ] = v
+                # it's important to use NOT comma as separator becuase b2b already has commas there
+                varnames_s = ';'.join( list(sorted( dpv.keys() )) )
+                #row[f'{dectype}_varset'] = varnames_s
+                row1['varset'] = varnames_s
+                row1['dec_type'] = dectype
+                    #break
+                #break
+                rows += [row1]
+            ctr += 1
+            #del row['f']  # if everything got loaded successfully
+            #df.loc[rowi,'f'] = None
+        except Exception as e:
+            print('ERROR: ',str(e))
+            row['err'] = str(e)
+
+    dfr = pd.DataFrame(rows).reset_index(drop=True)
+    #dfr['jobind'] = dfr['SLURM_job_id'].apply(lambda x: int(x.split('_')[1] ) )
+    return dfr
 
 def collectResults(subject,folder, freq_name='broad',
                    regression_type='Ridge', keys_to_extract=['par'],
@@ -33,7 +194,8 @@ def collectResults(subject,folder, freq_name='broad',
                    tmin = None,
                    control_type = None,
                    parent_key = None, time_start=None, time_end = None,
-                  fns = None, df=None, inc_tgc=1, verbose=0  ):
+                  fns = None, df=None, inc_tgc=1, verbose=0,
+                  error_handling='raise'):
 
     'inc_tgc is whether inc trial group col is searching for'
     from pathlib import Path
@@ -63,7 +225,7 @@ def collectResults(subject,folder, freq_name='broad',
         else:
             tgcc_str = ''
         regex_str = (f'({envstr})_{tgcc_str}'
-                    r'(Ridge|xgboost)_(' + tls + r')_(' + ctrls +  r')_(.*)_('+\
+                    r'(Ridge|Ridge_noCV|xgboost)_(' + tls + r')_(' + ctrls +  r')_(.*)_('+\
                     freqstr+ r')_t=(.*),(.*)\.npz')
         print('regex_str = ',regex_str)
         regex = re.compile(regex_str)
@@ -73,7 +235,8 @@ def collectResults(subject,folder, freq_name='broad',
         print(f'Df len = {len(df)}')
     #tuples = []
 
-    def addRowInfo(f,row, index, elem_var_val=None, df_to_set=None):
+    def addRowInfo(f,row, index, elem_var_val=None, df_to_set=None,
+            error_handling='raise'):
         assert (row is None) or (index is None)
         if parent_key is not None:
             if parent_key not in f.keys():
@@ -87,6 +250,7 @@ def collectResults(subject,folder, freq_name='broad',
         kvs = []
         if elem_var is None:
             ktes_failed = []
+            ktes_kvn_failed = []
 
             for kte in keys_to_extract:
                 if kte not in subf:
@@ -120,11 +284,17 @@ def collectResults(subject,folder, freq_name='broad',
                                     kvv = ListWrap(kvv) 
                                 df_to_set.at[ index,key] = kvv
                             except ValueError as e:
-                                print(e, key, kvv, df_to_set.info() )
-                                raise e
+                                print('EXC', e ,key, kvv, 
+                                        df_to_set.info() )
+
+                                ktes_kvn_failed += [(kte,kvn)]
+                                if error_handling == 'raise':
+                                    raise e
 
             if len(ktes_failed):
                 print('addRowInfo: ktes_failed = ', ktes_failed)
+            if len(ktes_kvn_failed):
+                print('addRowInfo: ktes_kvn_failed = ', ktes_failed)
         else:
             for (kte,elem_var_val_cur),kv0 in subf.items():
                 #if elem_var_val == 0.:
@@ -167,8 +337,8 @@ def collectResults(subject,folder, freq_name='broad',
             r = re.match( regex, fn)
             #print(r )
             if r is None or r.groups() is None:
-                print(f'wrong fn = {fn}, for regex = {regex_str}')
-                raise ValueError('aa')
+                print(f'collectResults: wrong fn = {fn}, for regex = {regex_str}')
+                raise ValueError('Did not match')
             grps = r.groups(); #print(grps)
             #print(grps ) 
             if inc_tgc:
@@ -241,7 +411,8 @@ def collectResults(subject,folder, freq_name='broad',
 
             #print(fn,dt)
 
-            addRowInfo(f,row=row,index=None)
+            addRowInfo(f,row=row,index=None, 
+                    error_handling=error_handling)
 
             rows += [row]
 
@@ -255,12 +426,13 @@ def collectResults(subject,folder, freq_name='broad',
             #             par, *grps )  ]
             del f
 
-        mi,mx = min(dts), max(dts)
-        if len(dts_flt):
-            mi_flt,mx_flt = min(dts_flt), max(dts_flt)
-        else:
-            mi_flt,mx_flt = None,None
-        print(f'{len(rows)} after filtering by time.\n  Min time  = {mi_flt}, Max time  = {mx_flt},\n  Min total = {mi}, Max total = {mx}')
+        if len(dts):
+            mi,mx = min(dts), max(dts)
+            if len(dts_flt):
+                mi_flt,mx_flt = min(dts_flt), max(dts_flt)
+            else:
+                mi_flt,mx_flt = None,None
+            print(f'{len(rows)} after filtering by time.\n  Min time  = {mi_flt}, Max time  = {mx_flt},\n  Min total = {mi}, Max total = {mx}')
         if len(rows) == 0:
             return None
 
@@ -311,15 +483,19 @@ def collectResults(subject,folder, freq_name='broad',
                     ktes_failed += [kte]
                     continue
                 kv0 = subf[kte]
+                if isinstance(kv0, np.ndarray):
+                    kv0 = kv0[()]
                 for kvn,kvv in kv0.items():
                     key = f'{kte}_{kvn}'
+                    # here it gives worning that dataframe is highly fragmented
                     df[key] = None
 
             for index,row in df.iterrows():
                 fn_full = row['fn_full']
                 f = np.load( fn_full, allow_pickle=1)
                 try:
-                    addRowInfo(f,row=None,index=index, df_to_set=df)
+                    addRowInfo(f,row=None,index=index, df_to_set=df,
+                            error_handling=error_handling)
                 except (KeyError,ValueError) as e:
                     dt = datetime.fromtimestamp(os.stat(fn_full).st_mtime)
                     print(fn_full, str(dt) )
@@ -357,7 +533,7 @@ def collectResults(subject,folder, freq_name='broad',
                     fn_full = row['fn_full']
                     f = np.load( fn_full, allow_pickle=1)
                     #    display(elem_var_val, f['decoding_per_var_and_pert'][()][('err_sens', 0)]['scores'])
-                    addRowInfo(f,row=None,index=index,elem_var_val = elem_var_val, df_to_set=dfc)
+                    addRowInfo(f,row=None,index=index,elem_var_val = elem_var_val, df_to_set=dfc, error_handling=error_handling)
                     del f
                 #if elem_var_val == 0.:
                 #    print(':1 len null', len( dfc[ dfc['err_sens_vals'].isnull() ] ) )
@@ -400,7 +576,8 @@ def collectResults(subject,folder, freq_name='broad',
 def collectDecodingResults(subjects, subject_inds, output_folder,freq_name, env, control_type, time_locked, 
         custom_prefix, tmin_desired, 
         varnames, varnames_b2b,
-        time_start, time_end, verbose=0, debug = 0, error_handling = 'raise'):
+        time_start, time_end, verbose=0, 
+        debug = 0, error_handling = 'raise'):
     df_persubj=[]
     for subject in np.array(subjects)[subject_inds]:
         print(f'Starting collecting subject {subject}')
@@ -409,31 +586,44 @@ def collectDecodingResults(subjects, subject_inds, output_folder,freq_name, env,
         #        keys_to_extract = ['par','scores_err_sens','diff_err_sens_pred',
         #                           'err_sens', 'prev_error', 'correction'] )
         # , 'non_hit' is not per dec var
+        print('###########################')
+        print('Collect 1')
+        print('###########################')
         df_collect1 = collectResults(subject,output_folder,freq_name,
                 keys_to_extract = ['par'], env=env,
                 control_type = control_type,
                 time_locked = time_locked,
                 tmin = tmin_desired, custom_prefix = custom_prefix,
-                time_start=time_start, time_end=time_end, verbose=verbose )
+                time_start=time_start, 
+                time_end=time_end, verbose=verbose,
+                error_handling=error_handling)
         if df_collect1 is None or len(df_collect1) == 0:
-            print(f'Found nothing for subject {subject}')
+            print(f'Collect 1: Found nothing for subject {subject}')
             continue
         fns = list( df_collect1['fn'] )
 
+        print('###########################')
+        print('Collect 2')
+        print('###########################')
         df_collect2 = collectResults(subject, output_folder, freq_name,
                 keys_to_extract = varnames,
                 parent_key = 'decoding_per_var',
                 df = df_collect1.copy(),
-                time_start=time_start, time_end=time_end)
+                time_start=time_start, time_end=time_end,
+               error_handling=error_handling )
         df_collect2['dec_type'] = 'classic'
 
+        print('###########################')
+        print('Collect 3')
+        print('###########################')
         try:
             df_collect3 = collectResults(subject, output_folder, 
                 freq_name,
                 keys_to_extract = varnames_b2b,
                 parent_key = 'decoding_per_var_b2b',
                 df = df_collect1,
-                time_start=time_start, time_end=time_end)
+                time_start=time_start, time_end=time_end,
+               error_handling=error_handling )
             df_collect3['dec_type'] = 'b2b'
 
             vnpostfix = '_varnames'
@@ -512,7 +702,10 @@ def collectDecodingResults(subjects, subject_inds, output_folder,freq_name, env,
             del df_collect2
             del df_collect3
         #tmins = df_persubj[df_persubj[env] == 'stable' ]   ['tmin']
-    df = pd.concat( df_persubj, ignore_index=True )
+    if len(df_persubj):
+        df = pd.concat( df_persubj, ignore_index=True )
+    else:
+        df = None
     return df
     #df.reset_index(inplace=True)
     #df.drop('index',1,inplace=True)
@@ -573,7 +766,10 @@ def extractClassicCols(dfc, defvarcolns, error_handling='raise' ):
         dftmp = cleanExtra(dftmp, varnames0)
 
         dfsplot += [dftmp]
+        del dftmp
     df_class_plot = pd.concat( dfsplot )
+    del dfsplot
+    import gc; gc.collect()
     return df_class_plot
 
 def extractB2Bcols(dfc,  defvarcolns = ['err_sens,prev_error,error'], varcolns = None, toclean=None  ):
@@ -590,21 +786,23 @@ def extractB2Bcols(dfc,  defvarcolns = ['err_sens,prev_error,error'], varcolns =
     #
     #dfc_[varcolns] = np.nan
 
+    enums = []  #enums is a list of lists of tuples (varstei, varset string with commas)
     dfsplot = []
     vns_all = []
     for time_locked in dfc['time_locked'].unique():
         for ct in dfc['control_type'].unique():
         #for ct in ['feedback']:
             s=  ','.join( getAnalysisVarnames(time_locked, ct)[0] )
-            varnames_b2b = [s] +  defvarcolns
+            varnames_b2b = [s] +  defvarcolns  # list of strings with comma-sep varnames
 
-            print(ct,time_locked,s)
             # it REALLY important to take index.values and not just index
             inds = dfc_.query('control_type == @ct and time_locked == @time_locked').index.values  
             print('extractB2Bcols: len(inds) for control_type {} is {}'.format(ct, len(inds)) )
             if len(inds) == 0:
                 continue
+            enums += [ list(enumerate(varnames_b2b)) ]
             for vnsi, vns in enumerate(varnames_b2b):
+                print(ct,time_locked,vnsi,vns)
                 vns_all += [vns]
                 if isinstance(vns,str):
                     varnames_cur0 = vns.split(',')
@@ -620,17 +818,27 @@ def extractB2Bcols(dfc,  defvarcolns = ['err_sens,prev_error,error'], varcolns =
                     if isinstance(x, ListWrap):
                         return x.data[vni]
                     else:
-                        return x[vni]
+                        if isinstance(x,float):
+                            assert np.isnan(x)
+                            return x
+                        else:
+                            return x[vni]
 
                 #for vni,vn in enumerate(varnames_cur):
                 #     dfc_.loc[inds, vn] = dfc_.loc[inds, vns + '_scores'].apply(lambda x: f(x,vni), 1)
 
                 for vni,vn in enumerate(varnames_cur0):
+                    if vns + '_scores' not in dfc_.columns:
+                        print(vns + '_scores', 'missing')
+                        continue
                     dftmp = dfc_.loc[inds].copy()
 
                     dftmp.loc[inds,'vals_to_plot'] = dfc_.loc[inds, vns + '_scores'].apply(lambda x: f(x,vni), 1)
                     #dftmp.loc[inds,'vals_y'] = dfc_.loc[inds, vns + '_vals'].apply(lambda x: f(x,vni), 1)
-                    dftmp = dftmp.drop(columns=[vns + '_scores'] )  
+                    colsdrop = []
+                    for csuff in ['Xshape','dec_error','dec_type','scores']:
+                        colsdrop += [f'{vn}_{csuff}' for vn in varnames_b2b]
+                    dftmp.drop(columns=colsdrop, inplace=True )  
 
                     dftmp['varname'] = vn
                     dftmp['varset'] = vns
@@ -645,14 +853,19 @@ def extractB2Bcols(dfc,  defvarcolns = ['err_sens,prev_error,error'], varcolns =
 
                 #break
 
+
+    #for df in dfsplot:
+    #    for csuff in ['Xshape','dec_error','dec_type','scores']:
+    #        df.drop(columns = [f'{vn}_{csuff}' for vn in varnames_b2b], inplace=1)
     df_b2b_plot = pd.concat(dfsplot, ignore_index=1)
     #df_b2b_plot = cleanExtra(df_b2b_plot, list(set(vns_all)) ) # I'll need to remove it in classic as well anyway
 
     #assert not dfc_['b2b0_prev_error'].isna().all()
     
-    return dfc_, df_b2b_plot
+    return dfc_, df_b2b_plot, enums
 
-def runStatTests(df, cols0, alt='two-sided', verbose = 0 ):
+def runStatTests(df, cols0, coln = 'vals_to_plot', 
+        alt='two-sided', verbose = 0 ):
     # takes a long time to finish
     from scipy.stats import ttest_rel, ttest_1samp
     def f(df):
@@ -673,10 +886,10 @@ def runStatTests(df, cols0, alt='two-sided', verbose = 0 ):
             #print(f'zero len for {ct}: {varname}, skipping')
                 continue
             assert len(dftmp) <= 20, len(dftmp)
-            vsd[env_cur] = dftmp['vals_to_plot'].values
+            vsd[env_cur] = dftmp[coln].values
 
             dftmp = dftmp.query('subject in @subj_both')        
-            vsl += [dftmp['vals_to_plot'].values]
+            vsl += [dftmp[coln].values]
         if len(vsd) == 0:
             return None
         for env_cur in ['stable', 'random']:

@@ -358,11 +358,18 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     This is for NIH experiment (and for Bonaiuto data as well)
     inplace, does not change database lengths (num of rows)
     '''
+    assert df_all.index.is_unique
     if not inplace:
         df_all = df_all.copy()
     subjects     = df_all['subject'].unique()
     tgt_inds_all = df_all['target_inds'].unique()
     pertvals     = df_all['perturbation'].unique()
+    if len(pertvals) > 10:
+        print(f'WARNING: too many pertvals! len={len(pertvals)}')
+        if dset == 'Romain_Exp2_Cohen':
+            pertvals_eff = df_all.query('environment == 0')['perturbation'].unique() 
+    else:
+        pertvals_eff = pertvals
 
     subj = subjects[0]
 
@@ -661,15 +668,20 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     df_all['trialwtgt_wpert']   = -1
     for subj in subjects:
         mask0 = (df_all['subject'] == subj)
-        for pertv in pertvals:
-            mask_pert0 = mask0 & (df_all['perturbation'] == pertv)
-            df_all.loc[mask_pert0, 'trialwpert'] = np.arange(sum(mask_pert0 ) )
+        if len(pertvals) > 10:
+            mask_pert0 = mask0 & (df_all['environment'] == 0)
+        else:
+            mask_pert0 = mask0
+                  
+        for pertv in pertvals_eff:
+            mask_pert = mask_pert0 & (df_all['perturbation'] == pertv)
+            df_all.loc[mask_pert, 'trialwpert'] = np.arange(sum(mask_pert ) )
 
         for tgti in tgt_inds_all:
             #for pertv in df_all['perturbation'].unique()
             mask = (df_all['target_inds'] == tgti) & mask0
-            for pertv in pertvals:
-                mask_pert = mask & (df_all['perturbation'] == pertv)
+            for pertv in pertvals_eff:
+                mask_pert = mask_pert0 & mask & (df_all['perturbation'] == pertv)
                 df_all.loc[mask_pert, 'trialwtgt_wpert'] = np.arange(sum(mask_pert) )
 
                 if dset == 'Romain_Exp2_Cohen':
@@ -713,7 +725,11 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     for tcn in trial_group_cols_all:
         if dset == 'Romain_Exp2_Cohen':
             assert df_all[tcn].max() <= tmax, tcn
-            assert df_all[tcn].max() >= 0,    tcn
+            if ('wpert' in tcn) and (len(pertvals) > 10):
+                mx = df_all.query('environment == 0')[tcn].max()
+                assert  mx >= 0,    (tcn, mx)
+            else:
+                assert df_all[tcn].max() >= 0,    tcn
         else:
             if tcn not in df_all:
                 continue
@@ -723,6 +739,21 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     if dset == 'Romain_Exp2_Cohen':
         #pscAdj_NIH(df_all, ['error',  ] ) 
         #pscAdj_NIH(df_all, [ 'org_feedback', 'feedback' ], subpi = np.pi ) 
+        #def f(x):    
+        #    if x > np.pi / 2.:
+        #        x -= 2*np.pi
+        #    elif x < -np.pi / 2.:
+        #        x += 2*np.pi
+        #    return x
+        #df_all['error'] = df_all['error'].apply(f)
+        adjustErrBoundsPi(df_all, ['error'])
+
+        print('ddd')
+        badcols =  checkErrBounds(df_all)
+        if len(badcols):
+            print('bad cols 1 ', badcols)
+
+        df_all['error_deg'] = (df_all['error'] / np.pi) * 180 
 
         vars_to_pscadj = [ 'error']
         # 'prev_error' ?
@@ -748,6 +779,12 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         df_all.loc[c, 'error_pscadj_pertstageadj'] = -df_all.loc[c, 'error_pscadj']
 
         addNonHitCol(df_all)
+
+
+    badcols =  checkErrBounds(df_all)
+    if len(badcols):
+        print('bad cols ', badcols)
+
     return df_all
 
 def pscAdj_NIH(df_all, cols, subpi = False, inplace=True):
@@ -1052,7 +1089,7 @@ def calcQuantilesPerESCI(df_all, grp, coln, q = 0.05, infnan_handle = 'skip_calc
 def getMaskNotNanInf(vals, axis = None):
     if (vals.ndim > 1) and (axis is not None):
         #r = ~np.any( np.isinf(y), axis=1)
-        r = ~ np.any ( np.isnan(vals) | np.isinf(vals), axis=1 )
+        r = ~ np.any ( np.isnan(vals) | np.isinf(vals), axis=axis )
     else:
         r = ~ ( np.isnan(vals) | np.isinf(vals) )
     return r
@@ -1068,7 +1105,7 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
 
     ntrials_per_subject = df[trialcol].nunique()
 
-    grp0 = df.groupby([trialcol] + cols_uniqify)
+    grp0 = df.groupby([trialcol] + cols_uniqify, observed=True)
     mx=  max(grp0.size() )
     assert mx <= df['subject'].nunique(), mx
 
@@ -1249,7 +1286,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         computation_ver = 'computeErrSens2',
         df_fulltraj = None,  trajPair2corr = None,
         drop_feedback = False,
-        verbose=0 ):
+        verbose=0, use_sub_angles = 0 ):
     '''
         if allow_duplicating is False we don't allow creating copies
         of subsets of indices within subject (this can be useful for decoding)
@@ -1279,10 +1316,11 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
     from itertools import product as itprod
     if computation_ver == 'computeErrSens2':
         from error_sensitivity import computeErrSens2 as computeES
-        addargs = {}
+        addargs0 = {}
     elif computation_ver == 'computeErrSens3':
         from error_sensitivity import computeErrSens3 as computeES
-        addargs = None # will be added later per subj
+        #addargs = None # will be added later per subj
+        addargs0 = {'use_sub_angles': use_sub_angles}
 
 
     p = itprod(envs_cur,block_names_cur,pertvals_cur,gseqcs_cur,tgt_inds_cur,
@@ -1336,7 +1374,9 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                                df_fulltraj.query(f'subject == "{subj}"'),
                                'trajPair2corr':trajPair2corr}
                 else:
-                    addargs = {}
+                    addargs = addargs0
+            else:
+                addargs = addargs0
 
 
             for tsz in trial_shift_sizes:
@@ -1346,6 +1386,10 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 #else:
                 #    escoln = 'err_sens_-{tsz}t':
                 # resetting index is important
+                if 'level_0' in df.columns:
+                    df = df.drop(columns=['level_0'])
+                if 'index' in df.columns:
+                    df = df.drop(columns=['index'])
                 dfri = df.reset_index()
                 r = computeES(dfri, df_inds=None,
                     error_type=error_type,
@@ -1385,6 +1429,8 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 dfcur[coln_nh_out] = np.array( df_esv[coln_nh_out] )
 
                 dfcur['correction'] = np.array( df_esv['correction'] )
+                if 'belief_' in df_esv.columns:
+                    dfcur['belief_'] = np.array( df_esv['belief_'] )
                 for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
                            f'prev_{escoln}', 'prev_error' ]:
                     if cn not in df_esv.columns:
@@ -2894,6 +2940,7 @@ def addBasicInfo(df, phase2trigger, params,
         #ang -= np.pi / 2
         return ang / np.pi * 180
         #eturn ang
+    # TODO: _abs here is misleading, it is not absolute value, just not related to target
     dfcc['feedback_abs'] = dfcc.apply(f,1)
 
     def f(row):
@@ -3055,6 +3102,7 @@ def addBasicInfo(df, phase2trigger, params,
 
 def propagToValidErrCols(dfcc, colns, colns_shift):
     # inplace
+    # assumes sorted by trial_index
     # propagate skipping not exiting home circle and error clamps (pauses should already be thrown away)
     # still keeps nan at the very beginning sometimes
     assert dfcc['subject'].nunique() == 1
@@ -3705,6 +3753,7 @@ def alignDfs(df1,cols1, df2,cols2, suff2 = '_2', verbose=0,
     return dfr
 
 def getStartEndMultiSubj(df_, ynames = ['err_sens']):
+    # get block starts and ends
     grp = df_.groupby(['subject', 'block_ind'])
 
     # note that we take here highly cleaned data mostly. So there can be sometimes only a couple of valid trials
@@ -3849,11 +3898,11 @@ def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridica
             pert_changed = df['prev_ctx_pert_same'] == False  # chagne of pert
             # invalidate first after pert
             df.loc[pert_changed, 'time_lh'] = np.nan
+        # we don't want to include failed trials in indexing of trial within block
         df['nan_count'] = df.groupby(['subject','block_ind'], group_keys=False )['time_lh'].apply(lambda x: x.isna().cumsum())
         df['trialwb_notfail'] = df['trialwb'].sub(df['nan_count'])
         df['trialwb_notfail'] = df['trialwb_notfail'].where( df['time_lh'].notna(), np.nan )
         df = df.drop('nan_count', axis=1)
-
 
         dfs3 = []
         for coln in cols:
@@ -3862,6 +3911,7 @@ def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridica
             cols_out0 = ['trial_index', 'prev_ctx_pert_same', coln]
 
             dfs = []
+            # choose trials with indices I request
             for ind in inds:
                 if ind == 0:
                     cols_cur = cols_out0 
@@ -3887,6 +3937,7 @@ def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridica
                 #        return dftmp[ 'trial_index' ].values[0]
 
                 # I want to have all these columns in the output
+                # trialwbcol is set in the arg and determines whether we skip failed reaches or not
                 dftmp = df.query(f'{trialwbcol} == {ind}').set_index(['subject','block_ind'] ).copy()
 
                 #dftmp = df.groupby(['subject','block_ind','Nctx_app', 'ctxid']).apply( lambda x: f(x, ind) )
@@ -3926,9 +3977,7 @@ def calcErrorDrops(dfcc_all, cols, inds = [0,1,2,4], numtrain = 12, inc_veridica
                 #dftmp = df.query('prev_ctx_pert_same0 == False').copy()
                 dftmp = df2.copy()
                 dftmp['absdrop'] = dftmp[f'{coln}_0'].abs() - dftmp[f'{coln}_{ind}'].abs()
-                
                 dftmp['colnval'] = dftmp[f'{coln}_{ind}'].abs() 
-
                 dftmp['droptoind'] = ind
                 dfs2 += [dftmp]
 
@@ -4391,6 +4440,219 @@ def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
         print( df.loc[c & (~inf), 'err_sens'].abs().describe()  )
 
 
+def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=False):
+    from pingouin import ttest
+    ttrs = []
+    if isinstance(alt,str):
+        alt = [alt]
+    for alt_ in alt:
+        ttr = ttest(df_.query(qs1)[varn].values, 
+                    df_.query(qs2)[varn].values, alternative=alt_, paired=paired)
+        ttrs += [ttr]
+    ttrs = pd.concat(ttrs)
+    ttrs['paired'] = paired
+    ttrs = ttrs.rename(columns={'p-val':'pval'})
+    ttrs['varn'] = varn
+    return ttrs
+
+def compare0(df, varn,alt=['greater','less']):
+    from pingouin import ttest
+    if isinstance(alt,str):
+        alt = [alt]
+    ttrs = []
+    for alt_ in alt: #, 'two-sided']:
+        ttr = ttest( df[varn], 0, alternative = alt_ )
+        ttr['alt'] = alt_
+        ttr['val1'] = varn
+        ttr = ttr.rename(columns ={'p-val':'pval'})
+        ttrs += [ttr]
+    ttrs = pd.concat(ttrs, ignore_index = 1)
+    decorateTtestRest(ttrs)
+    return ttrs
+
+def decorateTtestRest(ttrs):
+    ttrs['ttstr']  = ''
+    def f(row):
+        alt = row['alternative']
+        v1 = row['val1']
+        v2 = row.get('val2', 0)
+        if alt == 'greater':
+            s = f'{v1} > {v2}'
+        elif alt == 'less':
+            s = f'{v1} < {v2}'
+        elif alt == 'two-sided':
+            s = f'{v1} != {v2}'
+        return s
+
+    ttrs['ttstr']  = ttrs.apply(f,axis=1)
+
+def comparePairs(df_, varn, col, alt = ['two-sided','greater','less'], paired=False,
+                 pooled = 2):
+    ttrs = comparePairs_(df_,varn,col, pooled=True, alt=alt, paired=paired)
+    ttrs_np = comparePairs_(df_,varn,col, pooled=False, alt=alt, paired=paired)
+    ttrs = pd.concat([ttrs,ttrs_np], ignore_index=1)
+
+    ttrssig = ttrs.query('pval <= 0.05').copy()
+    ttrssig['starcode'] = '*'
+    ttrssig.loc[ ttrssig['pval'] <= 0.01  , 'starcode'] = '**'
+    ttrssig.loc[ ttrssig['pval'] <= 0.001 , 'starcode'] = '***'
+    ttrssig.loc[ ttrssig['pval'] <= 0.0001, 'starcode'] = '****'
+
+    if len(ttrssig) == 0:
+        return None,ttrs
+
+    decorateTtestRest(ttrs)
+    decorateTtestRest(ttrssig)
+    return  ttrssig, ttrs
+
+def comparePairs_(df_, varn, col, pooled=True , alt=  ['two-sided','greater','less'], paired=False):
+    from behav_proc import myttest
+    assert len(df_)
+    colvals = df_[col].unique()
+
+    ttrs = []
+
+    if not pooled:
+        if col is not None:
+            s1 = ['subject', col, varn]
+            s2 = ['subject', col]
+        else:
+            s1 = ['subject',  varn]
+            s2 = ['subject' ]
+        df_ = df_[s1].groupby(s2,observed=True).mean(numeric_only=1).reset_index()
+
+    #print(df_.groupby()
+
+    #colvals = colvals[~np.isnan(colvals)]
+    for cvi,cv in enumerate(colvals):
+        #vals1 = df.query('@col == @cv')
+        for cvj,cv2 in enumerate(colvals[cvi+1:]):
+            #vals2 = df.query('@col == @cv2')
+            cv_ = cv
+            cv2_ = cv2
+            if isinstance(cv,str):
+                cv_ = '"' + cv + '"'
+                cv2_ = '"' + cv2 + '"'
+            qs1 = f'{col} == {cv_}'
+            qs2 = f'{col} == {cv2_}'
+            ttrs_ = myttest(df_,qs1, qs2, varn, alt=alt, paired=paired)
+            ttrs_['val1'] = cv
+            ttrs_['val2'] = cv2
+            ttrs += [ttrs_]
+
+    ttrs = pd.concat(ttrs, ignore_index=1)
+    ttrs['pooled'] = pooled
+    return ttrs
+
+def reshiftPi(df,coln):
+    def f(x):    
+        if x > np.pi :
+            x -= 2*np.pi
+        elif x < -np.pi :
+            x += 2*np.pi
+        return x
+    df[coln] = df[coln].apply(f)
+
+        
+def addWindowCols(df, cols = ['error', 'err_sens','error_pscadj', 'error_change'], 
+                  window_sizes =  [3, 5,10,15], shift = True):
+    #, 'org_feedback_pscadj'] ):
+    assert not df.duplicated(['subject','trials']).any()      # maybe I can get oveer it but not now
+    dfc = df.copy()
+    dfc = dfc.sort_values(
+        ['trial_group_col_calc', 'pert_seq_code', 'subject', 'trials'])
+    #df['env'] = df['environment'].apply(lambda x: envcode2env[x])
+
+    dfc['error_change'] = dfc.groupby(['subject'])['error'].diff()
+    #dfc['error_prod']   = dfc.groupby(['subject'])['error'] * dfc.groupby(['subject']).shift(1)['error']
+
+    adjustErrBoundsPi(dfc, ['feedback',   'error',      'prev_error', 'error_pscadj', 'error_change'] )
+
+    #reshiftPi(dfc,'feedback')
+    #reshiftPi(dfc,'error')
+    #reshiftPi(dfc,'prev_error')
+    #reshiftPi(dfc,'error_pscadj')
+    #reshiftPi(dfc,'error_change')
+
+    #dfc['trialwpertstage_wb'] = dfc['trialwpertstage_wb'].\
+    #    where(dfc['environment'] == 0, dfc['trialwb'])
+    #dfc['trialwpertstage_wb'] = dfc['trialwpertstage_wb'].astype(int)
+
+    # nan-ify after pause
+    dfc.loc[dfc['trialwb'] == 0, 'err_sens'] = np.nan
+
+    # it's important to do things separately for different pert_seq_code althouth right here maybe the sorting wrt it is not so important
+    grp = dfc.\
+        groupby(['pert_seq_code', 'subject', 'trial_group_col_calc'],
+               observed=True)
+
+    
+    for std_mavsz_ in window_sizes:
+        #vars_to_plot = ['err_sens','error', 'org_feedback']
+        for varn in cols:
+            for g,gi in grp.groups.items():
+                if shift:
+                    dfc.loc[gi,f'{varn}_std{std_mavsz_}'] = dfc.loc[gi,varn].shift(1).rolling(std_mavsz_).std()   
+                    dfc.loc[gi,f'{varn}_mav{std_mavsz_}'] = dfc.loc[gi,varn].shift(1).rolling(std_mavsz_).mean()   
+                else:
+                    dfc.loc[gi,f'{varn}_std{std_mavsz_}'] = dfc.loc[gi,varn].rolling(std_mavsz_).std()   
+                    dfc.loc[gi,f'{varn}_mav{std_mavsz_}'] = dfc.loc[gi,varn].rolling(std_mavsz_).mean()   
+                    
+            dfc[f'{varn}_invstd{std_mavsz_}'] = 1/dfc[f'{varn}_std{std_mavsz_}']
+            dfc[f'{varn}_var{std_mavsz_}']    = dfc[f'{varn}_std{std_mavsz_}'] ** 2
+            dfc[f'{varn}_mavsq{std_mavsz_}']  = dfc[f'{varn}_mav{std_mavsz_}'] ** 2
+            dfc[f'{varn}_mav_d_std{std_mavsz_}']  = dfc[f'{varn}_mav{std_mavsz_}'].abs() / dfc[f'{varn}_std{std_mavsz_}']
+            dfc[f'{varn}_mav_d_var{std_mavsz_}']  = dfc[f'{varn}_mav{std_mavsz_}'].abs() / dfc[f'{varn}_var{std_mavsz_}']
+            dfc[f'{varn}_Tan{std_mavsz_}']    = dfc[f'{varn}_mavsq{std_mavsz_}'] / dfc[f'{varn}_var{std_mavsz_}']
+
+    return dfc.copy()
+
+def truncateNIHDfFromErr(df, err_col = 'error', varn = 'err_sens', mult = 1):
+    # estimate error at second halfs of init stage
+    qs_initstage = 'pert_stage_wb.abs() < 1e-10'
+    df_init = df.query(qs_initstage + ' and trialwb >= 10')
+    grp = df_init.groupby(['subject','pert_stage'])
+
+    stds = df_init.groupby(['subject'])[err_col].std()#.std()
+    mestd = stds.mean()
+    if len(stds) > 1:
+        stdstd = stds.std()
+    else:
+        stdstd = None
+    print('mestd mean = {} [rad], std ={}'.format(mestd,  stdstd))
+
+    stds = stds.to_frame().reset_index().rename(columns={err_col: err_col + '_initstd'})
+    df_ = df.merge(stds, on='subject')    
+
+    shiftsz = 1
+    df_['hit_mestd1'] = df_[err_col].shift(shiftsz).abs() <= df_[err_col + '_initstd'] * mult 
+    df_[varn + '_trunc'] = df_[varn]
+    df_.loc[df_['hit_mestd1'], varn + '_trunc'] = np.inf
+    
+    return df_  # mamba install seaborn ipykernel shapely matplotlib statsmodels pyqt pingouin scipy pandas
+
+
+def truncateNIHDfFromErr2(df_wthr, mults):
+    for multi, mult in enumerate(mults):
+        df_ = df_wthr.copy()
+        df_wthrdf_ = df_[df_.error.shift(1).abs() >= df_['error_initstd'] * mult ].copy()
+        #df_ = df_.query('error_deg.shift(1).abs() >= @thr')
+        #thr_s = '{:.3f}'.format(thr)
+        #thr_s = f'{maxmult}*mestd/{ NN - (thri)}'
+        #thr_s = f'mestd/{ NN - (thri)}'
+        thr_s = f'mestd*{mults[multi]}'
+        df_wthrdf_['thr'] = thr_s
+        dfs += [df_wthrdf_]
+        print(thr_s, len(df_wthrdf_), len(df_))
+        
+    dfall_notclean = pd.concat(dfs)
+    dfall = truncateDf(dfall_notclean, 'err_sens', q=0.0, infnan_handling='discard', 
+                       cols_uniqify = ['subject','env','thr'])
+
+    return dfall
+
+# mamba install seaborn ipykernel shapely matplotlib statsmodels pyqt pingouin scipy pandas
+
 #def addTrigPresentCol_NIH(df, events, environment=None):
 #    '''
 #    events is 2-dim
@@ -4454,3 +4716,79 @@ def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
 #        raise ValueError('MEG events and behavior file do not match')
 #
 #    return df
+
+def checkErrBounds(df, cols=['error','prev_error','correction',
+                             'error_deg','prev_error_deg','belief' ]):
+    # ,'target_locs' can be > Pi because they are 90 + smth, with smth \in [0,pi]
+    # not feedback and org_feedback or target_locs because they are referenced not to 0 in NIH data
+    bd = np.pi 
+    bd_deg = 180
+    badcols = []
+    badcols_tuples = []
+    for col in cols:
+        if col in df.columns:
+            mx = df[col].abs().max()
+            if col.endswith('deg'):                
+                if  mx > bd_deg:
+                    badcols += [col]
+                    badcols_tuples += [(col,mx, np.sum(df[col].abs() > bd_deg) )]
+
+            else:
+                if mx > bd:
+                    badcols += [col]
+                    #badcols_tuples += [(col,mx)]
+                    badcols_tuples += [(col,mx, np.sum(df[col].abs() > bd) )]
+    print('Bad columns found: ', badcols_tuples)
+    return badcols
+
+
+def adjustErrBoundsPi(df, cols):
+    bd = np.pi 
+    bd_deg = 180
+    for col in cols:
+        mx = df[col].abs().max()
+        if  mx > bd_deg:
+            bd_eff =  bd_deg
+        else:
+            bd_eff =  bd
+        print('adjustErrBoundsPi', col, bd_eff)
+            
+        def f(x):    
+            if x > bd_eff:
+                x -= bd_eff * 2
+            elif x < -bd_eff:
+                x += bd_eff * 2
+            return x
+        df[col] = df[col].apply(f)
+
+
+#####################
+
+def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb', coln = 'err_sens', method = 'pearson', covar = None):
+    import pingouin as pg
+
+    def f(df_):
+        try:
+            if covar is None:
+                r = pg.corr( df_[trialcol], df_[coln],  method=method)
+            else:
+                r = pg.partial_corr( df_, trialcol, coln, covar, method=method)
+            r['method'] = method
+            r['mean_x'] = df_[trialcol].mean()
+            r['mean_y'] = df_[coln].mean()
+            r['std_x'] = df_[trialcol].std()
+            r['std_y'] = df_[coln].std()
+        except ValueError as e:
+            return None
+        return r
+    corrs_per_subj_me = dfallst.groupby(['thr','subject',stagecol]).apply(f)
+
+    corrs_per_subj_me = corrs_per_subj_me.rename(columns={'p-val':'pval'})
+    corrs_per_subj_me = corrs_per_subj_me.\
+        groupby(['thr',stagecol])[['r','pval',
+            'mean_x','mean_y','std_x','std_y']].mean()
+    #corrs_per_subj_me['method'] = method
+    corrs_per_subj_me['varn'] = covar
+
+    return corrs_per_subj_me
+

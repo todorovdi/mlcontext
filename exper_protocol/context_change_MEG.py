@@ -234,16 +234,33 @@ class VisuoMotorMEG(VisuoMotor):
 
 
         tis_break0 = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break'] 
+        if len(tis_break0) == 0:
+            print('WARNING: No breaks at all')
+            self.tis_break = []
+            self.n_breaks = 0
+            return
         tis_break = tis_break0 + [len(self.trial_infos) - 1]
-        if tis_break[-1] - tis_break[-2] < 25:
-            print('Reset short break at the end')
-            tis_break = tis_break0[:-1] + [len(self.trial_infos) - 1]
+        last_break_tind = tis_break0[-1]
+        if len(self.trial_infos) - last_break_tind < 25:
+            print(f'Reset short break at the end because last_break_tind = {last_break_tind} for len(self.trial_infos) = {len(self.trial_infos)} ')
+            nECs = 2
+            #tis_break = tis_break0[:-1 - nECs] + [len(self.trial_infos) - 1]
+            self.trial_infos = self.trial_infos[:last_break_tind - nECs] + self.trial_infos[last_break_tind+1:]
+            self.n_breaks -= 1
+
+            tis_break0 = [i for i,spec in enumerate(self.trial_infos) if spec['trial_type'] == 'break'] 
+            tis_break = tis_break0 + [len(self.trial_infos) - 1]
 
         difftis_break = np.diff( np.hstack([0, tis_break]) )
         difftis_break_dur = difftis_break * self.trial_dur_expected
-        print( f'tis_break = {tis_break}, in sec (excl break dur) ={tis_break}')
-        print( f'dists between breaks = {difftis_break}, in sec ={difftis_break_dur}')
+        difftis_break_dur_min = list( map(lambda x: '{:.1f}'.format(x), difftis_break_dur / 60.  ) )
+        tis_sec = np.array(tis_break0) * self.trial_dur_expected
+        tis_sec = tis_sec.astype(int)
+        print( f'tis_break = {tis_break0} (ntrials = {len(self.trial_infos)}),\n   in sec (excl break dur) ={tis_sec}')
+        print( f'dists between breaks = {difftis_break},\n   in sec={difftis_break_dur},\n   in min={difftis_break_dur_min}')
         assert np.max( difftis_break_dur ) < self.params['maxMEGrec_dur'], f'Too long time distance between breaks: {np.max( difftis_break_dur )} >= {self.params["maxMEGrec_dur"]} '
+        self.tis_break = tis_break[:-1]
+        #raise ValueError('st')
 
 
     def prepVars(self, insert_breaks = True):
@@ -343,9 +360,10 @@ class VisuoMotorMEG(VisuoMotor):
             self.insertBreaks()
 
             # add two ECs to the end
+            print('Inserting two ECs at the very end')
             ins = []
             last_pre = self.trial_infos[-1]
-            print(last_pre)
+            print('last_pre = ',last_pre)
             dspec = {'vis_feedback_type':'error_clamp', 'tgti':last_pre['tgti'],
                  'trial_type': 'error_clamp',
                 'special_block_type': 'error_clamp_pair', 'block_ind':last_pre['block_ind'] }
@@ -1002,7 +1020,7 @@ class VisuoMotorMEG(VisuoMotor):
 
 
                 timedif = time.time() - self.phase_start_times[self.current_phase]
-                if (np.floor(timedif * 100) % 100 == 0):
+                if (np.floor(timedif * 100) % 500 == 0):
                     # this is for experimenter, not for participant
                     print(f'ongoing break, {timedif:.1f} seconds passed')
 
@@ -1686,6 +1704,8 @@ class VisuoMotorMEG(VisuoMotor):
                     self.playSound()
                     self.send_trigger(self.MEG_stop_trigger)
                     self.free_from_break = 0
+                    if not self.params['dummy_mode']:
+                        pygame.time.wait( int( 200 ) )
                 else:
                     if self.params['prep_after_rest']:
                         self.current_phase = 'GO_CUE_WAIT_AND_SHOW'
@@ -2146,6 +2166,8 @@ class VisuoMotorMEG(VisuoMotor):
         '''
         self.log_flush()
 
+        # I could move it to the place where task_started shifts to 2 to finish recording rigth after the task
+        # but maybe I don't want it. Better to have some relaxation in place
         if not self.params['dummy_mode']:
             pygame.time.wait( int( 1000 ) )
         self.send_trigger(0)

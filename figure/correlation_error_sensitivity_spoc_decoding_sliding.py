@@ -2,10 +2,8 @@ import os
 import os.path as op
 import numpy as np
 from scipy.stats import linregress
-from mne.io import read_raw_fif
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import make_scorer
-from mne import Epochs
 import pandas as pd
 import warnings
 import matplotlib.pyplot as plt
@@ -99,6 +97,8 @@ if require_all_subjects:
     assert set( df['subject'] ) == set(np.array(subjects)[subject_inds]), \
             set( df['subject'] ) ^ set(np.array(subjects)[subject_inds]) 
 
+if df is None or (len(df) == 0 ):
+    sys.exit(1)
 row  =df.iloc[0]
 for kte in varnames:
     if  len( row[f'{kte}_vals'] ) > len(row[f'{kte}_diff']):

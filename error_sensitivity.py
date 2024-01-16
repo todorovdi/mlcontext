@@ -14,6 +14,7 @@ from config2 import path_data
 from config2 import event_ids_tgt,event_ids_feedback, env2envcode, env2subtr
 from config2 import target_angs, stage2evn2event_ids
 from config2 import delay_trig_photodi, min_event_duration
+from base2 import subAngles
 
 target_coords = calc_target_coordinates_centered(target_angs)
 
@@ -273,7 +274,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
                     coln_error = 'error',
                     df_fulltraj = None,
                     trajPair2corr = None,
-                    verbose = 0):
+                    verbose = 0, use_sub_angles = 0):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -361,10 +362,14 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
 
     target_locs  = np.array(behav_df.loc[df_inds,'target_locs'])
     movement      = np.array(behav_df.loc[df_inds, 'org_feedback'])
+
     if coln_correction_calc is None:
         #correction = (target_angs2 - next_movement) - (target_angs - movement)
         # -belief
-        vals_for_corr = target_locs - movement
+        if use_sub_angles:
+            vals_for_corr = subAngles(target_locs, movement)
+        else:
+            vals_for_corr = target_locs - movement
     else:
         vals_for_corr = behav_df.loc[df_inds, coln_correction_calc].to_numpy()
 
@@ -413,7 +418,10 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         correction = np.array(correction)
     else:
         # assuming it is ofb - target
-        correction =  vals_for_corr1 - vals_for_corr2
+        if use_sub_angles:
+            correction = subAngles(vals_for_corr1, vals_for_corr2)
+        else:
+            correction =  vals_for_corr1 - vals_for_corr2
 
 
     df_esv = {}
@@ -438,7 +446,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
                 vals = shiftVals(vals, trial_inds_loc2, valid_inds2)
             else:
                 valn = vn
-                print(f'computeErrSens3: boring add {vn}')
+                print(f'computeErrSens3: boring add variable {vn}')
                 vals = behav_df.loc[df_inds, valn ]
 
             df_esv[vn] = vals
@@ -521,10 +529,10 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     df_esv['nextlike_target_loc'] = targets_locs2
 
     # for decoding later
-    df_esv['belief']      = -vals_for_corr
+    df_esv['belief_']      = -vals_for_corr
     # this should be set here (not in behav_proc)
     # because it depends on the coln_corr_calc
-    df_esv['prev_belief'] = -getPrev(vals_for_corr.astype(float) )
+    df_esv['prev_belief_'] = -getPrev(vals_for_corr.astype(float) )
     df_esv['prev_movement'] = getPrev(movement.astype(float))
     #####
 

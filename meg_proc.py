@@ -6,6 +6,7 @@ def cleanEvents_NIH(events):
     # check we have for stable events  tgtcode, 100, 30
     # make sure feedback phase goes after target, otherwise delete
     import warnings
+    from config2 import event_ids_tgt_stable
     t = -1
     bad_trials = list()
     bad_events = list()
@@ -475,3 +476,287 @@ def addTrigPresentCol_NIH(df, meg_targets_ev, environment=None):
         raise ValueError('MEG events and behavior file do not match')
 
     return df
+
+def ML_classic(X, subdf, varname, mask_good, regression_type,
+        scale_Y_robust, scale_X_robust,  nskip_trial,
+        covs=None, use_non_hit_recalc=0, ):
+    print(f'-- classic decoding {varname}')
+    assert len(varname)
+    vals    = np.array(subdf[varname])
+    non_hit = np.ones(len(subdf), dtype=bool)
+
+    if use_non_hit_recalc:
+        non_hit      = prepNonHit(subdf, varname, env, time_locked)
+    if par['discard_hit_twice']:
+        non_hit = subdf['non_hit_not_adj']
+
+    res = {}
+    y    = y[mask_good]
+    Xcur = Xcur[mask_good]
+
+    print('Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  ( ~np.isnan(y) ).sum()  ) )
+    if len(y) < 5:
+        print('Too short y, return None')
+        res['dec_error'] = str(f'Too short y {len(y)}')
+        return res
+
+    if par['scale_Y_robust'] < 3:
+        Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0) )
+
+    if exit_after == 'rescale':
+        print(y.shape)
+        print(y[:10])
+        return y
+        #sys.exit(0)
+
+    if nskip_trial > 1:
+        y = y[::nskip_trial]
+        Xcur = Xcur[::nskip_trial]
+
+    # for quicker tests, -1 means all channels
+
+    #if debug_save_Xy_exit:
+    #    fnf =pjoin( results_folder , f'Xy_classical_{env}_{varname}.npz')
+    #    np.savez( fnf, X=Xcur, y=y, varname = varname  )
+    #    print(f'DEBUG: saved Xy classic to {fnf}, return')
+    #    return {}
+
+
+    ##############################
+    # Regression for classic decoding
+    if regression_type == 'Ridge_noCV': #this is ungly but just for back compat, earlier I was using 'Ridge' for 'RidgeCV'
+        alpha_ind = len(alphas) // 2 
+        reg_step = Ridge(alpha = alphas[alpha_ind], fit_intercept = fit_intercept_classic_dec)
+    elif regression_type in ('RidgeCV','Ridge'):
+        # def alphas = (0.1, 1, 10), in the original code Romain was not supplying them in classical case for some reason
+        # alpha_per_target = False by def meaning that it will take the best alpha only
+        #est = make_pipeline(spoc_est, RidgeCV(alphas = alphas, fit_intercept = fit_intercept_classic_dec))
+        reg_step = RidgeCV(alphas = alphas, fit_intercept = fit_intercept_classic_dec)
+    elif regression_type == 'xgboost':
+        import xgboost
+        from xgboost import XGBRegressor
+        xgb = XGBRegressor(**add_clf_creopts)
+
+        add_clf_creopts['n_jobs'] = n_jobs_per_dim_classical_dec
+        xgb_est = XGBRegressor(**add_clf_creopts_est)
+        reg_step = xgb_est
+    else:
+        raise ValueError('wrong regression value')
+
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+
+    ##############################
+
+    y_preds = np.zeros(len(y))
+    scores = list()
+    print(f'{varname}: Starting CV for regression_type={regression_type}')
+    nsplit = 0
+    alphas_found = []
+    patterns_found = []
+    filters_found = []
+    try:
+        for train, test in cv.split(Xcur, y):
+
+            precalc_covs_cur = precalc_covs[foldi]
+            spoc_est = SPoC(n_components=SPoC_n_components, log=True, reg='oas',
+                rank='full', n_jobs=n_jobs_per_dim_classical_dec,
+                fit_log_level=mne_fit_log_level, precalc_covs = precalc_covs_cur)
+            centering = par.get('XYcentering',0)
+            if par['scale_Y_robust'] == 3:
+                scaler = RobustScaler(with_centering=centering)
+                est = make_pipeline(scaler, spoc_est, reg_step)
+            elif par['scale_Y_robust'] == 4:
+                scaler = StandardScaler(with_centering=centering)
+                est = make_pipeline(scaler, spoc_est, reg_step)
+            else:
+                est = make_pipeline(spoc_est, reg_step)
+
+
+            print(f'Starting split N={nsplit}')
+            with mne.use_log_level(mne_fit_log_level):
+                est.fit(Xcur[train], y[train])
+            y_preds[test] = est.predict(Xcur[test])
+            score = spearmanr(y_preds[test], y[test])
+            scores.append(score[0])
+            nsplit += 1
+            if regression_type == 'Ridge_noCV':
+                alphas_found += [est.named_steps['ridge'].alpha]
+            else:
+                alphas_found += [est.named_steps['ridgecv'].alpha_]
+            # before Oct 15 it was like this, inverted
+            #patterns_found += [est.named_steps['spoc'].filters_]
+            #filters_found += [est.named_steps['spoc'].patterns_]
+
+            patterns_found += [est.named_steps['spoc'].patterns_]
+            filters_found += [est.named_steps['spoc'].filters_]
+        diff = np.abs(y - y_preds)
+
+        res['non_hit'] = non_hit
+        res['diff']   = diff
+
+        res['alphas']   = alphas_found
+        res['filters']   = filters_found
+        res['patterns']   = patterns_found
+
+        res['scores'] = scores  # scores per (outer) fold
+        res['vals']   = y  # non_hit
+        res['mask_valid'] = mask_not_inf
+        res['dec_type'] = 'classic'
+        res['Xshape'] = Xcur.shape
+        res['dec_error'] = None
+        print(f'Finished classical {varname} scores average = {np.mean(scores):.4f}' )
+    except Exception as e:
+        print(f'!!!! Error during fit for {varname}: ',str(e) )
+        if dec_error_handling == 'raise':
+            raise e
+        else:
+            res['dec_error'] = str(e)
+
+    return res
+
+def getCleanEpochsMaskForDec(subdf, varnames, env, time_locked,
+        discard_hit_twice):
+    non_hit = np.ones(len(subdf), dtype=bool)
+    if use_non_hit_recalc:
+        non_hit &= prepNonHit(subdf, varnames[0], env, time_locked)
+        for varname in varnames[1:]:
+            non_hit &= prepNonHit(subdf, varname, env, time_locked)
+    if discard_hit_twice:
+        non_hit &= subdf['non_hit_not_adj']
+
+    after_break = (subdf['trials'] % 192 == 0).values
+
+    target_vals      = subdf[varnames]._values
+    if len(varnames) > 1:
+        mask_good = getMaskNotNanInf(target_vals, axis = 1)
+        #mask_not_inf = ~np.any( np.isinf(y), axis=1)
+        #mask_not_nan = ~np.any( np.isnan(y), axis=1)
+    else:
+        mask_good = getMaskNotNanInf(target_vals[:,0] )
+        #mask_not_inf = ~np.any( np.isinf(y))
+        #mask_not_nan = ~np.any( np.isnan(y))
+
+    mask_good &= non_hit
+    mask_good &= (~after_break)
+
+    return mask_good
+
+def ML_b2b(varnames, X, covs):
+    print(f'-- decoding {varnames}')
+    assert len(varnames)
+    vals       = subdf[varnames]._values
+    assert vals.shape[0] == X.shape[0]
+
+    non_hit = np.ones(len(subdf), dtype=bool)
+    if use_non_hit_recalc:
+        non_hit &= getNonhitForDec(subdf, varnames, env, time_locked)
+
+    if par['discard_hit_twice']:
+        non_hit &= subdf['non_hit_not_adj']
+
+    res = {}
+    vals_non_hit = vals[non_hit]  # already non_hit
+    Xhn = X[non_hit]
+
+    y = vals_non_hit
+    Xcur = Xhn
+
+    mask_not_inf = ~np.any( np.isinf(y), axis=1)
+    mask_not_nan = ~np.any( np.isnan(y), axis=1)
+    #print('infs ', (~mask_not_inf).sum(), len(mask_not_inf) )
+
+    mask_good = getMaskNotNanInf(y, axis=1)
+    y    = y[mask_good]
+    Xcur = Xcur[mask_good]
+
+    print('B2B: Total = {}, noninf = {} notnan = {}'.format( len(y),  mask_not_inf.sum(),  mask_not_nan.sum()  ) )
+
+    if debug_save_Xy_exit:
+        np.savez( pjoin( results_folder , f'Xy_b2b_{env}.npz'),
+                 X=Xcur, y=y, varnames=varnames )
+        print('DEBUG: saved Xy b2b and exiting')
+        return {}
+
+    if len(y) < 5:
+        print('Too short y, return None')
+        res['dec_error'] = str(f'Too short y {len(y)}')
+        return res
+
+    if par['scale_Y_robust'] < 3:
+        Xcur, y = rescaleIfNeeded(Xcur, y, par, centering = par.get('XYcentering',0))
+
+    if nskip_trial > 1:
+        y = y[::nskip_trial]
+        Xcur = Xcur[::nskip_trial]
+
+    # for quicker tests, -1 means all channels
+    if n_channels_to_use > 0:
+        Xcur = Xcur[:,:n_channels_to_use]
+    ##############################
+    spoc = SPoC(n_components=SPoC_n_components, log=True, reg='oas',
+                rank='full', n_jobs=min(n_jobs_SPoC, Xcur.shape[0] ),
+                fit_log_level=mne_fit_log_level)
+    # Regression for classic decoding
+    if regression_type == 'Ridge_noCV':
+        #est = make_pipeline(spoc_est, Ridge(alpha = alphas[5], fit_intercept = fit_intercept_classic_dec))
+        alpha_ind = len(alphas) // 2 
+        reg_step = Ridge(alpha=alphas[alpha_ind], fit_intercept=fit_intercept_b2b)
+    elif regression_type in ('RidgeCV','Ridge'):
+        # def alphas = (0.1, 1, 10)
+        reg_step = RidgeCV(alphas=alphas, fit_intercept=fit_intercept_b2b)
+    elif regression_type == 'xgboost':
+        from xgboost import XGBRegressor
+        reg_step = XGBRegressor(**add_clf_creopts)
+        #param_grid = {
+        #    'pca__n_components': [5, 10, 15, 20, 25, 30],
+        #    'model__max_depth': [2, 3, 5, 7, 10],
+        #    'model__n_estimators': [10, 100, 500],
+        #}
+        #grid = GridSearchCV(pipeline, param_grid,
+        #  cv=5, n_jobs=-1, scoring='roc_auc')
+    else:
+        raise ValueError('wrong regression value')
+
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+    centering = par.get('XYcentering',0)
+    if par['scale_Y_robust'] == 3:
+        scaler = RobustScaler(with_centering=centering)
+        G = make_pipeline(scaler, spoc, reg_step)
+    elif par['scale_Y_robust'] == 4:
+        scaler = StandardScaler(with_centering=centering)
+        G = make_pipeline(scaler, spoc, reg_step)
+    else:
+        G = make_pipeline(spoc, reg_step)
+    #G = make_pipeline(spoc, reg_step )
+
+    H = LinearRegression(fit_intercept=False, n_jobs= n_jobs_SPoC)
+    #G = direct pipeline (spoc + regerssor)
+    #H = back pipeline
+    b2b = B2B_SPoC(G=G, H=H, n_splits=n_splits_B2B,
+        parallel_type=B2B_SPoC_parallel_type,n_jobs=n_jobs)
+
+    try:
+        b2b.fit(Xcur,y)
+        ##############################
+        # E_ is a mean of H_hats over 0 axis
+        partial_scores = np.diag(b2b.E_)
+
+        #b2b.G -- get alpha
+        res['b2b.H'] = b2b.H
+        res['b2b.G'] = b2b.G
+        res['non_hit'] = non_hit
+        #res['diff']   = diff
+        res['scores'] = partial_scores
+        res['scores_std'] = np.diag(np.std(b2b.H_hats,0 ) ) 
+        res['vals']   = y  # non_hit
+        res['mask_valid'] = mask_not_inf
+        res['varnames'] = varnames
+        res['dec_type'] = 'b2b'
+        res['Xshape'] = Xcur.shape
+        res['dec_error'] = None
+
+        print(f'Finished b2b for {varnames} {name} partial_scores = {partial_scores}' )
+    except Exception as e:
+        print(f'!!!! Error during fit for {varnamas}: ',str(e) )
+        res['dec_error'] = str(e)
+    return res
