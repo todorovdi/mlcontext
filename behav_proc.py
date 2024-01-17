@@ -1431,6 +1431,8 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                 dfcur['correction'] = np.array( df_esv['correction'] )
                 if 'belief_' in df_esv.columns:
                     dfcur['belief_'] = np.array( df_esv['belief_'] )
+
+                # copy columns including prev_err_sens
                 for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
                            f'prev_{escoln}', 'prev_error' ]:
                     if cn not in df_esv.columns:
@@ -4764,7 +4766,9 @@ def adjustErrBoundsPi(df, cols):
 
 #####################
 
-def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb', coln = 'err_sens', method = 'pearson', covar = None):
+def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb', 
+             coln = 'err_sens', method = 'pearson', covar = None):
+    # corr or partial correlation within participant, averaged across participants
     import pingouin as pg
 
     def f(df_):
@@ -4785,8 +4789,8 @@ def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb
 
     corrs_per_subj_me = corrs_per_subj_me.rename(columns={'p-val':'pval'})
     corrs_per_subj_me = corrs_per_subj_me.\
-        groupby(['thr',stagecol])[['r','pval',
-            'mean_x','mean_y','std_x','std_y']].mean()
+        groupby(['thr',stagecol], observed=True)[['r','pval',
+            'mean_x','mean_y','std_x','std_y']].mean(numeric_only = 1)
     #corrs_per_subj_me['method'] = method
     corrs_per_subj_me['varn'] = covar
 

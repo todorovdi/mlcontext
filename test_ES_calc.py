@@ -218,6 +218,7 @@ if args.do_calc_ES:
 
     # dirty hack
     df_all_multi_tsz['err_sens'] = -df_all_multi_tsz['err_sens']
+    df_all_multi_tsz['prev_err_sens'] = -df_all_multi_tsz['prev_err_sens']
 
     fn = f'df_all_multi_tsz_{args.save_suffix}.pkl.zip'
     fnf = pjoin(path_data,fn)
