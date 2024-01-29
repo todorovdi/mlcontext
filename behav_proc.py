@@ -2638,15 +2638,19 @@ def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
     # coln_time = 'time'
     assert operation in ['min','max']
     from datetime import timedelta
-    diffmin = df[coln_time].diff().min()
-    if isinstance(diffmin, timedelta):
-        assert diffmin.total_seconds() >= 0, diffmin  # need monotnicity
-    else:
-        assert diffmin >= 0, diffmin  # need monotnicity
+    if coln_time == 'time':
+        diffmin = df[coln_time].diff().min()
+        if isinstance(diffmin, timedelta):
+            assert diffmin.total_seconds() >= 0, diffmin  # need monotnicity
+        else:
+            assert diffmin >= 0, diffmin  # need monotnicity
     assert coltake is not None
 
     if grp is None:
         grp = df.groupby(colgrp)
+    else:
+        if colgrp is not None:
+            print('aggRows WARNING: Column ', colgrp, ' is not used due to grp != None')
 
     if coltake != 'corresp':
         cns = [cn for cn in df.columns if cn != coln_time]
@@ -4457,7 +4461,7 @@ def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=Fa
     ttrs['varn'] = varn
     return ttrs
 
-def compare0(df, varn,alt=['greater','less']):
+def compare0(df, varn, alt=['greater','less'], cols_addstat = []):
     from pingouin import ttest
     if isinstance(alt,str):
         alt = [alt]
@@ -4467,6 +4471,10 @@ def compare0(df, varn,alt=['greater','less']):
         ttr['alt'] = alt_
         ttr['val1'] = varn
         ttr = ttr.rename(columns ={'p-val':'pval'})
+
+        for coln in cols_addstat:
+            ttr[coln + '_mean'] = df[coln].mean()
+            ttr[coln + '_std' ] = df[coln].std()
         ttrs += [ttr]
     ttrs = pd.concat(ttrs, ignore_index = 1)
     decorateTtestRest(ttrs)
@@ -4796,3 +4804,19 @@ def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb
 
     return corrs_per_subj_me
 
+
+def formatRecentStatVarnames(isec, histlen_str=' (histlen='):
+    isec_nice = []
+    for s in isec:
+        s2 = s.replace('error_pscadj_abs','Error magnitude')\
+            .replace('error_pscadj','Signed error')\
+            .replace('_Tan',' mean^2/var' + histlen_str)\
+            .replace('_mavsq',' mean^2' + histlen_str)\
+            .replace('_invstd',' 1/std' + histlen_str)\
+            .replace('_mav_d_std',' mean/std' + histlen_str)\
+            .replace('_std',' std' + histlen_str)\
+            .replace('_mav_d_var',' mean/std' + histlen_str) 
+        if len(histlen_str):
+            s2 += ')' 
+        isec_nice.append(s2 )
+    return isec_nice
