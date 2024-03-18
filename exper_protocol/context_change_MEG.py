@@ -82,6 +82,8 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
         self.copy_param(info, 'movement_duration_after_lh', 0.75 - expected_reaction_time )
 
+        self.copy_param(info, 'participant_can_release_break', 0 )
+
 
         self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
@@ -1020,9 +1022,9 @@ class VisuoMotorMEG(VisuoMotor):
 
 
                 timedif = time.time() - self.phase_start_times[self.current_phase]
-                if (np.floor(timedif * 100) % 500 == 0):
+                if (np.floor(timedif * 100) % 1000 == 0):
                     # this is for experimenter, not for participant
-                    print(f'ongoing break, {timedif:.1f} seconds passed')
+                    print(f'ongoing break, {timedif:.1f} seconds passed, press "g" or SPACE to continue the task')
 
                 break_str = 'Pause'
                 perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
@@ -1196,6 +1198,21 @@ class VisuoMotorMEG(VisuoMotor):
                 #ax2 = self.HID_controller.get_axis(1)
                 #max_ax1 = ax1
                 #max_ax2 = ax2
+
+                if self.clock is not None:
+                    fps = self.clock.get_fps()
+                else:
+                    fps = None
+
+                if self.params['controller_type'] == 'joystick':
+                    ax1 = self.HID_controller.get_axis(0)
+                    ax2 = self.HID_controller.get_axis(1)
+                    axstr = f'joystick axes=({ax1:.3f},{ax2:.3f})'
+                else:
+                    px,py = self.HID_controller.get_pos()
+                    axstr = f'mouse pos=({px:.3f},{py:.3f})'
+                debugstrs = [f'{axstr}, FPS={fps:4.0f}']
+                self.drawTextMultiline(debugstrs)
 
 
         # debug print
@@ -1612,6 +1629,7 @@ class VisuoMotorMEG(VisuoMotor):
              #/ (jaxrng_h / 2)
              #/ (jaxrng_v / 2)
 
+            # default is angle scaling
             if self.params['joystick_angle2cursor_control_type'] == 'angle_scaling':
                 # set cursor as a multiple of the total height/width
                 cursorX = self.home_position[0] + ax1 * (self.params['width_for_cccomp'] / 2)
@@ -2210,9 +2228,9 @@ class VisuoMotorMEG(VisuoMotor):
 
         if event.type == pygame.QUIT:
             self._running = False
+        # usually it is pygame.JOYBUTTONDOWN
         if event.type == self.phase_shift_event_type:
-            print(self.cursorX, self.cursorY, self.current_phase,
-                  self.trial_infos[self.trial_index] )
+            print('joy button pressed x={}, y={}, phase={}, info={}'.format( self.cursorX, self.cursorY, self.current_phase, self.trial_infos[self.trial_index] ) )
 
             # if task was not started and a button was pressed, start the task
             if self.task_started == 0:
@@ -2226,10 +2244,13 @@ class VisuoMotorMEG(VisuoMotor):
                     phase = self.first_phase_after_start
                 self.restartTask(very_first = 1, phase=phase)
             # if task was started and a button was pressed, release break
-            else:
+            elif self.params['participant_can_release_break']:
                 self.moveHome()
                 self.free_from_break = 0
 
+        ####################################
+        ##############   Process keypresses
+        ####################################
         if event.type == pygame.KEYDOWN:
             if 'KEYPRESS' in self.phase2trigger:
                 trg = self.phase2trigger['KEYPRESS']
@@ -2263,6 +2284,14 @@ class VisuoMotorMEG(VisuoMotor):
             if event.key == pygame.K_r:
                 self.moveHome()
                 self.reset_traj()
+            if event.key == pygame.K_o:
+                inc_amount = 0.025 
+                self.discrepancy_red_lr += inc_amount
+                print(f'"o" pressed => discrepancy_red_lr increased by {inc_amount:.3f} and now {self.discrepancy_red_lr:.3f}')
+            if event.key == pygame.K_p:
+                inc_amount = 0.025 
+                self.discrepancy_red_lr -= inc_amount
+                print(f'"p" pressed => discrepancy_red_lr decreased by {inc_amount:.3f} and now {self.discrepancy_red_lr:.3f}')
             if event.key == pygame.K_s:
                 self.save_scr(prefix='keypress')
             # forcefully start task, should not be used unless debug
@@ -2275,7 +2304,7 @@ class VisuoMotorMEG(VisuoMotor):
                     print('Debug restart task by key not allowed when not debug')
 
             # release from break during the normal function of the task (no relaunch of the program)
-            if (event.key == pygame.K_g) and (not self.free_from_break):
+            if ( (event.key == pygame.K_g) or (event.key == pygame.K_SPACE) ) and (not self.free_from_break):
                 self.free_from_break = 1
                 self._display_surf.fill(self.color_bg) # need to be here beacause
                 # sleep will make on_render not be executed so 'pause commence' 
@@ -2384,7 +2413,10 @@ if __name__ == "__main__":
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
     parser.add_argument('--noise_fb',    type=int)
     parser.add_argument('--use_true_triggers', default=0,  type=int)
+    parser.add_argument('--participant_can_release_break', default=0,  type=int)
  
+    # def 0.2
+    parser.add_argument('--discrepancy_red_lr',  type=float)
     parser.add_argument('--smooth_traj_home',  type=int)
     parser.add_argument('--smooth_traj_feedback_when_home',  type=int)
     parser.add_argument('--time_feedback',  type=float)
@@ -2398,6 +2430,8 @@ if __name__ == "__main__":
     parser.add_argument('--maxMEGrec_dur',  type=float)
 
     parser.add_argument('--continue_from_last', default=None, type=str)
+
+
 
     parser.add_argument('--exit_after_ntrials', default=None, type=int)
     parser.add_argument('--flush_log_freq', type=str)
@@ -2428,16 +2462,15 @@ if __name__ == "__main__":
 
     show_dialog = par['show_dialog']
     if show_dialog:
-        info['participant'] = ''
-        #info['session'] = ''
+        #info['participant'] = ''
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
+            print('Kernel panic')
             core.quit()
+    #else:
+    #    info['participant'] = 'Dmitrii_test'
 
-        info['session'] = 'session1'
-    else:
-        info['participant'] = 'Dmitrii_test'
-        info['session'] = 'session1'
+    info['session'] = 'session1'
 
 
     for p,v in par.items():
@@ -2459,8 +2492,6 @@ if __name__ == "__main__":
     elif sys.platform in ['win32', 'cygwin'] :
         assert par['fullscreen'], 'On windows (assume actual experiment) please run un fullscreen'
         os.environ['SDL_VIDEODRIVER'] = 'windib'  # for pygame to work
-
-        # NEW
         os.environ['SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS'] = '1'  # for joystick to work when window is out of focus
         
 
@@ -2474,7 +2505,17 @@ if __name__ == "__main__":
     # then it executes on_event for all dected events
     # after than if we are running a task it runs vars_update
 
-    # keys:   ESC -- exit, f11 -- fullscreen,  q,w -- change cursor radius
+    # keys:   
+    #  ESC -- exit (any moment), f11 -- fullscreen (when windows in focus),  
+    ### (supressed because I am afaraid of discalib of everything) q,w -- change cursor radius
+    #  g or SPACE during break -- release from break
+    #  e before task start or during break -- eyelink calibration
+    #  j before task start -- calibrate joystick
+    #  o anytime -- inc discrepancy_red_lr by 0.025
+    #  p anytime -- dec discrepancy_red_lr by 0.025
+    #  r anytime -- move home and reset traj
+    #  s anytime -- save screeshot
+    #  y anytime during debug -- restart task
     # pressing joystick button can change experiment phase if task_started == 0
 
 
