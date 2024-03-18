@@ -274,7 +274,8 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
                     coln_error = 'error',
                     df_fulltraj = None,
                     trajPair2corr = None,
-                    verbose = 0, use_sub_angles = 0):
+                    verbose = 0, use_sub_angles = 0, retention_factor = 1.,
+                    reref_target_locs = True):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -360,7 +361,10 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     trial_inds_loc1, valid_inds1, trial_inds_loc2, valid_inds2 = \
             getIndShifts(trial_inds_loc, time_locked=time_locked, shiftsz=shiftsz)
 
-    target_locs  = np.array(behav_df.loc[df_inds,'target_locs'])
+    target_locs  = np.array(behav_df.loc[df_inds,'target_locs']).copy()
+    if reref_target_locs:
+        print('Reref target locs')
+        target_locs -= np.pi
     movement      = np.array(behav_df.loc[df_inds, 'org_feedback'])
 
     if coln_correction_calc is None:
@@ -419,9 +423,9 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     else:
         # assuming it is ofb - target
         if use_sub_angles:
-            correction = subAngles(vals_for_corr1, vals_for_corr2)
+            correction = subAngles(retention_factor * vals_for_corr1, vals_for_corr2)
         else:
-            correction =  vals_for_corr1 - vals_for_corr2
+            correction =  retention_factor * vals_for_corr1 -  vals_for_corr2
 
 
     df_esv = {}
@@ -484,6 +488,9 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     #errors_denom[c]
     df_esv.loc[c,err_sens_coln]  = (correction[c] / errors_denom[c])
 
+    df_esv['retention_factor'] = retention_factor
+    df_esv['retention_factor_s'] = df_esv['retention_factor'].apply(lambda x: f'{x:.3f}')
+
     # recal that in the experiment code what goes to "errors" columns is
     # computed this way
     # self.error_distance = np.sqrt((self.feedbackX - self.target_types[self.target_to_show][0])**2 +
@@ -530,6 +537,9 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
 
     # for decoding later
     df_esv['belief_']      = -vals_for_corr
+    # corr = 1-2
+    df_esv['vals_for_corr1']      = vals_for_corr1
+    df_esv['vals_for_corr2']      = vals_for_corr2
     # this should be set here (not in behav_proc)
     # because it depends on the coln_corr_calc
     df_esv['prev_belief_'] = -getPrev(vals_for_corr.astype(float) )
@@ -558,7 +568,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
                     addvars = [], recalc_non_hit = True, target_info_type = 'inds',
                     coln_correction_calc = None,
                     coln_error = 'error',
-                    verbose = 0):
+                    verbose = 0, retention_factor = 1.):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -715,7 +725,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
     # prev and current
     if coln_correction_calc is None:
         # -cur - (-prev)
-        correction = (target_angs_next - next_movement) - (target_angs - movement)
+        correction = (target_angs_next - next_movement) - retention_factor * (target_angs - movement)
     else:
         corr = behav_df.loc[df_inds, coln_correction_calc].to_numpy()
 
@@ -728,7 +738,7 @@ def computeErrSens2(behav_df, df_inds=None, epochs=None,
             corr      = corr
 
 
-        correction = corr_next - corr
+        correction = corr_next - retention_factor * corr
         #df_esv[ ]
 
     df_esv['non_hit_not_adj'] = non_hit_not_adj

@@ -345,12 +345,18 @@ def getSubjPertSeqCode(subj, task = 'VisuoMotor'):
 
     return pert_seq_code
 
-def correctPertCol_NIH(df_all):
+def correctPertCol_NIH(df_all, use_sub_angles = 1):
     c = df_all['environment'] == 0
-    df_all['perturbation_'] = -100000
+    df_all['perturbation_'] = -100000.
     df_all.loc[c, 'perturbation_'] = df_all.loc[c,'perturbation']#.copy()
-    df_all.loc[~c, 'perturbation_'] = (df_all.loc[~c,'feedback'] - df_all.loc[~c,'org_feedback']) / np.pi * 180
+    from base2 import subAngles
+    if use_sub_angles:
+        df_all.loc[~c, 'perturbation_'] = subAngles(df_all.loc[~c,'feedback'], 
+                df_all.loc[~c,'org_feedback'])  / np.pi * 180
+    else:
+        df_all.loc[~c, 'perturbation_'] = (df_all.loc[~c,'feedback'] - df_all.loc[~c,'org_feedback']) / np.pi * 180
     df_all['perturbation'] = df_all['perturbation_']
+    df_all = df_all.drop(columns=['perturbation_'])
 
 def addBehavCols(df_all, inplace=True, skip_existing = False,
                  dset = 'Romain_Exp2_Cohen', fn_events_full = None, trial_col0 = 'trials'):
@@ -367,6 +373,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     if len(pertvals) > 10:
         print(f'WARNING: too many pertvals! len={len(pertvals)}')
         if dset == 'Romain_Exp2_Cohen':
+            # maybe we extended perturbations to nonzero vals in random. Then we only take stable
             pertvals_eff = df_all.query('environment == 0')['perturbation'].unique() 
     else:
         pertvals_eff = pertvals
@@ -405,14 +412,16 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
     for subj in subjects:
         dfc = df_all[df_all['subject'] == subj]
         df_all.loc[dfc.index,'dist_rad_from_prevtgt'] =\
-            df_all.loc[dfc.index, 'target_locs'].diff().abs().apply(lbd,1)
+            df_all.loc[dfc.index, 'target_locs'].diff().abs()
+    df_all['dist_rad_from_prevtgt'] = df_all['dist_rad_from_prevtgt'].apply(lbd)
 
     # signed distance
     df_all['distsgn_rad_from_prevtgt'] = None
     for subj in subjects:
         dfc = df_all[df_all['subject'] == subj]
         df_all.loc[dfc.index,'distsgn_rad_from_prevtgt'] =\
-            df_all.loc[dfc.index, 'target_locs'].diff().apply(lbd,1)
+            df_all.loc[dfc.index, 'target_locs'].diff()#.apply(lbd,1)
+    df_all['distsgn_rad_from_prevtgt'] = df_all['distsgn_rad_from_prevtgt'].apply(lbd)
 
 
     dts = np.arange(1,6)
@@ -420,10 +429,14 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         for dt in dts:
             dfc = df_all[df_all['subject'] == subj]
             df_all.loc[dfc.index,f'dist_rad_from_tgt-{dt}'] =\
-                df_all.loc[dfc.index, 'target_locs'].diff(periods=dt).abs().apply(lbd,1)
+                df_all.loc[dfc.index, 'target_locs'].diff(periods=dt).abs()
+    for dt in dts:
+        df_all[f'dist_rad_from_tgt-{dt}'] = df_all[f'dist_rad_from_tgt-{dt}'].apply(lbd)
 
 
     if dset == 'Romain_Exp2_Cohen':
+        df_all['subject_ind'] = df_all['subject'].str[3:5].astype(int)
+
         test_triali = pert_seq_code_test_trial
         subj2pert_seq_code = {}
         for subj in subjects:
@@ -755,7 +768,7 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
         df_all['error_deg'] = (df_all['error'] / np.pi) * 180 
 
-        vars_to_pscadj = [ 'error']
+        vars_to_pscadj = [ 'error', 'perturbation']
         # 'prev_error' ?
         for varn in vars_to_pscadj:
             df_all[f'{varn}_pscadj'] = df_all[varn]
@@ -1097,7 +1110,7 @@ def getMaskNotNanInf(vals, axis = None):
 def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
                return_mask = False, trialcol = 'trials',
                cols_uniqify = ['trial_shift_size',
-                               'trial_group_col_calc'] , verbose=False ,
+                               'trial_group_col_calc', 'retention_factor_s'] , verbose=False ,
                hi = None, low=None,
                trunc_hi = True, trunc_low = True, abs=False, retloc=False):
     if not inplace:
@@ -1286,12 +1299,16 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         computation_ver = 'computeErrSens2',
         df_fulltraj = None,  trajPair2corr = None,
         drop_feedback = False,
-        verbose=0, use_sub_angles = 0 ):
+        verbose=0, use_sub_angles = 0, retention_factor = 1.,
+                          reref_target_locs = True):
     '''
         if allow_duplicating is False we don't allow creating copies
         of subsets of indices within subject (this can be useful for decoding)
     '''
     from config2 import block_names
+
+    if not isinstance(retention_factor, list):
+        retention_factor = [retention_factor]
     assert isinstance(dists_trial_from_prevtgt_cur, list)
     assert isinstance(dists_rad_from_prevtgt_cur, list)
 
@@ -1375,96 +1392,98 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                                'trajPair2corr':trajPair2corr}
                 else:
                     addargs = addargs0
+                    addargs['reref_target_locs'] = reref_target_locs
             else:
                 addargs = addargs0
 
 
+            escoln = 'err_sens'
             for tsz in trial_shift_sizes:
-                escoln = 'err_sens'
-                #if tsz == 0:
-                #    escoln = 'err_sens':
-                #else:
-                #    escoln = 'err_sens_-{tsz}t':
-                # resetting index is important
-                if 'level_0' in df.columns:
-                    df = df.drop(columns=['level_0'])
-                if 'index' in df.columns:
-                    df = df.drop(columns=['index'])
-                dfri = df.reset_index()
-                r = computeES(dfri, df_inds=None,
-                    error_type=error_type,
-                    colname_nh = coln_nh,
-                    correct_hit = 'inf', shiftsz = tsz,
-                    err_sens_coln=escoln,
-                    coln_nh_out = coln_nh_out,
-                    time_locked = time_locked, addvars=addvars,
-                    target_info_type = target_info_type,
-                    coln_correction_calc = coln_correction_calc,
-                    coln_error = coln_error,
-                    recalc_non_hit = False, **addargs)
+                for rf in retention_factor:
+                    #if tsz == 0:
+                    #    escoln = 'err_sens':
+                    #else:
+                    #    escoln = 'err_sens_-{tsz}t':
+                    # resetting index is important
+                    if 'level_0' in df.columns:
+                        df = df.drop(columns=['level_0'])
+                    if 'index' in df.columns:
+                        df = df.drop(columns=['index'])
+                    dfri = df.reset_index()
+                    r = computeES(dfri, df_inds=None,
+                        error_type=error_type,
+                        colname_nh = coln_nh,
+                        correct_hit = 'inf', shiftsz = tsz,
+                        err_sens_coln=escoln,
+                        coln_nh_out = coln_nh_out,
+                        time_locked = time_locked, addvars=addvars,
+                        target_info_type = target_info_type,
+                        coln_correction_calc = coln_correction_calc,
+                        coln_error = coln_error,
+                        recalc_non_hit = False, 
+                                  retention_factor = float(rf),
+                                  **addargs)
 
-                print(f'computation_ver = {computation_ver}')
-                if computation_ver == 'computeErrSens2':
-                    nhna, df_esv, ndf2vn = r
-                elif computation_ver == 'computeErrSens3':
-                    ndf2vn = None
-                    nhna, df_esv = r
+                    print(f'computation_ver = {computation_ver}. retention_factor={rf} tsz = {tsz}')
+                    if computation_ver == 'computeErrSens2':
+                        nhna, df_esv, ndf2vn = r
+                    elif computation_ver == 'computeErrSens3':
+                        ndf2vn = None
+                        nhna, df_esv = r
 
-                # if I don't convert to array then there is an indexing problem
-                # even though I try to work wtih db_inds it assigns elsewhere
-                # (or does not assigne at all)
-                es_vals = np.array( df_esv[escoln] )
-                assert np.any(~np.isnan(es_vals)), tgn  # at least one is not None
-                assert np.any(~np.isinf(es_vals)), tgn  # at least one is not None
+                    # if I don't convert to array then there is an indexing problem
+                    # even though I try to work wtih db_inds it assigns elsewhere
+                    # (or does not assigne at all)
+                    es_vals = np.array( df_esv[escoln] )
+                    assert np.any(~np.isnan(es_vals)), tgn  # at least one is not None
+                    assert np.any(~np.isinf(es_vals)), tgn  # at least one is not None
 
-                #colns_set += [coln]
+                    #colns_set += [coln]
 
-                dfcur = df.copy()
-                dfcur['trial_shift_size'] = tsz  # NOT _nh, otherwise different number
-                dfcur['time_locked'] = time_locked  # NOT _nh, otherwise different number
-                dfcur[escoln] = es_vals  # NOT _nh, otherwise different number
-                dfcur['trial_group_col_calc'] = tgn
-                dfcur['error_type'] = error_type
-                # here it means shfited by 1 within subset
-                dfcur[coln_nh_out] = np.array( df_esv[coln_nh_out] )
+                    dfcur = df.copy()
+                    dfcur['trial_shift_size'] = tsz  # NOT _nh, otherwise different number
+                    dfcur['time_locked'] = time_locked  # NOT _nh, otherwise different number
+                    dfcur[escoln] = es_vals  # NOT _nh, otherwise different number
+                    dfcur['trial_group_col_calc'] = tgn
+                    dfcur['error_type'] = error_type
+                    # here it means shfited by 1 within subset
+                    dfcur[coln_nh_out] = np.array( df_esv[coln_nh_out] )
 
-                dfcur['correction'] = np.array( df_esv['correction'] )
-                if 'belief_' in df_esv.columns:
-                    dfcur['belief_'] = np.array( df_esv['belief_'] )
+                    dfcur['correction'] = np.array( df_esv['correction'] )
+                    if 'belief_' in df_esv.columns:
+                        dfcur['belief_'] = np.array( df_esv['belief_'] )
 
-                # copy columns including prev_err_sens
-                for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
-                           f'prev_{escoln}', 'prev_error' ]:
-                    if cn not in df_esv.columns:
-                        print(f'WARNING: {cn} not in df_esv.columns')
+                    # copy columns including prev_err_sens
+                    for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
+                               f'prev_{escoln}', 'prev_error', 
+                               'retention_factor', 'retention_factor_s',
+                               'vals_for_corr1','vals_for_corr2']:
+                        if cn not in df_esv.columns:
+                            print(f'WARNING: {cn} not in df_esv.columns')
+                        else:
+                            dfcur[cn] = df_esv[cn].to_numpy()
+
+                    if computation_ver == 'computeErrSens2':
+                        errn = ndf2vn['prev_error']
+                        dfcur['dist_rad_from_prevtgt2'] = dfcur['target_locs'].values -\
+                            df_esv['prev_target'].values
+                        dfcur[errn] = np.array( df_esv[errn] )
                     else:
-                        dfcur[cn] = df_esv[cn].to_numpy()
+                        dfcur['dist_rad_from_prevtgt2'] =\
+                            df_esv['target_loc'].values -\
+                            df_esv['prev_target_loc'].values
 
-                if computation_ver == 'computeErrSens2':
-                    errn = ndf2vn['prev_error']
-                    dfcur['dist_rad_from_prevtgt2'] = dfcur['target_locs'].values -\
-                        df_esv['prev_target'].values
-                    dfcur[errn] = np.array( df_esv[errn] )
-                else:
-                    dfcur['dist_rad_from_prevtgt2'] =\
-                        df_esv['target_loc'].values -\
-                        df_esv['prev_target_loc'].values
+                    for avn in addvars:
+                        if avn in dfcur.columns:
+                            continue
+                        dfcur[avn] = np.array(df_esv[avn])
 
-                for avn in addvars:
-                    if avn in dfcur.columns:
-                        continue
-                    dfcur[avn] = np.array(df_esv[avn])
+                    #lbd(0.5)
+                    #print(dfcur['target_locs'].values, df_esv['prev_target'].values )
+                    #raise ValueError('f')
 
-                #lbd(0.5)
-                #print(dfcur['target_locs'].values, df_esv['prev_target'].values )
-                #raise ValueError('f')
 
-                # convert to string
-                lbd = lambda x : f'{x:.2f}'
-                dfcur['dist_rad_from_prevtgt2'] =\
-                    dfcur['dist_rad_from_prevtgt2'].abs().apply(lbd, 1)
-
-                dfs += [ dfcur.reset_index(drop=True)  ]
+                    dfs += [ dfcur.reset_index(drop=True)  ]
 
                 if DEBUG and tgn == 'trialwtgt_we':
                     debug_break = 1; print('brk')
@@ -1478,6 +1497,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         print('Subj = ',subj, 'computation finished successfully')
     print('computeErrSensVersions: Main calc finished successfully')
 
+
     df_all2 = pd.concat(dfs)
     df_all2.reset_index(inplace=True, drop=True)
     if drop_feedback and ( 'feedbackX' in df_all2.columns ):
@@ -1485,6 +1505,11 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
 
     if 'trajectoryX' in df_all2.columns:
         df_all2.drop(['trajectoryX','trajectoryY'],axis=1,inplace=True)
+
+    # convert to string
+    lbd = lambda x : f'{x:.2f}'
+    df_all2['dist_rad_from_prevtgt2'] =\
+        df_all2['dist_rad_from_prevtgt2'].abs().apply(lbd)
 
 
     df_all2.loc[df_all2['trials'] == 0, coln_nh_out] = False
@@ -4446,19 +4471,31 @@ def printRejectInfo(df, coln = 'error_lh2_ang_deg', thr = 1.):
         print( df.loc[c & (~inf), 'err_sens'].abs().describe()  )
 
 
-def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=False):
+def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=False,
+            cols_checkdup = []):
+    # cols_checkdup = ['subject','trials'])
     from pingouin import ttest
     ttrs = []
     if isinstance(alt,str):
         alt = [alt]
+
+    df1 = df_.query(qs1)
+    df2 = df_.query(qs2)
+    if len(cols_checkdup):
+        assert not df1.duplicated(cols_checkdup).any()
+        assert not df2.duplicated(cols_checkdup).any()
     for alt_ in alt:
-        ttr = ttest(df_.query(qs1)[varn].values, 
-                    df_.query(qs2)[varn].values, alternative=alt_, paired=paired)
+        ttr = ttest(df1[varn].values, 
+                    df2[varn].values, alternative=alt_, paired=paired)
         ttrs += [ttr]
     ttrs = pd.concat(ttrs)
     ttrs['paired'] = paired
     ttrs = ttrs.rename(columns={'p-val':'pval'})
     ttrs['varn'] = varn
+    ttrs['qs1'] = qs1
+    ttrs['qs2'] = qs2
+    ttrs['N1'] = len(df1)
+    ttrs['N2'] = len(df2)
     return ttrs
 
 def compare0(df, varn, alt=['greater','less'], cols_addstat = []):
@@ -4475,8 +4512,10 @@ def compare0(df, varn, alt=['greater','less'], cols_addstat = []):
         for coln in cols_addstat:
             ttr[coln + '_mean'] = df[coln].mean()
             ttr[coln + '_std' ] = df[coln].std()
+
         ttrs += [ttr]
     ttrs = pd.concat(ttrs, ignore_index = 1)
+    ttrs['N1'] = len(df)
     decorateTtestRest(ttrs)
     return ttrs
 
@@ -4629,13 +4668,22 @@ def truncateNIHDfFromErr(df, err_col = 'error', varn = 'err_sens', mult = 1):
         stdstd = stds.std()
     else:
         stdstd = None
-    print('mestd mean = {} [rad], std ={}'.format(mestd,  stdstd))
+    #print('mestd mean = {} [rad], std ={}'.format(mestd,  stdstd))
+    if err_col.find('_deg') < 0:
+        if stdstd is not None:
+            std_ = stdstd*180/np.pi
+        else:
+            std_ = None
+        print('mestd mean = {} [deg], std ={} [deg]'.format(mestd*180/np.pi, std_))
+    else:
+        print('mestd mean = {} [deg], std ={} [deg]'.format(mestd,  stdstd))
 
     stds = stds.to_frame().reset_index().rename(columns={err_col: err_col + '_initstd'})
     df_ = df.merge(stds, on='subject')    
 
     shiftsz = 1
-    df_['hit_mestd1'] = df_[err_col].shift(shiftsz).abs() <= df_[err_col + '_initstd'] * mult 
+    df_['hit_mestd1'] = df_[err_col].shift(shiftsz).abs() <= \
+            df_[err_col + '_initstd'] * mult 
     df_[varn + '_trunc'] = df_[varn]
     df_.loc[df_['hit_mestd1'], varn + '_trunc'] = np.inf
     
@@ -4728,7 +4776,7 @@ def truncateNIHDfFromErr2(df_wthr, mults):
 #    return df
 
 def checkErrBounds(df, cols=['error','prev_error','correction',
-                             'error_deg','prev_error_deg','belief' ]):
+                             'error_deg','prev_error_deg','belief','perturbation' ]):
     # ,'target_locs' can be > Pi because they are 90 + smth, with smth \in [0,pi]
     # not feedback and org_feedback or target_locs because they are referenced not to 0 in NIH data
     bd = np.pi 
@@ -4793,16 +4841,16 @@ def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb
         except ValueError as e:
             return None
         return r
-    corrs_per_subj_me = dfallst.groupby(['thr','subject',stagecol]).apply(f)
+    corrs_per_subj_me0 = dfallst.groupby(['thr','subject',stagecol]).apply(f)
 
-    corrs_per_subj_me = corrs_per_subj_me.rename(columns={'p-val':'pval'})
+    corrs_per_subj_me = corrs_per_subj_me0.rename(columns={'p-val':'pval'})
     corrs_per_subj_me = corrs_per_subj_me.\
         groupby(['thr',stagecol], observed=True)[['r','pval',
             'mean_x','mean_y','std_x','std_y']].mean(numeric_only = 1)
     #corrs_per_subj_me['method'] = method
     corrs_per_subj_me['varn'] = covar
 
-    return corrs_per_subj_me
+    return corrs_per_subj_me, corrs_per_subj_me0
 
 
 def formatRecentStatVarnames(isec, histlen_str=' (histlen='):

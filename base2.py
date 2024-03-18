@@ -1200,6 +1200,7 @@ def pipeline2vars(ppl):
         return r
 
 def subAngles(ang1, ang2):
+    # angles should be in radians
     import pandas as pd
     if isinstance(ang1, pd.Series):
         ang1 = ang1.values

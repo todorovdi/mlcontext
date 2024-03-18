@@ -33,19 +33,32 @@ parser.add_argument('--n_jobs',  default = 20, type=int )
 parser.add_argument('--save_suffix',  default='_test', type=str )
 parser.add_argument('--use_sub_angles',  default=0, type=int )
 parser.add_argument('--read_behav_version',  default='v2', type=str )
+parser.add_argument('--n_subjects',  default=20, type=int )
+# script flow params
 parser.add_argument('--do_read',  default=1, type=int )
 parser.add_argument('--do_collect',  default=1, type=int )
 parser.add_argument('--do_add_cols',  default=1, type=int )
 parser.add_argument('--do_calc_ES',  default=1, type=int )
 parser.add_argument('--do_plot',  default=1, type=int )
-parser.add_argument('--trial_shift_size_max',  default=1, type=int )
+parser.add_argument('--do_save',  default=1, type=int )
 parser.add_argument('--save_owncloud',  default=0, type=int )
+parser.add_argument('--perturbation_random_recalc',  default=1, type=int )
+# ES calc params
+parser.add_argument('--trial_shift_size_max',  default=1, type=int )
 parser.add_argument('--do_per_tgt',  default=0, type=int )
 parser.add_argument('--do_per_env',  default=0, type=int )
-parser.add_argument('--perturbation_random_recalc',  default=1, type=int )
+parser.add_argument('--retention_factor',  default='1', type=str )
+parser.add_argument('--reref_target_locs',  default=0, type=int )
 
  
 args = parser.parse_args()
+
+retention_factor = None
+if ',' in args.retention_factor:
+    retention_factor = args.retention_factor.split(',')
+else:
+    retention_factor = [args.retention_factor]
+    #retention_factor = map(float, retention_factor)
 
 
 print(data_dir_input, scripts_dir)
@@ -60,6 +73,7 @@ print(subjects)
 ###########################################################
 
 if args.do_read:
+    print('Start reading raw .csv files')
     import subprocess as sp
     #for subject in subjects:
     n_jobs = args.n_jobs
@@ -75,7 +89,8 @@ if args.do_read:
         p.wait()
 
     r = Parallel(n_jobs=n_jobs,
-                 backend='multiprocessing')( (delayed(f)( subject) for subject in subjects) )
+         backend='multiprocessing')( (delayed(f)\
+            ( subject) for subject in subjects[:args.n_subjects]) )
     #for subject in subjects:
     #    ipy.run_line_magic('run', f'-i {script_name}')
     
@@ -92,7 +107,7 @@ from behav_proc import *
 if args.do_collect:
     behav_df_all = []
     #or subj in subjects[:4]:#[si]
-    for subj in subjects:
+    for subj in subjects[:args.n_subjects]:
         behav_data_dir = pjoin(data_dir_input,'behavdata')
         #behavdata
         task = 'VisuoMotor'
@@ -120,17 +135,22 @@ if args.do_collect:
     # behav_df_all['correction'] = None
     # behav_df_all['err_sens'] = None
     #df_all = behav_df_all.reset_index()
-    df_all = behav_df_all.drop(columns=['index','level_0']).sort_values(['subject','trials']).reset_index(drop=True)
+    bc = ['index','level_0']
+    bc = list( set(bc) & set( behav_df_all.columns) )
+    df_all = behav_df_all.drop(columns=bc).sort_values(['subject','trials']).reset_index(drop=True)
 
-    assert len( df_all['subject'].unique() ) == 20
+    assert len( df_all['subject'].unique() ) == args.n_subjects
 
 
 
     fn = f'df_all{args.save_suffix}.pkl.zip'
-    behav_df_all.to_pickle(pjoin(path_data,fn) , compression='zip')
-    if args.save_owncloud:
-        tstr = str( datetime.datetime.now() )[:10] 
-        behav_df_all.to_pickle(pjoin('/home/demitau/current/merr_data',fn + '_' + tstr) , compression='zip')
+    fnf = pjoin(path_data,fn)
+    if args.do_save:
+        behav_df_all.to_pickle(fnf , compression='zip')
+        print(fnf)
+        if args.save_owncloud:
+            tstr = str( datetime.datetime.now() )[:10] 
+            behav_df_all.to_pickle(pjoin('/home/demitau/current/merr_data',fn + '_' + tstr) , compression='zip')
 
 badcols =  checkErrBounds(df_all)
 #assert len(badcols) == 0
@@ -182,11 +202,14 @@ if args.do_calc_ES:
         coln_nh = 'non_hit_not_adj',
         coln_nh_out = 'non_hit_shifted',
         computation_ver='computeErrSens3',
-        subj_list = subjects, error_type=error_type,
+        subj_list = subjects[:args.n_subjects], error_type=error_type,
         trial_shift_sizes = np.arange(1, args.trial_shift_size_max + 1),
-                 addvars=[], use_sub_angles = use_sub_angles)
+                 addvars=[], use_sub_angles = use_sub_angles, 
+            retention_factor = retention_factor,
+            reref_target_locs = args.reref_target_locs)
 
-    assert not df_all_multi_tsz.duplicated().any() 
+    #assert not df_all_multi_tsz.duplicated().any() 
+    assert not df_all_multi_tsz.duplicated(['subject','trials','trial_group_col_calc','trial_shift_size','retention_factor_s']).any()
 #except Exception as e:
 #    exc_info = sys.exc_info()
 #    exc = traceback.TracebackException(*exc_info, capture_locals=True)
@@ -223,11 +246,16 @@ if args.do_calc_ES:
     fn = f'df_all_multi_tsz_{args.save_suffix}.pkl.zip'
     fnf = pjoin(path_data,fn)
     print(fnf)
-    df_all_multi_tsz.to_pickle(fnf, compression='zip')
+    if args.do_save:
+        df_all_multi_tsz.to_pickle(fnf, compression='zip')
+
+        df_all_multi_tsz.query('subject == @subjects[0]').\
+            to_pickle(pjoin(path_data,'df_ext_onesubj.pkl.zip'),
+                  compression='zip')
 
 ##############################
 
-df_ = df_all_multi_tsz.query('trial_shift_size == 1 and trial_group_col_calc == "trials"')
+df_ = df_all_multi_tsz.query('trial_shift_size == 1 and trial_group_col_calc == "trials" and retention_factor_s == "1.000"')
 assert not df_.duplicated(['subject','trials']).any()
 
 

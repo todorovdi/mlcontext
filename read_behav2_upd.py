@@ -232,10 +232,10 @@ print(break_durations)
 
 ###################
 
- #.describe()
+# one row = one phase
 grp = dfc.groupby(['trials','phase'])
 dfcc0 = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp')
-dfcc0['time_diff_phase'] = dfcc0['time'].diff()
+dfcc0['time_diff_phase'] = dfcc0['time'].diff() # time difference between phases
 dfcc0 = dfcc0.set_index(['trials','phase'])
 dfcc0['phase_duration'] = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp').set_index(['trials','phase'])['time'] -\
       aggRows(dfc, 'time', 'min', grp, coltake = 'corresp').set_index(['trials','phase'])['time']
@@ -337,6 +337,9 @@ dfcc0_ = dfcc0.reset_index().sort_values('trials')
 dfcc1['home_duration'] = np.nan
 dfcc1['movement_duration'] = np.nan
 dfcc1['trial_duration'] = np.nan
+
+qs = 'phase == "ITI_PHASE"'
+dfcc1.loc[inds,'ITI_duration']     = dfcc0_.query(qs)['phase_duration'].values
 qs = 'phase == "REST_PHASE"'
 dfcc1.loc[inds,'home_duration']     = dfcc0_.query(qs)['phase_duration'].values
 qs = 'phase == "TARGET_PHASE"'
@@ -380,6 +383,9 @@ dfcc0_ = dfcc0.reset_index().sort_values('trials')
 dfcc2['home_duration'] = np.nan
 dfcc2['movement_duration'] = np.nan
 dfcc2['trial_duration'] = np.nan
+
+qs = 'phase == "ITI_PHASE"'
+dfcc2.loc[inds,'ITI_duration']     = dfcc0_.query(qs)['phase_duration'].values
 qs = 'phase == "REST_PHASE"'
 dfcc2.loc[inds,'home_duration']     = dfcc0_.query(qs)['phase_duration'].values
 qs = 'phase == "TARGET_PHASE"'

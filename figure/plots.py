@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from collections.abc import Iterable
+import seaborn as sns
 
 def plotScoresPerSubj(df, subjects, envs, kte = 'err_sens',
                       ww =4 ,hh = 2, ylim=( -0.3,0.3) ):
@@ -555,3 +557,103 @@ def plotPatterns(X,y,epinfo,precalc_patterns, precalc_filters):
     #ax.axhline(0, color="k")
     #cbar = plt.colorbar(im, ax=ax)
     #cbar.set_label("AUC")
+
+def relplot_multi(**kwargs):
+    '''like relplot but for multiple ys (they go get separated by hue)'''
+    assert 'y' not in kwargs
+    assert 'hue' not in kwargs
+    assert 'data' in kwargs
+    assert 'x' in kwargs
+
+    if 'facet_kws' not in kwargs:
+        kwargs['facet_kws'] = {'sharex':True, 'sharey':False}
+
+    df = kwargs['data'].copy()    
+    assert len(df)
+    ys = kwargs['ys']
+
+    tic = 'trial_index'
+    if tic not in df:
+        tic = 'trials'
+    dfsz = df.groupby([tic]).size()
+    szmin,szmax = dfsz.min(),dfsz.max()
+    if szmin != szmax:
+        szstr = f'N={szmin}-{szmax}'
+    else:
+        szstr = f'N={szmin}'
+
+    dfs = []
+
+    df['__varname'] = pd.Series(['']*len(df), dtype=str)
+    df['__varrow'] = pd.Series([-1]*len(df), dtype=int)
+    df['__varval'] = pd.Series([0.]*len(df), dtype=float)
+    if isinstance(ys[0], str):
+        for i,yn in enumerate(ys):
+            df['__varval' ] = df[yn]
+            df['__varname'] = yn + f' {szstr}'
+            dfs += [df.copy()]
+        df = pd.concat(dfs, ignore_index = True)
+        del kwargs['data']
+        del kwargs['ys']
+        #for i,yn in enumerate(kwargs['ys']):
+        kwargs['data'] = df
+        fg = sns.relplot(**kwargs,y='__varval',
+                         hue='__varname')
+
+        if 'ylabel' in kwargs:
+            ylabel = kwargs['ylabel']
+            del kwargs['ylabel'] 
+            fg.axes[0,0].set_ylabel(ylabel)
+        else:        
+            fg.axes[0,0].set_ylabel(ys[0])
+    else:
+        assert 'row' not in kwargs
+        for i,yns in enumerate(ys):
+            for j,yn in enumerate(yns):
+                df['__varval' ] = df[yn]
+                df['__varname'] = yn + f' {szstr}' 
+                df['__varrow'] = i
+                dfs += [df.copy()]
+        df = pd.concat(dfs, ignore_index = True)
+
+        del kwargs['data']
+        del kwargs['ys']
+        kwargs['data'] = df
+
+        if 'ylabel' in kwargs:
+            ylabels = kwargs['ylabel']
+            assert isinstance(ylabels, Iterable) and not isinstance(ylabels, str)
+            del kwargs['ylabel'] 
+        else:
+            ylabels = None
+
+        if 'ylim' in kwargs:
+            ylims = kwargs['ylim']
+            del kwargs['ylim'] 
+        else:
+            ylims = None
+
+        fg = sns.relplot(**kwargs,y='__varval',
+                         hue='__varname', row='__varrow')
+
+        for i,yns in enumerate(ys):
+            if ylabels is not None:
+                fg.axes[i,0].set_ylabel(ylabels[i])
+            else:
+                fg.axes[i,0].set_ylabel(yns[0])
+
+        #print(fg.axes.shape)
+        if ylabels is not None:
+            for i,yns in enumerate(ys):
+                if ylims[i] is not None:
+                    print(i,ylims[i] )
+                    fg.axes[i,0].set_ylim(ylims[i])
+
+
+        for i,yns in enumerate(ys):
+            fg.axes[i,0].set_title('')
+            #else:
+            #    fg.axes[i][0].set_ylabel(yns[0])
+
+    return fg, df
+
