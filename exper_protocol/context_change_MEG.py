@@ -2,7 +2,6 @@
 # needed for joystick
 import pygame
 # from pygame.locals import *
-from psychopy import gui, core
 import time
 import os
 # import logging
@@ -2462,6 +2461,7 @@ if __name__ == "__main__":
 
     show_dialog = par['show_dialog']
     if show_dialog:
+        from psychopy import gui, core
         #info['participant'] = ''
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
