@@ -84,8 +84,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'participant_can_release_break', 0 )
         self.copy_param(info, 'finish_cond_print_log', 0 )
         self.copy_param(info, 'aux_info_print_log', 0 )
- 
-
+        self.copy_param(info, 'reward_only_if_leave_home', 0 )
 
         self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
@@ -1907,6 +1906,10 @@ class VisuoMotorMEG(VisuoMotor):
                     # for errror
                     self.reward = np.power( 1 / d, 1.2)
 
+                    if self.params['reward_only_if_leave_home'] and at_home:
+                        self.reward = 0.
+                        print('Skip reward since at home')
+
                 if trial_info['special_block_type'] != 'pretraining':
                     self.reward_accrued += self.reward
 
@@ -2433,6 +2436,7 @@ if __name__ == "__main__":
     parser.add_argument('--finish_cond_print_log', default=0,  type=int)
     parser.add_argument('--aux_info_print_log', default=0,  type=int)
     parser.add_argument('--max_time_between_breaks',  type=int) # in seconds
+    parser.add_argument('--reward_only_if_leave_home', default=0, type=int) # by def reward always at least a bit
                                              
     # def 0.2
     parser.add_argument('--discrepancy_red_lr',  type=float)
