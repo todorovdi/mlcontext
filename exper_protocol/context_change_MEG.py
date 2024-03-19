@@ -2432,7 +2432,8 @@ if __name__ == "__main__":
     parser.add_argument('--participant_can_release_break', default=0,  type=int)
     parser.add_argument('--finish_cond_print_log', default=0,  type=int)
     parser.add_argument('--aux_info_print_log', default=0,  type=int)
- 
+    parser.add_argument('--max_time_between_breaks',  type=int) # in seconds
+                                             
     # def 0.2
     parser.add_argument('--discrepancy_red_lr',  type=float)
     parser.add_argument('--smooth_traj_home',  type=int)
