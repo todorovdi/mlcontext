@@ -82,6 +82,9 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'movement_duration_after_lh', 0.75 - expected_reaction_time )
 
         self.copy_param(info, 'participant_can_release_break', 0 )
+        self.copy_param(info, 'finish_cond_print_log', 0 )
+        self.copy_param(info, 'aux_info_print_log', 0 )
+ 
 
 
         self.copy_param(info, 'dummy_mode', 1)
@@ -802,8 +805,8 @@ class VisuoMotorMEG(VisuoMotor):
 
         tdif = time.time() - self.phase_start_times[prev_phase]
 
-        print(f'Phase change {prev_phase} -> {self.current_phase};  (ti {prev_trial_index} -> {self.trial_index} )')
-        print(f"             {prev_phase} finished after {tdif:.3f} s")
+        print(f'Phase change {prev_phase} -> {self.current_phase};  (ti {prev_trial_index} -> {self.trial_index} )'
+                f". Phase took {tdif:.3f} s")
         #print(f'   tgt = {self.tgti_to_show}')
 
         #send trigger when phase changes. Send it after debug message
@@ -821,10 +824,13 @@ class VisuoMotorMEG(VisuoMotor):
         tdif = tc - self.phase_start_times['current_trial']
         self.phase_start_times['current_trial'] = tc
 
-        print(f'Trial index change! {prev_trial_index} -> {self.trial_index} (N total {len(self.trial_infos)})')
+        # Finding the smallest element in tis_break that is larger than ti
+        closest_break = next((x for x in self.tis_break if x > self.trial_index), -1)
+
         print(f'TIME: trial completed in {tdif:.2f} sec')
-        print(f'  prev trial = {prev_trial_info}')
-        print(f'  new trial  = {trial_info2}')
+        print(f'------------- Trial index change! {prev_trial_index} -> {self.trial_index} (N total {len(self.trial_infos)}, next break {closest_break})')
+        print(f'  prev trial = {list(prev_trial_info.values()) }; '
+                f'  new = {list(trial_info2.values() )    }')
 
         if self.params['flush_log_freq'] == 'every_trial_change':
             self.log_flush()
@@ -1759,7 +1765,9 @@ class VisuoMotorMEG(VisuoMotor):
                 else:
                     self.current_phase = 'TARGET'
                 #print(self.frame_counters["at_home"], self.params['FPS']*self.params['time_at_home'])
-                print(f'Start target and feedback display {trial_info}')
+                if self.params['aux_info_print_log']:
+                    # it is not really about finish cond but still an extra debug print
+                    print(f'Start target and feedback display {list(trial_info.values() )}')
                 self.color_photodiode = self.color_diode
 
         elif self.current_phase in ['TRAINING_START', 'TRAINING_END']:
@@ -1810,10 +1818,11 @@ class VisuoMotorMEG(VisuoMotor):
                     move_dur_after_lh_finished = False
                 
                 reach_time_finished = reach_time_finished0 or move_dur_after_lh_finished
-                if move_dur_after_lh_finished:
-                    print('Reach finished because of move_dur_after_lh_finished')
-                elif reach_time_finished0:
-                    print('Reach finished because of reach_time_finished0')
+                if self.params['finish_cond_print_log']:
+                    if move_dur_after_lh_finished:
+                        print('Reach finished because of move_dur_after_lh_finished')
+                    elif reach_time_finished0:
+                        print('Reach finished because of reach_time_finished0')
             else:
                 raise ValueError('Wrong val of param move_duration_fixation_type!')
 
@@ -1855,8 +1864,9 @@ class VisuoMotorMEG(VisuoMotor):
                         else:
                             self.last_reach_too_slow = 1
                         tdif = time.time() - self.phase_start_times[self.current_phase]
-                        print(f'Reach did not finish early, according to '
-                            f'{self.params["early_reach_end_event"]}: tdif={tdif:.2f} sec')
+                        if self.params['finish_cond_print_log']:
+                            print(f'Reach did not finish early, according to '
+                                f'{self.params["early_reach_end_event"]}: tdif={tdif:.2f} sec')
                     else:
                         self.last_reach_too_slow = 0
 
@@ -1874,7 +1884,9 @@ class VisuoMotorMEG(VisuoMotor):
                 self.ITI_jittered = self.params['ITI_duration'] +\
                         self.params['ITI_jitter'] * \
                         np.random.uniform(ITI_jitter_low, ITI_jitter_high)
-                print(f'Trial {self.trial_index}: {self.current_phase} finish condition met')
+
+                if self.params['finish_cond_print_log']:
+                    print(f'Trial {self.trial_index}: {self.current_phase} finish condition met')
 
                 if self.get_dist_from_home() < self.params['radius_target']:
                     print('Too long staying at the target')
@@ -1967,7 +1979,8 @@ class VisuoMotorMEG(VisuoMotor):
                 #    self.frame_counters[ctr] = 0
                 self.reset_main_vars()
                 self.trial_index += 1
-                print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
+                if self.params['aux_info_print_log']:
+                    print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
 
                 if self.params['return_home_after_pause']:
                     self.moveHome()
@@ -1986,7 +1999,8 @@ class VisuoMotorMEG(VisuoMotor):
                 #    self.frame_counters[ctr] = 0
                 self.reset_main_vars()
                 self.trial_index += 1
-                print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
+                if self.params['aux_info_print_log']:
+                    print(f'{self.current_phase}: trial_index inc, now it is {self.trial_index}')
 
 
                 if self.params['controller_type'] == 'joystick':
@@ -2012,7 +2026,8 @@ class VisuoMotorMEG(VisuoMotor):
                 if self.params['return_home_after_ITI']:
                     self.moveHome()
                     self.reset_traj()
-                print (f'Start trial # {self.trial_index} / {len(self.trial_infos)}')
+                if self.params['aux_info_print_log']:
+                    print (f'ITI_finished so Start trial # {self.trial_index} / {len(self.trial_infos)}')
 
                 if self.trial_index < len(self.trial_infos):
                     trial_info2 = self.trial_infos[self.trial_index]
@@ -2393,6 +2408,8 @@ class VisuoMotorMEG(VisuoMotor):
 
 
 if __name__ == "__main__":
+    # note: when adding new arg here if I want it to be present in self.params, I need to 
+    # explicitly run self.copy_param in initialize_parameters function
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', default='no' )
     parser.add_argument('--fullscreen', default=0, type=int )
@@ -2413,6 +2430,8 @@ if __name__ == "__main__":
     parser.add_argument('--noise_fb',    type=int)
     parser.add_argument('--use_true_triggers', default=0,  type=int)
     parser.add_argument('--participant_can_release_break', default=0,  type=int)
+    parser.add_argument('--finish_cond_print_log', default=0,  type=int)
+    parser.add_argument('--aux_info_print_log', default=0,  type=int)
  
     # def 0.2
     parser.add_argument('--discrepancy_red_lr',  type=float)
