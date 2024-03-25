@@ -102,6 +102,8 @@ trigger2phase = {
     50: 'BREAK_PHASE'
 }
 
+# Trials starts with REST_PHASE, ends with ITI. When break happens, it goes between feedback and ITI
+
 # in degrees
 df['perturbation'] = -df['perturbation'] # Romain does so
 df['phase'] = df['trigger'].apply(lambda x: trigger2phase[x])
@@ -113,6 +115,8 @@ df['target_locs'] = df['target_inds'].apply(lambda x: target_angs[x])
 if subtract_pi:
     df['target_locs'] = df['target_locs']  - np.pi  ## Romain does not subtract pi
 logtime('small operations')
+
+df['trial_index'] = df['trials'] # just for compatibility
 
 #def f(x):
 #    ph = x['phase']
@@ -147,13 +151,14 @@ df = df.drop(columns=['feedbackX_screen','feedbackY_screen',
 
 #########
 
-dfc_ = df.query('phase == "BREAK_PHASE"')
-grp_ = dfc_.groupby(['trials'])
-dfcpc = aggRows(dfc_ , 
-    'time', 'max', grp_, coltake='corresp').copy()
-dfcpc['perturbation'] = np.nan
-dfcpc[['jax1','jax2','org_feedbackX','org_feedbackY',
-      'feedbackX','feedbackY']] = np.nan
+# WRONG! I don't have to invalidate any perturbation values because break is a part of a normal trial in Romain code
+#dfc_ = df.query('phase == "BREAK_PHASE"')
+#grp_ = dfc_.groupby(['trials'])
+#dfcpc = aggRows(dfc_ , 
+#    'time', 'max', grp_, coltake='corresp').copy()
+#dfcpc['perturbation'] = np.nan
+#dfcpc[['jax1','jax2','org_feedbackX','org_feedbackY',
+#      'feedbackX','feedbackY']] = np.nan
 
 #########
 
@@ -226,6 +231,7 @@ if args.perturbation_random_recalc:
 ##########################
 
 FPS = 120
+# indices correspond to trials for which AFTER movement break happened 
 break_durations = dfc.query('phase == "BREAK_PHASE"').groupby('trials').size() / FPS
 break_durations = break_durations.to_frame()
 print(break_durations)
@@ -312,6 +318,13 @@ dfcc0['was_pre_break'] = r['was_pre_break']
 
 dfcc0 = dfcc0.reset_index()
 
+# need to shift because otherwise it is about ongoing trial
+assert dfcc0.time.diff().min() > 0
+dfcc0.was_pre_break = dfcc0.was_pre_break.shift(1)
+dfcc0.loc[0,'was_pre_break'] = False
+dfcc0.pre_break_duration = dfcc0.pre_break_duration.shift(1)
+dfcc0.loc[0,'pre_break_duration'] = 0.0
+
 logtime('break_duration')
 
 ################### take only one phase
@@ -346,10 +359,13 @@ qs = 'phase == "TARGET_PHASE"'
 dfcc1.loc[inds,'movement_duration'] = dfcc0_.query(qs)['phase_duration'].values
 
 # not counting break part even if present
-df_ = dfc.query('phase != "BREAK_PHASE"').groupby('trials')
-trial_dur_excbreak = df_['time'].max() - df_['time'].min()
-assert trial_dur_excbreak.to_frame().reset_index()['trials'].diff()[1:].min() > 0
-dfcc1.loc[inds, 'trial_duration'] = trial_dur_excbreak.values
+dfcc1['trial_duration'] = dfcc0.query('phase != "BREAK_PHASE"').groupby(['trials'])['phase_duration'].sum()
+
+# WRONG! I have to just sum all phase durations that are not BREAK_PHASE
+#df_ = dfc.query('phase != "BREAK_PHASE"').groupby('trials')
+#trial_dur_excbreak = df_['time'].max() - df_['time'].min()
+#assert trial_dur_excbreak.to_frame().reset_index()['trials'].diff()[1:].min() > 0
+#dfcc1.loc[inds, 'trial_duration'] = trial_dur_excbreak.values
 
 # if I want to compute time distance between target phase starts
 # then I'd take dfcc0.query('TARGET_PHASE')['time_since_last']
@@ -392,10 +408,12 @@ qs = 'phase == "TARGET_PHASE"'
 dfcc2.loc[inds,'movement_duration'] = dfcc0_.query(qs)['phase_duration'].values
 
 # not counting break part even if present
-df_ = dfc.query('phase != "BREAK_PHASE"').groupby('trials')
-trial_dur_excbreak = df_['time'].max() - df_['time'].min()
-assert trial_dur_excbreak.to_frame().reset_index()['trials'].diff()[1:].min() > 0
-dfcc2.loc[inds, 'trial_duration'] = trial_dur_excbreak.values
+# WRONG! I have to just sum all phase durations that are not BREAK_PHASE
+#df_ = dfc.query('phase != "BREAK_PHASE"').groupby('trials')
+#trial_dur_excbreak = df_['time'].max() - df_['time'].min()
+#assert trial_dur_excbreak.to_frame().reset_index()['trials'].diff()[1:].min() > 0
+#dfcc2.loc[inds, 'trial_duration'] = trial_dur_excbreak.values
+dfcc2['trial_duration'] = dfcc0_.query('phase != "BREAK_PHASE"').groupby(['trials'])['phase_duration'].sum()
 
 # if I want to compute time distance between target phase starts
 # then I'd take dfcc0.query('TARGET_PHASE')['time_since_last']

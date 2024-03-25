@@ -82,7 +82,7 @@ if args.do_read:
         #ipy.run_line_magic('run', f'-i {script_name} -- --subject {subject}')
         if args.read_behav_version == 'v2':
             script_name = pjoin(scripts_dir,'read_behav2_upd.py')
-            p = sp.Popen(f"python {script_name} --subject {subject} --use_sub_angles {use_sub_angles} --save_suffix {args.save_suffix} --perturbation_random_recalc {args.perturbation_random_recalc}".split() )
+            p = sp.Popen(f"python {script_name} --subject {subject} --use_sub_angles {use_sub_angles} --save_suffix '{args.save_suffix}' --perturbation_random_recalc {args.perturbation_random_recalc}".split() )
         elif args.read_behav_version == 'v1':
             script_name = pjoin(scripts_dir,'read_behav2.py')
             p = sp.Popen(f"python {script_name} --subject {subject} --save_suffix {args.save_suffix}".split() )

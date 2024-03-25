@@ -2672,7 +2672,8 @@ def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
     coln_time is the column on value of which one wants to aggregate
     '''
     assert coln_time in df.columns
-    assert colgrp in df.columns
+    if grp is None:
+        assert colgrp in df.columns
     # coln_time = 'time'
     assert operation in ['min','max']
     from datetime import timedelta
@@ -2705,7 +2706,7 @@ def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
         elif operation == 'max':
             idx = grp[coln_time].idxmax()
         dfr = df.loc[idx]
-    return dfr
+    return dfr.sort_values([coln_time])
 
 def compareTriggers(df, dfev, dftriglog):
     print('df contents')
