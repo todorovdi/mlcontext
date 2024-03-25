@@ -1737,6 +1737,9 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
         if line.startswith(triggerdict_start_line):
             stl = linei
             break
+    if stl == -1:
+        print(f'WRONG pram file format {fnp}, exiting')
+        raise ValueError(f'WRONG pram file format {fnp}')
 
     ##########  params
     params = {}
@@ -1763,9 +1766,12 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
 
     phase2trigs = {}
     phase2trigs[phase_to_collect] = []
+    prev_line = None
     for line in lines[stl + 3:]:
         if line.startswith('}'):
             break
+        if ':' not in line:
+            print(f'readParamFiles: {fnp} PROBLEM: line=   ',line)
         k,v = line.split(':')
         v = int(v.replace(',','' ) )
         k = k.replace('"','').replace(' ','')
@@ -1777,6 +1783,7 @@ def readParamFiles(fnp, inpdir, phase_to_collect = 'TARGET_AND_FEEDBACK'):
         stage2pars[ v ] = tt,vft,tgti,phase
         if phase == phase_to_collect:
             phase2trigs[phase_to_collect] += [v]
+        prev_line  = line
         #print(line)
 
     intpars = ['width','height', 'num_training',
@@ -2660,6 +2667,12 @@ def set_streaks(df, inds = None, inplace=True):
 
 def aggRows(df, coln_time, operation, grp = None, coltake='corresp',
             colgrp = 'trial_index' ):
+    '''
+    Take row with highest/lowest value of coln_time
+    coln_time is the column on value of which one wants to aggregate
+    '''
+    assert coln_time in df.columns
+    assert colgrp in df.columns
     # coln_time = 'time'
     assert operation in ['min','max']
     from datetime import timedelta
@@ -4868,3 +4881,84 @@ def formatRecentStatVarnames(isec, histlen_str=' (histlen='):
             s2 += ')' 
         isec_nice.append(s2 )
     return isec_nice
+
+def compDf(dftmp1,dftmp2,cols, cols_to_comp=None, suffix_second='_ev'):
+    '''
+    to compared dataframes with same columns side by side
+    '''
+    #comp_numeric = False):
+    assert len(dftmp1) == len(dftmp1), (len(dftmp1) , len(dftmp1))
+    from pandas.api.types import is_string_dtype, is_numeric_dtype
+    assert set(cols).issubset(dftmp1.columns), set(cols) ^ set(dftmp1.columns) 
+    assert set(cols).issubset(dftmp2.columns)
+    
+    dftmp1 = dftmp1.reset_index(drop=True)#.drop(columns=['index'])
+    dftmp2 = dftmp2.reset_index(drop=True)#.drop(columns=['index'])
+    dftmp2= dftmp2.rename(dict(zip(dftmp2.columns, [col + '_ev' for col in dftmp2.columns] ))  ,axis=1)
+    dftmp = pd.concat([dftmp1,dftmp2],axis=1)
+
+    compcols = []
+    if cols_to_comp is None:
+        z = zip(dftmp1.columns,dftmp2.columns)
+    else:
+        z = zip(cols_to_comp, [col + suffix_second for col in cols_to_comp] )
+    for col1,col2 in z:
+        #if comp_numeric or (not is_numeric_dtype(dftmp[col1]) ):
+        col_ = col1 + '_eq'
+        dftmp[col_] = dftmp[col1] == dftmp[col2]
+        compcols += [col_,col1,col2]
+
+    restcols = [col for col in cols if (not col  in compcols ) ]
+    z2 = zip(restcols, [col + suffix_second for col in restcols] )
+    # double list comprehension!
+    #colpairs = [element for pair in zip(compcols,dftmp1.columns,dftmp2.columns) for element in pair]
+    colpairs = compcols
+    colpairs += [element for pair in z2 for element in pair]
+    return dftmp[colpairs]
+
+def readTrialInfoSeqParams(file_path):
+    import pandas as pd
+
+    # Initialize lists to hold extracted data
+    trial_indices = []
+    trial_types = []
+    target_indices = []
+    vfts = []
+    special_block_types = []
+    block_inds = []
+
+    # Read and process the file
+    with open(file_path, 'r') as file:
+        content = file.readlines()
+
+        # Find the starting point for trial information
+        start_index = 0
+        for i, line in enumerate(content):
+            if line.strip() == "# trial_infos =":
+                start_index = i + 1
+                break
+
+        # Extract data from the relevant lines
+        for line in content[start_index:]:
+            parts = line.strip().split(' = ')
+            if len(parts) == 2:
+                trial_index, data = parts
+                data_parts = data.split(', ')
+                if len(data_parts) == 5:
+                    trial_indices.append(int(trial_index[1:]) )
+                    trial_types.append(data_parts[0])
+                    target_indices.append((data_parts[1]))
+                    vfts.append(str(data_parts[2]))
+                    special_block_types.append(data_parts[3])
+                    block_inds.append(int(data_parts[4]))
+
+    # Create a DataFrame from the extracted data
+    df_trialinfoseq_params = pd.DataFrame({
+        'trial_index': trial_indices,
+        'trial_type': trial_types,
+        'tgti_to_show': target_indices,
+        'vis_feedback_type': vfts,
+        'special_block_type': special_block_types,
+        'block_ind': block_inds
+    })
+    return df_trialinfoseq_params

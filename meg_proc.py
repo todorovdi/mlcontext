@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import os
+from os.path import join as pjoin
+import mne
 
 def cleanEvents_NIH(events):
     # code by Romain
@@ -66,40 +69,78 @@ def getTargetCodes_NIH(epochs_both, epochs_subset):
     dfev2_ = dfev2.merge(dfev, on='sample', how='left')
     return dfev2_
 
-def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_DICT, 
-              params, restmintime):
+def events2df(events, raw, dat_diode, dat_time,
+              trigger2phase, CONTEXT_TRIGGER_DICT, 
+              params, restmintime=None, return_aux = False):
     assert isinstance(params, dict)
     dfev = pd.DataFrame(events, columns=['nsample', 'prev_trigger', 'trigger' ]  )
+
+    if params['subject'] == '2023-SE2-002':
+        cti = dfev['nsample'] == 1184635
+        dfev.loc[cti, 'trigger'] = 44 #ITI
+    #dfev['trigger'] =dfev['trigger'].astype(int)
+    #dfev['prev_trigger'] =dfev['prev_trigger'].astype(int)
     CONTEXT_TRIGGER_DICT_inv = dict(zip(CONTEXT_TRIGGER_DICT.values(), CONTEXT_TRIGGER_DICT.keys()))
-    def f(row): 
-        trg = row['trigger']
-        if trg in CONTEXT_TRIGGER_DICT:
-            r = CONTEXT_TRIGGER_DICT[row['trigger']]
-            phase = r[-1]
-        elif trg in trigger2phase:
-            r = trigger2phase[trg]
-            phase = r
-        else: 
+    CONTEXT_TRIGGER_DICT_ext = CONTEXT_TRIGGER_DICT.copy()
+
+    CONTEXT_TRIGGER_DICT_ext.update({
+         250 : (None,None,-100,'trigger_keypress'),
+         255 : (None,None,-100,'MEG_start_trigger_native'),
+         252 : (None,None,-100,'MEG_start_trigger'),
+         253 : (None,None,-100,'MEG_stop_trigger')} )
+
+
+    def f(row, col): 
+        trg = row[col]
+        if np.isnan(trg):
             r = None
-            phase = None
+            phase =None
+        else:
+            trg = int(trg)
+            if trg in CONTEXT_TRIGGER_DICT_ext:
+                r = CONTEXT_TRIGGER_DICT_ext[trg]
+                phase = r[-1]
+            elif trg in trigger2phase:
+                r = trigger2phase[trg]
+                phase = r
+            else: 
+                r = None
+                phase = None
+                print('skipping ',trg)
         
         return r,phase
 
-    dfev[['trial_info','phase']] = dfev.apply(f,  1, result_type='expand')
+
+
+    dfev[['trial_info','phase']] = dfev.apply(f,  1, result_type='expand', col='trigger')
+    dfev['prev_phase'] = dfev['phase'].shift(1).copy()
+
+    c = dfev['phase'] != dfev['prev_phase']
+    c[0] = False
+    dfev['phase_ind'] = np.cumsum(c)
+
+    #print(sum(dfev['phase'] == 'MEG_start_trigger'))
+
     # this is 'naive time', when MEG is restarted (i.e. when multiple raws are concatenated)
     # it won't show any big difference between consequtive time values
     # in particular it will be inconsistent with the time values from the log
     dfev['time'] = dfev['nsample'] / raw.info['sfreq'] 
+    assert dfev['time'].diff()[1:].all() > 0, 'sample based time not inc'
 
-    #### define better times
+    #### define better times. --- NO! It is a bad idea because dat_time is not always increasing. And not clear when it jumps
     dfev['time_megchan'] = dat_time[0,dfev['nsample']]
-
+    assert dfev['time_megchan'].diff()[1:].all() > 0, 'megchan based time not inc' 
     restmintime_meg = dfev.query('phase == "REST"')['time_megchan'].min()
+
     print(restmintime_meg)
 
-    restminsample_meg = dfev.loc[dfev['time_megchan'] == restmintime_meg, 'nsample'].values[0]
+    #restminsample_meg = dfev.loc[dfev['time_megchan'] == restmintime_meg, 'nsample'].values[0]
 
+    # megchan time
+    restmintime_meg0 = dfev.query('phase == "REST"')['time'].min()
+    #dfev['time_since_first_REST'] = dfev['time'] - restmintime_meg0
     dfev['time_since_first_REST'] = dfev['time_megchan'] - restmintime_meg
+    assert dfev['time_since_first_REST'].diff()[1:].all() > 0, 'since REST based on megchang does not inc'
 
     def f(row):
         tpl = row.get('trial_info',None)
@@ -112,37 +153,55 @@ def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_D
     dfev[['trial_type', 'vis_feedback_type', 'tgti_to_show', 'phase']] = \
         dfev.apply(f,1, result_type='expand')
 
+    dfev.loc[ dfev['phase']      == 'MEG_stop_trigger' , 'phase' ] = 'BREAK'
+    dfev.loc[ dfev['prev_phase'] == 'MEG_stop_trigger' , 'prev_phase' ] = 'BREAK'
+
+    ph = dfev.query('~phase.isna() and phase != "BUTTON_PRESS"')['phase'] # otherwise setting trial index give inconsistency
+    #print('We had {} BUTTON_PRESS events '.format(len(dfev) - len(ph) ) )
+
+
     # indexing
-    ph = dfev['phase']
 
     # TODO: epochs plot for photodiode aligned to start of the mvt
+    print( ph.value_counts() )
 
     c0 = (ph == 'GO_CUE_WAIT_AND_SHOW') & (ph.shift(-1) == 'TARGET_AND_FEEDBACK')
-    print(np.sum(c0))
+    print('Num GO_CUE_WAIT_AND_SHOW happening after TARGET_AND_FEEDBACK ' , np.sum(c0))
     dfev['csr_GO_CUE_WAIT_AND_SHOW'] = c0.cumsum()
 
     c = (ph == 'REST') & (ph.shift(-1) == 'GO_CUE_WAIT_AND_SHOW') & (ph.shift(-2) == 'TARGET_AND_FEEDBACK')
-    print(np.sum(c))
-    assert np.sum(c) == np.sum(c0)
+    print('Num REST after GO_CUE_WAIT_AND_SHOW after TARGET_AND_FEEDBACK ', np.sum(c))
     dfev['csr_REST'] = c.cumsum()
+    c1 = c.copy()
 
     c |= (ph == 'TRAINING_END') | (ph == 'PAUSE') | (ph == 'BREAK')
-    print(np.sum(c))
+    print('+ TRAINING_END or PAUSE or BREAK ', np.sum(c))
     dfev['csr_REST_ext'] = c.cumsum()
 
     c = (ph == 'REST') & (ph.shift(-1) == 'GO_CUE_WAIT_AND_SHOW') 
-    print(np.sum(c))
+    print('Num REST following GO_CUE_WAIT_AND_SHOW ', np.sum(c))
     dfev['csr_REST_lax'] = c.cumsum()
 
     c = (ph == 'REST') | (ph == 'TRAINING_END') #| (ph == 'PAUSE') | (ph == 'BREAK')
-    print(np.sum(c))
+    print('Num REST or TRAINING_END',np.sum(c))
     dfev['csr_REST_lax_ext'] = c.cumsum()
 
+    # this is MEG event-based so no breaks are recorded here
+    #c = (ph == 'BREAK') 
+    #print('Num BREAK',np.sum(c))
+    #dfev['csr_BREAK'] = c.cumsum()
+
     phprev = ph.shift()
-    crest = (ph == 'REST') & ( phprev.isin( ['ITI','PAUSE','BREAK','TRAINING_END']) )
-    c =(ph == 'TRAINING_END') | crest  #| (ph == 'PAUSE') | (ph == 'BREAK')
-    print(np.sum(c))
-    dfev['trial_index'] = c.cumsum() #- 1
+    crest = (ph == 'REST') & ( phprev.isin( ['ITI','PAUSE','BREAK','TRAINING_END','MEG_start_trigger','MEG_start_trigger_native']) )
+    cti =(ph == 'TRAINING_START') | crest  #| (ph == 'PAUSE') | (ph == 'BREAK')
+    #cti = crest
+    print('Num REST after ITI,PAUSE, BREAK or TRAINING_END ',np.sum(cti))
+    #dfev['trial_index'] = -1
+    dfev['trial_index'] = cti.cumsum() #- 1
+    # TODO: extend to other indices after sorting wrt nsample. Or better check that nsample sorting did not change
+
+    if np.sum(c1) != np.sum(c0): 
+        print( f'WARNING: sum(c1) = {np.sum(c1)}, sum(c0) ={ np.sum(c0)} ')
 
     #######################
 
@@ -152,7 +211,7 @@ def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_D
     # take first time we start movement from the point of view of dfev, 
     # take the value of the diode right before and in the middle of the mvt
     safe_delay = 200
-    # we really need to use 'time' (which is raw.times basically) for time_as_index to work
+    # we really need to use 'time' (which is raw.times basically) for time_as_index to work and not time_megchan
     inds = raw.time_as_index(mvt_starts_megtrig['time'] - safe_delay)
     diode_pos = dat_diode[0, inds]
 
@@ -165,49 +224,115 @@ def events2df(events, raw, dat_time, dat_diode, trigger2phase, CONTEXT_TRIGGER_D
     print('diode med = ', med, ' extremes ',diode_extremes)
 
 
-    dfdi = pd.DataFrame({'diode':dat_diode[0], 'times': raw.times} )
+    dfdi = pd.DataFrame({'diode':dat_diode[0], 'times': raw.times, 'time_megchan':dat_time[0,:], 'nsample':np.arange(len(raw.times)) } )
     #med = dfdi['diode'].median()
     #med = - 0.18 # MAY NEED TO BE TUNED MANUALLY! or I have to use info from dfev
     dfdi['diode_neg'] = dfdi['diode'] < med
-    dfdi['diode_neg_csr'] = (dfdi['diode_neg'] != dfdi['diode_neg'].shift(1)) .cumsum()
+    # when diode changes
+    dc = (dfdi['diode_neg'] != dfdi['diode_neg'].shift(1))
+    print(dc[0])
+    dc[0] = False
+    dfdi['diode_neg_csr'] =  dc.cumsum()
 
     #############
 
 
-    dfdi['time_since_first_REST'] = dat_time[0] - restmintime_meg
+    #dfdi['time_since_first_REST'] = dat_time[0] - restmintime_meg
+    dfdi['time_since_first_REST0'] = dfdi['times'] - restmintime_meg0
+    dfdi['time_since_first_REST'] = dfdi['time_megchan'] - restmintime_meg
     grp = dfdi.query('diode_neg == True').groupby('diode_neg_csr')
     dfdisz = grp.size() 
     dfmvtdur_di = dfdisz / raw.info['sfreq']
-    display('Mvt dur from diode ' ,dfmvtdur_di.describe())
+    print('Mvt dur from diode ' ,dfmvtdur_di.describe())
 
     ###################
     # times when diode changed from off to on, first occurence
-    ts_di = grp.min('time_since_first_REST')['time_since_first_REST'].values
+    ts_di_ = grp.min('time_since_first_REST')
+    ts_di = ts_di_['time_since_first_REST'].values
     #ts_di = grp.min('time_since_first_REST')['time_mvt_starts_megtrigchan'].values
+
+    #dfev[]
 
     # times when diode changed from ON to OFF, first occurence
     ts_di_off = grp.max('time_since_first_REST') #+ 1/raw.info['sfreq']
     ts_di_off['time_since_first_REST'] += 1/raw.info['sfreq']
+    ts_di_off_ = ts_di_off
+    ts_di_off = ts_di_off['time_since_first_REST'].values
 
+    ts_di_    ['phase'] = 'diode_OFF_to_ON'
+    ts_di_off_['phase'] = 'diode_ON_to_OFF'
+
+    df_ = pd.concat([ts_di_.reset_index(), ts_di_off_.reset_index()])
+    df_diode = df_.drop(columns=['diode','times','diode_neg','diode_neg_csr'])
+    df_diode = df_diode.sort_values(['nsample'])
 
     ts_ev = mvt_starts_megtrig['time_since_first_REST'].values
 
-    if len(ts_di) ==  len(ts_ev):
-        ts_diev_diff = ts_di - ts_ev
-        print('max,min,mean = ', np.max(ts_diev_diff), np.min(ts_diev_diff), np.mean(ts_diev_diff) )
+    #mvt_starts_megtrig = dfev.query('phase == "TARGET_AND_FEEDBACK"').groupby('trial_index').min('time') 
+    #iti_starts_megtrig = dfev.query('phase == "ITI"').groupby('trial_index').min('time')
 
-        #################
-        dfev['time_since_first_REST_diode'] = np.nan
-        dfev.loc[mvt_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di
-        dfev.loc[iti_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di_off
-    else:
-        print(f'WARNING: number of diod switches {(len(ts_di))} not equals number of triggers of start of movement {len(ts_ev)}')
-        print('Therefore cannot set time_since_first_REST_diode column')
+    dfev['time_since_first_REST_diode'] = np.nan
+
+    #mvt_starts_megtrig = dfev.query('phase == "TARGET_AND_FEEDBACK"').groupby('trial_index').min('time_megchan') 
+    from behav_proc import aggRows 
+    #just using .groupby('trial_index').min('time_megchan') 
+    # (and perhaps same with 'time') gives incorrect row in the end, at least nsample is clearly wrong
+    mvt_starts_megtrig = aggRows(dfev.query('phase == "TARGET_AND_FEEDBACK"'), 'time', 'min') 
+    dfd,dfd_good,dfd_bad,paths     = find_correspondence(mvt_starts_megtrig['time_since_first_REST'].values, ts_di )
+    mvt_starts_megtrig_a = mvt_starts_megtrig.iloc[dfd_good.ind1.values] 
+    dfev.loc[mvt_starts_megtrig_a.index, 'time_since_first_REST_diode'] = ts_di    [dfd_good['ind2'].values]
+
+    iti_starts_megtrig = aggRows(dfev.query('phase == "ITI"'), 'time', 'min') 
+    dfd2,dfd_good2,dfd_bad2,paths2 = find_correspondence(iti_starts_megtrig['time_since_first_REST'].values, ts_di_off )
+    iti_starts_megtrig_a = iti_starts_megtrig.iloc[dfd_good2.ind1.values]
+    dfev.loc[iti_starts_megtrig_a.index, 'time_since_first_REST_diode'] = ts_di_off[dfd_good2['ind2'].values]
+
+    df_ = pd.concat( [ts_di_.iloc[dfd_good['ind2'].values].reset_index(), ts_di_off_.iloc[dfd_good2['ind2'].values].reset_index()  ] )
+    df_diode_clean = df_.drop(columns=['diode','times','diode_neg','diode_neg_csr'])
+    df_diode_clean = df_diode_clean.sort_values(['nsample'])
+
+    #iti_ev = iti_starts_megtrig['time_since_first_REST'].values
+
+    #ts_di_unshift = ts_di
+    #if len(ts_di) !=  len(ts_ev):
+    #    if len(ts_di) - len(ts_ev)  == 1:
+    #        difs = np.abs(ts_di[1:] - ts_ev)
+    #        print('discrep after shifting diode one trial min={:.3f}s, max={:.3f}s'.format(
+    #            np.min(difs),np.max(difs)) )
+    #        assert np.max(difs) < 1., 'ts_di - ts_ev difs are large'
+    #        ts_di_unshift = ts_di.copy() # it will go to locals() output for debugc:w
+    #        ts_di = ts_di[1:]
+
+
+    #if len(ts_di_off) !=  len(iti_ev):
+    #    if len(ts_di_off) - len(iti_ev)  == 1:
+    #        difs = np.abs(ts_di_off[:-1] - iti_ev)
+    #        print('discrep after shifting diode one trial min={:.3f}s, max={:.3f}s'.format(
+    #            np.min(difs),np.max(difs)) )
+    #        ts_di_off = ts_di_off[:-1]
+
+    #if ( len(ts_di) ==  len(mvt_starts_megtrig) ) and ( len(iti_starts_megtrig) ==  len(ts_ev) ):
+    #    ts_diev_diff = ts_di - ts_ev
+    #    print('ts_diev_diff = max={:.3f}, min={:.3f}, mean={:.3f}'.format( np.max(ts_diev_diff), 
+    #                    np.min(ts_diev_diff), np.mean(ts_diev_diff) ) )
+
+    #    #################
+
+    #    dfev['time_since_first_REST_diode'] = np.nan
+    #    dfev.loc[mvt_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di
+    #    dfev.loc[iti_starts_megtrig.index, 'time_since_first_REST_diode'] = ts_di_off
+    #else:
+    #    print(f'WARNING: number of diode switches {(len(ts_di)), (len(ts_di_off))} not equals '
+    #        f'number of triggers of start of movement, ITI {len(mvt_starts_megtrig), len(iti_starts_megtrig)}')
+    #    print('Therefore cannot set time_since_first_REST_diode column')
 
 
     ########################
     
-    return dfev
+    if return_aux:
+        return dfev, locals()
+    else:
+        return dfev
 
 
 def checkSeqConsist(df, dfev):
@@ -760,3 +885,365 @@ def ML_b2b(varnames, X, covs):
         print(f'!!!! Error during fit for {varnamas}: ',str(e) )
         res['dec_error'] = str(e)
     return res
+
+def find_folder_with_ds_subfolders(base_path, subj = None, verbose = 0):
+    ''' 
+    Context change experiment
+    give parent dir containing subject folders collects paths to folders containing .df subfolders.
+    Returns list of full paths to directories'''
+    target_paths = []
+    for first_level in [os.path.join(base_path, d) for d in os.listdir(base_path)]:
+        #print(first_level)
+        if (subj is not None) and (first_level.find(subj) < 0 ):
+            continue
+        if not os.path.isdir(first_level) :
+            print("A required directory is missing or does not follow the expected single-folder structure, or no folder starts with 'MEG_MLEARN'.")
+        
+        second_level = next(os.path.join(first_level, d) for d in \
+                           os.listdir(first_level) if d.startswith("MEG_MLEARN_"))
+        #print(first_level)
+        # Get the first (and only) folder inside the base path that starts with "MEG_MLEARN"
+#         first_level = next(os.path.join(base_path, d) for d in os.listdir(base_path)\
+#                 if os.path.isdir(os.path.join(base_path, d))\
+#                            and d.startswith("MEG_MLEARN"))
+        
+        # Step into 'scans' inside the first level
+        scans_path = os.path.join(second_level, 'scans')
+        # Assuming 'scans' exists and has exactly one subdirectory named 'MEGSCAN_CTF'
+        megscan_ctf_path = os.path.join(scans_path, 'MEGSCAN_CTF')
+        if not os.path.isdir(megscan_ctf_path) :
+            megscan_ctf_path = os.path.join(scans_path, 'MEGSCAN-CTF')
+            print('!! needed to change')
+        assert os.path.isdir(megscan_ctf_path)
+        
+        # Inside 'MEGSCAN_CTF', find the final target directory (assumed to be the only one)
+        target_path = next(os.path.join(megscan_ctf_path, d) for d in os.listdir(megscan_ctf_path) if os.path.isdir(os.path.join(megscan_ctf_path, d)))
+        
+        if verbose > 0:
+            print(f"Found target path: {target_path}")
+        target_paths += [target_path]
+    return target_paths
+
+def _getSubj2dsnames(dmeg, verbose = 0):
+    #/2023-SE2-035/MEG_MLEARN_2023-SE2-035_20240318_mlearn_BE11746
+    fnbs = []
+    subjects = []
+    subj2path = {}
+    subj2dsnames = {}
+    for fnf in os.scandir(dmeg):
+        if fnf.is_dir():
+            if verbose:
+                print(fnf, fnf.name)
+            subjects += [fnf.name]
+            subj2path[fnf.name] = fnf.path
+
+            fld = find_folder_with_ds_subfolders(dmeg, fnf.name, verbose=verbose-1)[0]
+
+            subj2dsnames[fnf.name] = []
+
+            for fnf2 in os.scandir(fld):
+                #print(fnf2.name)
+                if fnf2.name.endswith('.ds'):
+                    subj2dsnames[fnf.name] += [fnf2.path]
+            subj2dsnames[fnf.name] = list(sorted(subj2dsnames[fnf.name]))
+    return subj2dsnames,subj2path
+
+
+#find_folder_with_ds_subfolders(dmeg, subjects[0])
+
+def loadBehavOneSubj(path_behav, multi_param_read_mode = 'read_last'):
+    'path_behav is path to behav folder all the way'
+    #multi_param_read_mode = 'read_all'
+
+    from behav_proc import readParamFiles
+    from glob import glob
+    from pathlib import Path
+        
+    fnbs = []
+    for fnf in glob(pjoin(path_behav,'*.param') ):
+        name = Path(fnf).name
+        fnb = name.replace('.param','')
+        fnbs += [fnb]
+    
+    print('Number of behav files = ',len(fnbs))
+
+    fnbs = list( sorted(fnbs, key=lambda fn: int(fn.split('_')[-1].split('.')[0] ) ) )
+    if multi_param_read_mode == 'read_last':
+        if len(fnbs) > 1:
+            print('Selecting last param file')
+        paramfiles = [fn for fn in list( os.listdir(path_behav) ) if fn.endswith('.param')]
+        last = list( sorted( [ int(fn.split('_')[-1].split('.')[0]) for fn in paramfiles] ) )[-1]
+        lastpf = [fn for fn in paramfiles if fn.find(str(last)) >= 0][0]
+        fnbs = [lastpf.split('.')[0]]
+    else:
+        assert multi_param_read_mode == 'read_all'
+
+    dfs = []
+    dftriglogs = []
+    rs = []
+    for fnb in fnbs:
+        fnp = fnb + '.param'
+
+        #fnf_par = pjoin(path_behav,fnp)
+        b = False
+        fnf_trig = pjoin(path_behav,fnb + '_trigger.log')
+        fnf_log  = pjoin(path_behav,fnb + '.log')
+        if os.path.exists(fnf_trig):
+            b = os.path.getsize(fnf_trig) > 0
+        else:
+            print('f1')
+            b = False
+        if os.path.exists(fnf_log):
+            b &= ( os.path.getsize(fnf_log) > 0 )
+        else:
+            print('f2')
+            b = False
+
+        if not b:
+            print(f'Task did not start for fnb={fnb}, skipping')
+            continue
+        params, phase2trigger, trigger2phase, CONTEXT_TRIGGER_DICT =\
+            readParamFiles(fnp, path_behav)
+
+        fn = fnb + '.log'
+        fnp = fnb + '.param'
+
+        with open(pjoin(path_behav,fn), 'r') as f:
+            l = f.readline()
+            truelen = len( l.split(',') )
+
+        # time is regular time MINUS initial time, meaning when software starts (it is NOT the same as time of first REST used in analysis later
+        r = ('trial_index, current_phase_trigger, tgti_to_show,'
+           ' vis_feedback_type, trial_type, special_block_type, block_ind, '
+            ' feedbackX, feedbackY, unpert_feedbackX, unpert_feedbackY,'
+             ' error_distance, target_coordX, target_coordY, '
+             'feedbackX_when_crossing, feedbackY_when_crossing, '
+             'jax1, jax2, reward, time, time_abs')
+        r = r.replace(' ','')
+        colnames = r.split(',')
+        print('len(colnames) = ',len(colnames),'truelen = ',truelen,colnames)
+        assert truelen == len(colnames)
+
+        nbad = 3  # recompense strip
+        
+        fn_nofoot = fnb + '__nofoot.log' 
+        create_copy_without_footer(pjoin(path_behav,fn),
+            pjoin(path_behav,fn_nofoot), nbad)
+
+        from numpy import dtype
+        # 'O' types are there because we may have None
+        types = {'trial_index': dtype('int64'),
+             'current_phase_trigger': dtype('int64'),
+             'tgti_to_show': dtype('float64'),
+             'vis_feedback_type': dtype('O'),
+             'trial_type': dtype('O'),
+             'special_block_type': dtype('O'),
+             'block_ind': dtype('int64'),
+             'feedbackX': dtype('int64'),
+             'feedbackY': dtype('int64'),
+             'unpert_feedbackX': dtype('float64'),
+             'unpert_feedbackY': dtype('float64'),
+             'error_distance': dtype('float64'),
+             'target_coordX': dtype('int64'),
+             'target_coordY': dtype('int64'),
+             'feedbackX_when_crossing': dtype('int64'),
+             'feedbackY_when_crossing': dtype('int64'),
+             'jax1': dtype('float64'),
+             'jax2': dtype('float64'),
+             'reward': dtype('float64'),
+             'time': dtype('float64'),
+             'time_abs': dtype('float64'),
+             'subject': dtype('O'),
+             'phase': dtype('O')}
+
+        #colnames = ['trial_index', 'current_phase_']
+        # skipfooter = nbad,
+        # comment = '#' to ingore "Task restarted" line
+        df = pd.read_csv(pjoin(path_behav,fn_nofoot),  
+             on_bad_lines='warn', header=0,
+            names=colnames, encoding='latin1', comment = '#', 
+                         engine='c', dtype=types)
+        #encoding='latin-1'
+        subj_ = fnb.split('_')[0]    
+        df['subject'] = subj_        
+        df['phase'] = df.apply(lambda row: trigger2phase[row['current_phase_trigger']], 1)
+        
+        dfs += [df]
+
+        fnf = pjoin(path_behav, fnb + '_trigger.log')
+        from behav_proc import loadTriggerLog
+        dftriglog = loadTriggerLog(fnf,CONTEXT_TRIGGER_DICT)
+        dftriglogs += [dftriglog]
+
+        fnf = pjoin(path_behav,fnb+'.param')
+        from behav_proc import readTrialInfoSeqParams
+        df_trialinfoseq_params = readTrialInfoSeqParams(fnf)
+#     if len(dfs) > 1:
+#         dfr = pd.concat(dfs)
+#     else:
+#         dfr = df
+
+        rs += [( df,dftriglog, df_trialinfoseq_params, params, phase2trigger, trigger2phase, CONTEXT_TRIGGER_DICT )]
+    for df_ in dfs:
+        print( 'len = {}, maxtime in min = {}'.format( len(df_), df_['time'].max() / 60 ) )
+    
+    return rs
+
+def create_copy_without_footer(input_file, output_file, num_rows_to_skip=3, skip_if_exists=True):
+    """
+    Reads a CSV file using readlines, skips the last n rows (footer), and writes it to a new file.
+
+    Args:
+      input_file (str): Path to the input CSV file.
+      output_file (str): Path to the output CSV file.
+      num_rows_to_skip (int, optional): Number of rows from the end to skip (default: 3).
+      skip_if_exists (bool, optional): Skip creating the output file if it already exists (default: True).
+    """
+    
+    if skip_if_exists and os.path.exists(output_file):
+        print(f"create_copy_without_footer: Output file {output_file} already exists. Skipping creation.")
+        return
+
+    with open(input_file, 'r', encoding='latin1') as infile, open(output_file, 'w', encoding='latin1') as outfile:
+        lines = infile.readlines()        
+        outfile.writelines(lines[:-num_rows_to_skip])
+        print(f"create_copy_without_footer: Successfully created copy of {input_file} without footer in {output_file}")
+
+def read_final_rwd_info_MEG_CC(filename, num_lines=3):
+    """
+    returns something like 
+        {'recompense_bonus_totale': 10.0,
+     'reward_accrued': 779.6860704593224,
+     'monetary_value_tot': 10.073463442626904}
+    """
+    import re
+    try:
+        with open(filename, 'r', encoding = 'latin1') as f:
+            lines = f.readlines()
+            if len(lines) < num_lines:
+                return lines  # Return all lines if there are less than num_lines
+        lines = lines[-num_lines:]  # Get the last num_lines elements
+        line = lines[-1]
+        print(line)
+
+        values_dict = {}
+        # Regular expression pattern to find key-value pairs where value is a float
+        pattern = re.compile(r'([^=;\n]+)=\s*([0-9]*\.?[0-9]+)')
+        # Find all matches of the pattern in the input line 
+        matches = pattern.findall(line)
+
+        # Populate the dictionary with key-value pairs from matches
+        for key, value in matches:
+            try:
+                # Attempt to convert value to float and assign to the corresponding key in the dictionary
+                k=key.strip()
+                if k == '#Récompense bonus totale':
+                    k = 'recompense_bonus_totale'
+                values_dict[k] = float(value)
+            except ValueError:
+                # Skip any matches that cannot be converted to float
+                continue
+
+        return values_dict
+
+    except FileNotFoundError:
+        print(f"Error: File {filename} not found.")
+        return None  # Return empty list on error
+
+def read_raw_MEG_CC(fnfs_ds, fewch = False, verbose=None):
+    raws0 = []
+    sfreqs = []
+    for fnf_ds in fnfs_ds:
+        print(fnf_ds)
+
+        raw = mne.io.read_raw_ctf(fnf_ds, verbose=verbose)
+        print(raw.n_times, raw.times[-1], raw.times[-1]/60 )
+        raws0 += [raw]
+        sfreqs += [raw.info['sfreq']]
+
+        # if I drop ref meg it writes "". So maybe I won't for now
+        #Removing 5 compensators from info because not all compensation channels were picked.
+        #raw = raw.drop_channels(chns_ref_meg)    
+    assert np.std(sfreqs) <= 1e-10
+
+    # Here we ignore that these have different device<->head transforms
+    raw = mne.io.concatenate_raws(raws0, on_mismatch='ignore')
+    #raw_erm = read_raw_ctf(erm_fname)
+    m = {'SCLK01-177':'syst',
+     'EEG063-2800':'emg',
+     'EEG064-2800':'emg',
+     'UADC001-2800':'misc', 
+     'UADC010-2800':'eog',
+     'UADC011-2800':'eog',
+     'UADC012-2800':'misc',
+     'UPPT001':'stim',
+     'UPPT002':'syst'}
+
+    # The EEG063 and 64 are EMG
+    # UPPT002 is the parralel port from the interface box (only registers button presses)
+    # UADC0{x}-2800 for x=10, 11 and 12 are EOG eyelink for x, y position and pupil size
+    chn_diode = 'UADC001-2800'
+    chn_pupil_size = 'UADC012-2800'
+    chn_time = 'SCLK01-177'
+
+    to_drop =['EEG063-2800']
+    raw = raw.set_channel_types(m)
+
+    chn2cht = dict( zip( raw.ch_names, raw.get_channel_types() ) )
+    chns_nontriv = [chn for chn,cht in chn2cht.items() if cht not in ['mag', 'ref_meg']]
+    chns_ref_meg = [chn for chn,cht in chn2cht.items() if cht in ['ref_meg']]
+    
+    if fewch:
+        raw = raw.pick([chn_diode,chn_time,'UPPT002','UPPT001'])
+
+    events = mne.find_events(raw, shortest_event=2)
+
+
+    del raws0
+    return raw, events
+
+def find_correspondence(arr1, arr2, std_mult = 3.):
+    '''
+    tries to match arr1 to arr2 using dynamic time warping (DTW)
+    outputs 3 dataframes and matching paths
+    '''
+    from dtaidistance import dtw
+    print('find_correspondence: Lens of input = ', len(arr1),len(arr2))
+    # Ensure arr1 is the shorter array
+    rev = False
+    #if len(arr1) > len(arr2):
+    #    arr1, arr2 = arr2, arr1
+    #    rev = True
+    
+    # Calculate the DTW distance and the best path
+    # psi: Up to psi number of start and end points of a sequence can be 
+    # ignored if this would lead to a lower distance. This is also called psi-relaxation (for cyclical sequences) [2].
+    distance, paths = dtw.warping_paths_fast(arr1, arr2, window=min(len(arr1),len(arr2)), psi=0)
+    best_path = dtw.best_path(paths)
+    
+    #print(distance)
+    
+#     ds = []
+#     for i, j in best_path:
+#         d = abs(arr1[i] - arr2[j])
+#         ds += [d]
+#     print( pd.DataFrame( ds).describe() )
+    
+    # Filter the path for the correspondences within the max_distance
+    correspondences = []
+    for i, j in best_path:
+        d = abs(arr1[i] - arr2[j])
+        #if d <= max_distance:
+        correspondences.append((i, j, d))
+    
+    dfd = pd.DataFrame(correspondences, columns=['ind1','ind2','dist'])
+    dfd['ind_diff'] = dfd['ind1'] - dfd['ind2']
+    v = dfd['dist'].mean() + dfd['dist'].std() * std_mult
+    dfd_bad = dfd[dfd['dist'] > v]
+    dfd_good = dfd[dfd['dist'] <= v]
+
+    percentiles = [.5, 0.7, 0.8, 0.95, 0.98]
+    print(dfd['dist'].describe(percentiles = percentiles))
+    print(f'find_correspondence: For thr={v:.4f} Num bad = ',len(dfd_bad) )
+    
+    return dfd,dfd_good,dfd_bad,paths

@@ -2263,7 +2263,7 @@ class VisuoMotorMEG(VisuoMotor):
             # if task was started and a button was pressed, release break
             elif self.params['participant_can_release_break']:
                 self.moveHome()
-                self.free_from_break = 0
+                self.free_from_break = 1
 
         ####################################
         ##############   Process keypresses
