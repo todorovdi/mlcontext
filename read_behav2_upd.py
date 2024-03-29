@@ -9,8 +9,16 @@ import pandas as pd
 import time
 from base2 import subAngles
 
+import numpy as np
+
+from config2 import stage2evn2event_ids,envcode2env
+from base2 import width,height
+from behav_proc import aggRows, checkErrBounds
+from base2 import calc_rad_angle_from_coordinates, radius, radius_cursor, radius_target
 
 import argparse
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--subject', required = True, type=str)
 parser.add_argument('--n_jobs',  default = 20, type=int )
@@ -18,6 +26,9 @@ parser.add_argument('--save_suffix',  default='', type=str )
 parser.add_argument('--use_sub_angles',  default=0, type=int )
 parser.add_argument('--perturbation_random_recalc',  default=1, type=int )
 args = parser.parse_args()
+if args.save_suffix in ["''",'""']:
+    args.save_suffix = '' 
+print('args.save_suffix = ',args.save_suffix)
 
 subject = args.subject
 n_jobs = args.n_jobs
@@ -58,7 +69,7 @@ def logtime(s):
 print(fname_behavior)
 fnf = fname_behavior[0]
 # time is time since start
-logcols = ('trials,trigger,target_inds,perturbation,jax1,jax2,'
+logcols = ('trials,trigger,target_inds,perturbation,joyX,joyY,'
     'feedbackX_screen,feedbackY_screen,'
     'org_feedbackX_screen,org_feedbackY_screen,'
     'error_distance,environment,time').split(',')
@@ -66,16 +77,11 @@ df = pd.read_csv(fnf, names=logcols)
 # check that time is increasing
 assert (df['time'].diff().iloc[1:] > 0).all()
 df['subject'] = subject
+df['nframe'] = np.arange(len(df))
 
 logtime('read_csv')
 
 
-import numpy as np
-
-from config2 import stage2evn2event_ids,envcode2env
-from base2 import width,height
-from behav_proc import aggRows, checkErrBounds
-from base2 import calc_rad_angle_from_coordinates, radius, radius_cursor, radius_target
 
 #from behav_proc import addNonHitCol, addBehavCols
 #dfos = addBehavCols(dfcc)
@@ -87,22 +93,19 @@ subtract_pi = False # in Romain it is False
 
 #####################
 
-phase2trigger = {
-    'REST_PHASE': 10,
-    'TARGET_PHASE': 20,
-    'FEEDBACK_PHASE': 30,
-    'ITI_PHASE': 40,
-    'BREAK_PHASE': 50
-}
-trigger2phase = {
-    10: 'REST_PHASE',
-    20: 'TARGET_PHASE',
-    30: 'FEEDBACK_PHASE',
-    40: 'ITI_PHASE',
-    50: 'BREAK_PHASE'
-}
+from config2 import phase2trigger,trigger2phase
 
 # Trials starts with REST_PHASE, ends with ITI. When break happens, it goes between feedback and ITI
+
+# joyX,joyY here are NOT just joystick angles, they are transfored
+# using 
+#        self.joyX = int(round(((self.joyX - -1) / (1 - -1)) *
+#                              (self.params['width'] - 0) + 0))
+#        self.joyY = int(round(((self.joyY - -1) / (1 - -1)) *
+#                              (self.params['height'] - 0) + 0))
+# it is not a perfect reconstruction because Romain did rounding
+df['jax1'] = 2. * df['joyX'] / width  - 1.
+df['jax2'] = 2. * df['joyY'] / height - 1.
 
 # in degrees
 df['perturbation'] = -df['perturbation'] # Romain does so
@@ -189,9 +192,12 @@ logtime('small operations')
 
 home_radius = radius_cursor + radius_target
 
-# this is how things were done in Romain script, only 'jax1','jax2' are related to actual traj in the log file and the rest of the columns are mostly for endpoint info even though they are present for every frame
-df['traj_dist_from_center'] = np.sqrt((df['jax1'] -  width /2)**2 +\
-                                         (df['jax2'] -  height /2)**2)
+# this is how things were done in Romain script, only 'joyX','joyY' are related to actual traj in the log file and the 
+# rest of the columns are mostly for endpoint info even though they are present for every frame
+# I thought I can actually replace joyX,Y with org_feedbackX_screen,Y, they are identical. 
+# But now, because *feedback* columns get updated ONLY during FEEDBACK_PHASE
+df['traj_dist_from_center'] = np.sqrt((df['joyX'] -  width /2)**2 +\
+                                         (df['joyY'] -  height /2)**2)
 def f(df__):
     RT = pd.NA
     df_ = df.loc[df__.index]
@@ -214,6 +220,14 @@ df['RT'] = r['RT']
 df['reltime_start_tgt_phase'] = r['reltime_start_tgt_phase']
 
 logtime('RT')
+
+fname = pjoin(path_data, subject, 'behavdata',
+                f'behav_{task}_df_upd_perframe{args.save_suffix}.pkl.zip')
+print(fname)
+df.to_pickle(fname, compression='zip')
+
+logtime('save dfcc2')
+
 
 dfc = df
 grp = dfc.query('phase == "FEEDBACK_PHASE"').groupby(['trials'])
@@ -241,10 +255,18 @@ print(break_durations)
 # one row = one phase
 grp = dfc.groupby(['trials','phase'])
 dfcc0 = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp')
-dfcc0['time_diff_phase'] = dfcc0['time'].diff() # time difference between phases
 dfcc0 = dfcc0.set_index(['trials','phase'])
-dfcc0['phase_duration'] = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp').set_index(['trials','phase'])['time'] -\
-      aggRows(dfc, 'time', 'min', grp, coltake = 'corresp').set_index(['trials','phase'])['time']
+
+dfcc0_min = aggRows(dfc, 'time', 'min', grp, coltake = 'corresp')
+dfcc0_min = dfcc0_min.set_index(['trials','phase'])
+dfcc0['time_phase_start'] = dfcc0_min['time']
+dfcc0['time_prev_phase_start'] = dfcc0['time_phase_start'].shift(1)
+dfcc0['time_prevprev_phase_start'] = dfcc0['time_phase_start'].shift(2)
+
+dfcc0['time_diff_phase'] = dfcc0['time'].diff() # time difference between phases
+#dfcc0['phase_duration'] = aggRows(dfc, 'time', 'max', grp, coltake = 'corresp').set_index(['trials','phase'])['time'] -\
+#      aggRows(dfc, 'time', 'min', grp, coltake = 'corresp').set_index(['trials','phase'])['time']
+dfcc0['phase_duration'] = dfcc0['time'] - dfcc0['time_phase_start']
 
 dfcc0 = dfcc0.reset_index()
 dfcc0 = dfcc0.sort_values('time')

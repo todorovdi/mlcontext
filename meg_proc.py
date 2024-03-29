@@ -42,10 +42,22 @@ def cleanEvents_NIH(events):
     return events_cleaned
 
 def events2df_NIH(events, advcols=True):
+    ''' adv cols is whether adding prev columns'''
     from config2 import stage2evn2event_ids
     event_ids_all_tgt = stage2evn2event_ids['target']['all'] 
+    event_ids_all_fb = stage2evn2event_ids['feedback']['all'] 
     dfev = pd.DataFrame({'code':events[:,2], 'sample':events[:,0]})
-    dfev['type'] = dfev['code'].apply( lambda x: 'target' if x in event_ids_all_tgt else 'feedback' )
+    def f(x): 
+        if x in event_ids_all_tgt:
+            r = 'target'
+        elif x in event_ids_all_fb:
+            r = 'feedback' 
+        else:
+            r = None
+        return r
+     
+    dfev['type'] = dfev['code'].apply( f )
+    
 
     if advcols:
         dfev['prev_type'] = dfev['type'].shift(1)
@@ -65,7 +77,11 @@ def getTargetCodes_NIH(epochs_both, epochs_subset):
     # epochs_both should be created with minimal tmin tmax around zero to capture really all events
     # both epochs objects have to be 
     dfev = events2df_NIH(epochs_both.events)
+    # this adds target_code, beyond other things
     dfev2 = events2df_NIH(epochs_subset.events, advcols =False)
+    dfev2 = dfev2.drop(columns=['code','type'])
+
+    # this assigns corresponding rows and does intersection
     dfev2_ = dfev2.merge(dfev, on='sample', how='left')
     return dfev2_
 
@@ -545,7 +561,6 @@ def addTrigPresentCol_NIH(df, meg_targets_ev, environment=None):
     from base2 import int_to_unicode
     from Levenshtein import editops
     assert (np.diff( np.array(df.index) ) > 0).all()
-
 
     # remove some of the behav inds
     # WARNING: this will fail (give empty)if epochs are based of time_locked=feedback

@@ -36,6 +36,31 @@ subjects_predef = ['sub01_WGPOZPEE', 'sub02_CLTLNQWL', 'sub03_GPVDQMWB',
 env2envcode = dict(stable=0, random=1)
 env2subtr   = dict(stable=20, random=25)
 
+phase2trigger = {
+    'REST_PHASE': 10,
+    'REST_PHASE_RANDOM': 15,
+    'TARGET_PHASE': 20,
+    'TARGET_PHASE_RANDOM': 25,
+    'FEEDBACK_PHASE': 30,
+    'FEEDBACK_PHASE_RANDOM': 35,
+    'ITI_PHASE': 40,
+    'ITI_PHASE_RANDOM': 45,
+    'BREAK_PHASE': 50,
+    'BREAK_PHASE_RANDOM': 50
+}
+trigger2phase = {
+    10: 'REST_PHASE',
+    15: 'REST_PHASE',
+    20: 'TARGET_PHASE',
+    25: 'TARGET_PHASE',
+    30: 'FEEDBACK_PHASE',
+    35: 'FEEDBACK_PHASE',
+    40: 'ITI_PHASE',
+    45: 'ITI_PHASE',
+    50: 'BREAK_PHASE',
+    55: 'BREAK_PHASE'
+}
+
 # this is for stable1, for stable 2 it is inverse
 pert_seq = {0: (0,30,0,-30,0), 1: (0,-30,0,30,0)}
 block_names = ['stable1','random1','stable2','random2'] # order is important!
@@ -311,6 +336,8 @@ def genArgParser_decodeNIH():
 
     parser.add_argument('--error_type', default = 'MPE', type = str)
     parser.add_argument('--recalc_err_sens', default = 1, type = int)
+    parser.add_argument('--retention_factor',
+                        default = 1., type = float)
     parser.add_argument('--trial_group_col_calc',
                         default = 'trialwe', type = str)
     parser.add_argument('--trial_shift_size', default=1, type=int)

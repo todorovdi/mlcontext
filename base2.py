@@ -5,9 +5,10 @@ import math
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import ShuffleSplit
 from scipy.linalg import pinv
-# NIH
+# for NIH data
 width = 800  # need to match the screen size during the task
 height = 800
+# this is radius on which NIH targets appear
 radius = int(round(height*0.5*0.8))
 radius_target = 12
 radius_cursor = 8

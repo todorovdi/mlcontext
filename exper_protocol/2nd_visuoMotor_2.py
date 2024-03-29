@@ -290,6 +290,9 @@ class VisuoMotor:
 
 
     def project_coordinates(self, coordinates, perturbation):
+        '''
+        This is a confusing name because it is about rotation, not projection
+        '''
         perturbAngle = perturbation*(np.pi/180)
         my_coords = [-1, -1]
         my_coords[0] = coordinates[0] - self.params['width']/2.0
@@ -315,6 +318,7 @@ class VisuoMotor:
 
         self.joyX = self.my_joystick.get_axis(0)
         self.joyY = self.my_joystick.get_axis(1)
+        # after the code below joyX,joyY are unperturbed cursor coordinates 
         self.joyX = int(round(((self.joyX - -1) / (1 - -1)) *
                               (self.params['width'] - 0) + 0))
         self.joyY = int(round(((self.joyY - -1) / (1 - -1)) *

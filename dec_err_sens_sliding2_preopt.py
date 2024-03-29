@@ -31,7 +31,7 @@ from error_sensitivity import (enforceTargetTriggerConsistency,
                                computeErrSens2,adjustNonHit, adjustNonHitDf,
                                getAnalysisVarnames)
 from meg_proc import addTrigPresentCol_NIH
-#from error_sensitivity import enforceTargetTriggerConsistency
+from meg_proc import getTargetCodes_NIH
 
 from behav_proc import addBehavCols, computeErrSensVersions, truncateDf
 from os.path import join as pjoin
@@ -348,12 +348,14 @@ else:
 
 behav_df_full['next_error'] = behav_df_full['error'].shift(-1)
 behav_df_full['next_belief'] = behav_df_full['belief'].shift(-1)
+behav_df_full['prev_error'] = behav_df_full['error'].shift(1)
 #behav_df_full['next_movement'] = behav_df_full['movement'].shift(-1)
 
 if 'err_sens' in behav_df_full:
     behav_df_full.loc[behav_df_full['trialwb'] == 0, 'err_sens'] = np.inf
     from behav_proc import truncateNIHDfFromErr#(df, err_col = 'error', varn = 'err_sens'):
     behav_df_full = truncateNIHDfFromErr(behav_df_full)
+    print('Adding trunc ES col')
 
 if 'pert_seq_code' not in behav_df_full.columns:
     addBehavCols(behav_df_full, inplace=True)
@@ -366,6 +368,9 @@ if 'trial_shift_size' in behav_df_full:
 if 'trial_group_col_calc' in behav_df_full:
     trgc = par['trial_group_col_calc']
     behav_df_full = behav_df_full.query('trial_group_col_calc == @trgc')
+if 'retention_factor' in behav_df_full:
+    rf = par['retention_factor']
+    behav_df_full = behav_df_full.query('retention_factor == @rf')
 print('Behav file has {} dup entries, total len = {}'.format(
     behav_df_full.duplicated(['subject','trials']).sum(), len(behav_df_full) ) )
 
@@ -512,9 +517,11 @@ for tmin_cur,tmax_cur in tminmax:
 
     # if tmin and/or tmax are large then we can lose correspondance between target and feedback target indices, which in turn would make
     # it difficult to insure correspondance between log target sequence and trigger target sequence
+    # when time_locked == feedback, triggers do not represent targets
     # so here we get target codes from epochs regardless whether for which time locked they were (I use sample to sample correspondance)
-    from meg_proc import getTargetCodes_NIH
+    # recall that epochs_for_EC has both target and feedback triggers
     dfev = getTargetCodes_NIH(epochs_for_EC, epochs)
+    assert len(dfev) == len(epochs)
     target_codes = dfev['target_code'].values
 
     #environment_full = np.array(behav_df_full['environment'])
@@ -539,6 +546,11 @@ for tmin_cur,tmax_cur in tminmax:
     # this assertion is violated if ediops asks to delete first entry in behav_df
     #assert np.array_equal( dfev['trial_index_ev'].values , behav_df_cur['trials'].values)
     dfev['trial_index'] =  behav_df_cur['trials'].values
+    #I cannot use this code here: "consist = checkTgtConsistency(behav_df_cur,epochs)" because for feedback it won't work
+    assert np.array_equal(dfev['target_code'].values, behav_df_cur['target_codes'] )
+    behav_df_cur['trigger_nsample'] = dfev['sample'].values
+    behav_df_cur['time_meg'] = dfev['sample'].values / raw.info['sfreq']
+    # dfev.columns = ['code', 'sample', 'type', 'prev_type', 'prev_prev_type', 'prev_code', 'target_code', 'trial_index_ev', 'trial_index'] 
 
     if exit_after == 'enforce_consist':
         sys.exit(0)
@@ -647,7 +659,8 @@ for tmin_cur,tmax_cur in tminmax:
 
         # remember that we ensured consistency of indices earlier
         epochs_curenv = epochs[dfev_cur_trunc.index.values ] 
-        checkTgtConsistency(subdf, epochs_curenv) # checks if epochs and df are consistent
+        consist = checkTgtConsistency(subdf, epochs_curenv) # checks if epochs and df are consistent
+        assert consist
 
         tmin_safe = tmin_cur + safety_time_bound
         tmax_safe = tmax_cur - safety_time_bound

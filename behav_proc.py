@@ -4671,6 +4671,9 @@ def addWindowCols(df, cols = ['error', 'err_sens','error_pscadj', 'error_change'
     return dfc.copy()
 
 def truncateNIHDfFromErr(df, err_col = 'error', varn = 'err_sens', mult = 1):
+    # add hit_mestd1 column and add 
+    # err_sens_trunc column that has nan where hit happens
+
     # estimate error at second halfs of init stage
     qs_initstage = 'pert_stage_wb.abs() < 1e-10'
     df_init = df.query(qs_initstage + ' and trialwb >= 10')
