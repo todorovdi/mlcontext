@@ -68,6 +68,7 @@ def calc(error_region, initial_sensitivity,
 
     # Loop through each of perturbations
     # motor output is org_feedback - target_loc
+    # it is basically the main latent state
     motor_output = np.zeros(len(perturbations))
     motor_output[0] = x_0
     error_sim = np.ascontiguousarray( np.zeros(len(perturbations), dtype=np.float64) ) # predicted errors
@@ -113,6 +114,12 @@ def calc(error_region, initial_sensitivity,
                 s_ * (error_for_update + np.random.randn() * \
                      sensory_noise_variance)
         else:
+            # we are now at trial i+1  (or rather in the end of trial i). The logic is 
+            # 1) error is preceived in the end of the trial i => we need to prepare ES for the next trial
+            # 2) if i was not the first trial, we use errors from trials i and i-1 to update the weights
+            # 3) calc err sens based on updated weights
+            # 4) plan correction for next trial
+
             # know it in the end of the trial
             # this is preceived error
             # it mixed unknown things (perturbations) and known internalthings (motor_output)
@@ -142,10 +149,32 @@ def calc(error_region, initial_sensitivity,
                 if verbose > 0:
                     print(i,'pre break ',pre_break_duration[i], decay)
 
+
+            # Update the weights, they will have influence on next trial
+            # (so for err_sens[i+2] )
+            if i > 0:
+                signc =  np.sign(error_for_update_w * error_for_update)
+                # if both are larger than thr
+                errs_now = np.array([error_for_update_w, error_for_update])
+
+                w = decay_weights(w, alpha_w)
+                # for min they bascially always skip
+                #if np.min(np.abs(errs_now ))  >= small_err_thr:
+                if np.max(np.abs(errs_now ))  >= small_err_thr:
+                    #_e = error_for_update_w
+                    _e = error_for_update
+                    w = update_weights(_e, w,
+                        gaussian_centers, gaussian_variances,
+                        signc, eta )
+                else:
+                    if verbose > 0:
+                        print(i,'skip update ', errs_now)
+
             # Now that we have the error on the reach, we can determine the next
             # motor output
             #print('i = ',i)
             #print(w.shape, gaussian_centers.shape, gaussian_variances.shape)
+            # on the very first trial w = 0, so ESadd = 0 as well
             ESadd = get_sensitivity(error_for_update, w, gaussian_centers, gaussian_variances)
             s = initial_sensitivity + ESadd
             #assert isinstance(s,float), (type(s), s)
@@ -162,29 +191,11 @@ def calc(error_region, initial_sensitivity,
                      sensory_noise_variance)
             #print(i,'post kddc')
 
-            # Update the weights, they will have influence on next trial
-            # (so for err_sens[i+2] )
-            if i > 0:
-                signc =  np.sign(error_for_update_w * error_for_update)
-                # if both are larger than thr
-                errs_now = np.array([error_for_update_w, error_for_update])
 
-                w = decay_weights(w, alpha_w)
-                # for min they bascially always skip
-                #if np.min(np.abs(errs_now ))  >= small_err_thr:
-                if np.max(np.abs(errs_now ))  >= small_err_thr:
-                    _e = error_for_update_w
-                    #_e = error_for_update
-                    w = update_weights(_e, w,
-                        gaussian_centers, gaussian_variances,
-                        signc, eta )
-                else:
-                    if verbose > 0:
-                        print(i,'skip update ', errs_now)
             #print(i,'post uw')
 
-        err_sens[i+1] = s
-        ws[i] = w
+        err_sens[i+1] = s  
+        ws[i+1] = w         # I am not sure if it should be i or i+1 here. It is only about saving, it does not affect calc which just uses w. I set it i+1 so that it consistent with index of err_sens
         #print(i,err_sens[i+1])
         if verbose > 1:
             print(i,'add ES[i+1]=',ESadd,'  max w = ',
