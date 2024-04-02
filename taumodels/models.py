@@ -6,7 +6,8 @@ from joblib import Parallel, delayed
 
 
 
-def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
+def calcH_min(pert, errors, EC_mask, pre_break_duration, 
+              err_sens = None,
             pause_mask = None, reg = 0,
              target_loc= 0, timeout = 30, 
              optimize_initial_err_sens = True,
@@ -15,7 +16,9 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
              use_true_errors = False, num_bases = 10, 
               custom_initial_err_sens = 0.,
               small_err_thr = 0., err_handling = 'raise', seed=0,
-              optim_pars = None):
+              optim_pars = None, save_best_arrays = True):
+    # This run minimization search for best parameters for
+    # Herzfeld model
     # for one IC
 
     if online_feedback:
@@ -33,21 +36,29 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
 
     from collections import OrderedDict as odict
 
-    assert optimize_initial_err_sens in ['optimize', 'from_data', 'custom']
+    assert optimize_initial_err_sens in \
+        ['optimize', 'from_data', 'custom']
 
     args_opt = odict ([])
     if optimize_initial_err_sens == 'optimize':
-        args_opt['initial_sensitivity'] = (0.0001,0.5)
+        # before upper bounds of 0.5
+        #args_opt['initial_sensitivity'] = (0.0001,0.5)
+        args_opt['initial_sensitivity'] = (0.0000,1.)
 
+
+    #('alpha', (0.5,1)) ,  # retention
+    #('alpha_w',   (0.3,1 ) ),
     args_opt.update( odict ([
         #('initial_sensitivity', (0.0001,0.5)),
         ('eta', (0.001,0.2)),  # weight update speed
-        ('alpha', (0.5,1)) ,  # retention
-        ('alpha_w',   (0.3,1 ) ),
+        ('alpha', (0.1,1)) ,  # retention
+        ('alpha_w',   (0.1,1 ) ),
     ]) )
     if (pause_mask is not None) or (np.max(pre_break_duration) > 1e-3 ) :
         print('set pause')
-        args_opt['weight_forgetting_exp_pause'] = (-2,  2)
+        # positive values mean decay because  w *= exp(-weight_forgetting_exp_pause * break_dur) 
+        # before upper was =2
+        args_opt['weight_forgetting_exp_pause'] = (-2,  4)
 
     #   ('gaussian_variance', (0.1,5)), # of gaussians
     #   ('execution_noise_variance', (0, error_region_size / 2 )),
@@ -97,6 +108,8 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
     elif optimize_initial_err_sens == 'custom':
         ES0_ = custom_initial_err_sens
 
+    sensory_noise_variance = 0
+    execution_noise_variance = 0
     def _minim_H(pars):
         #if pause_mask is not None:
         if optimize_initial_err_sens == 'optimize':
@@ -117,8 +130,6 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
                 pause_mask_ = np.zeros_like(pert, dtype=bool)
 
             ES0 = ES0_
-        sensory_noise_variance = 0
-        execution_noise_variance = 0
  
         try:
             # pert is true pert
@@ -135,10 +146,11 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
                 weight_forgetting_exp_pause = weight_forgetting_exp_pause,
                 pre_break_duration = pre_break_duration,
                 EC_mask = EC_mask, error_region = error_region,
-                           target_loc = target_loc, pause_mask = pause_mask_,
-                          use_true_errors = use_true_errors, cap_err_sens = cap_err_sens,
-                            true_errors=errors, num_bases = num_bases,
-                       small_err_thr = small_err_thr, seed=seed)
+                target_loc = target_loc, pause_mask = pause_mask_,
+                use_true_errors = use_true_errors, 
+                cap_err_sens = cap_err_sens,
+                true_errors=errors_, num_bases = num_bases,
+                small_err_thr = small_err_thr, seed=seed)
             #np.ascontiguousarray(pertur
             #print('aaa')
             (motor_output,error_pred,ws,err_sens_pred,
@@ -146,38 +158,14 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
 
             #assert not np.isnan(motor_output).any() 
             #assert not np.isnan(error_pred).any() 
+            #print('num nans = ',np.sum(np.isnan(error_pred) ) )
 
             if np.isnan(error_pred).any() :
                 return np.nan
 
-            if fitmask is None:
-                mse1 = np.mean( ( errors_ - error_pred ) **2 )
-                ges = ~np.isinf(err_sens)
-                mse2 = np.mean( ( err_sens_pred[ges] - err_sens[ges] ) **2 )
-            else:
-                assert len(fitmask) == len(errors_)
-                mse1 = np.mean( ( errors_[fitmask] - error_pred[fitmask]) **2 )
+            r = calcLoss_H(errors_, error_pred, err_sens, err_sens_pred,
+                          fitmask, fit_to, reg, verbose = verbose)
 
-                ges = ~np.isinf(err_sens[fitmask])
-                mse2 = np.mean( ( err_sens_pred[fitmask][ges] - err_sens[fitmask][ges] ) **2 )
-
-            if verbose > 0:
-                print(f'mse1 = {mse1},  mse2 = {mse2}')
-            if fit_to == 'errors':
-                B = err_sens_pred
-                pen = np.mean( np.sum(B[~np.isnan(B)]**2 ) ) * reg
-                r = mse1 + pen
-            elif fit_to == 'err_sens':
-                r = mse2            
-            elif fit_to == 'err_sens_smooth':
-                r = mse2_sm            
-            elif fit_to == 'errors_and_err_sens':
-                r = mse1 + mse2            
-            elif fit_to == 'errors_and_err_sens_smooth':
-                r = mse1 + mse2_sm            
-            else:
-                raise ValueError(f'wrong fit target {fit_to}')
-            #print('loss = {:.3f}  (mse={:.3f}   pen={:.3f}'.format(r, mse, pen))
         except LinAlgError as e:
             print('Linalg error')
             r = np.nan
@@ -226,10 +214,82 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration, err_sens = None,
 
         if optimize_initial_err_sens != 'optimize':
             d['initial_sensitivity'] = ES0_
+        #weight_forgetting_exp_pause
+        if 'weight_forgetting_exp_pause' not in args_opt:
+            d['weight_forgetting_exp_pause'] = weight_retention_pause0
+
+        #(ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause ) = pars
+        r = simMoE( pert, **d,
+            sensory_noise_variance =sensory_noise_variance,
+            execution_noise_variance = execution_noise_variance,
+            gaussian_variance = None, 
+            pre_break_duration = pre_break_duration,
+            EC_mask = EC_mask, error_region = error_region,
+            target_loc = target_loc, pause_mask = pause_mask,
+            use_true_errors = use_true_errors, 
+            cap_err_sens = cap_err_sens,
+            true_errors=errors_, num_bases = num_bases,
+            small_err_thr = small_err_thr, seed=seed)
+        #np.ascontiguousarray(pertur
+        #print('aaa')
+        (motor_output,error_pred,ws,err_sens_pred,
+        gaussian_centers,gaussian_variances) = r
+
+        #assert not np.isnan(motor_output).any() 
+        #assert not np.isnan(error_pred).any() 
+
+        if np.isnan(error_pred).any() :
+            return np.nan
+
+        fun_full = calcLoss_H(errors_, error_pred, err_sens, err_sens_pred,
+                      None, fit_to, reg, verbose = verbose)
+
+
+        d['fun_full'] = fun_full
+        if save_best_arrays:
+            d['error_pred'] = error_pred
+            d['err_sens'] = err_sens_pred
+
     else:
         d = None
         print('opt finished None :(')
     return result, d
+
+#############################
+def calcLoss_H(errors_, error_pred, err_sens, err_sens_pred,
+              fitmask, fit_to, reg, verbose = 0):
+    if np.isnan(error_pred).any() :
+        return np.nan
+
+    if fitmask is None:
+        mse1 = np.mean( ( errors_ - error_pred ) **2 )
+        ges = ~np.isinf(err_sens)
+        mse2 = np.mean( ( err_sens_pred[ges] - err_sens[ges] ) **2 )
+    else:
+        assert len(fitmask) == len(errors_)
+        mse1 = np.mean( ( errors_[fitmask] - error_pred[fitmask]) **2 )
+
+        ges = ~np.isinf(err_sens[fitmask])
+        mse2 = np.mean( ( err_sens_pred[fitmask][ges] - err_sens[fitmask][ges] ) **2 )
+
+    if verbose > 0:
+        print(f'mse1 = {mse1},  mse2 = {mse2}')
+    if fit_to == 'errors':
+        B = err_sens_pred
+        pen = np.mean( np.sum(B[~np.isnan(B)]**2 ) ) * reg
+        r = mse1 + pen
+    elif fit_to == 'err_sens':
+        r = mse2            
+    elif fit_to == 'err_sens_smooth':
+        r = mse2_sm            
+    elif fit_to == 'errors_and_err_sens':
+        r = mse1 + mse2            
+    elif fit_to == 'errors_and_err_sens_smooth':
+        r = mse1 + mse2_sm            
+    else:
+        raise ValueError(f'wrong fit target {fit_to}')
+
+    return r
 
 def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
               sensory_noise_variance = 0.,
@@ -240,11 +300,13 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
               num_bases = 10, target_loc = 0, pause_mask = None,
               pre_break_duration = None, true_errors = None,
                use_true_errors = False, cap_err_sens = True,
-           small_err_thr = 0., seed= 0):
+           small_err_thr = 0., seed= 0, verbose=0):
     '''
+    Warning: this function sets global random seed
     this is a proxy function needed to bridge normal python and numba code
     '''
-    np.random.seed(seed)
+    if (sensory_noise_variance > 1e-10) or (execution_noise_variance > 1e-10):
+        np.random.seed(seed)
 
     if error_region is None:
         error_region_ = np.abs(pert).max() * 1.2
@@ -254,14 +316,15 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
     if use_true_errors: 
         assert true_errors is not None, 'true_errors is None when it should not be'
 
-    if gaussian_variance is None:
-        gaussian_variance = (error_region[1] - error_region[0]) / num_bases
-
     if num_bases == -1:  # auto select depending on max error size
         if error_region[1] > 90:
             num_bases = 20
         else:
             num_bases = 10
+
+    if gaussian_variance is None:
+        gaussian_variance = (error_region[1] - error_region[0]) / num_bases
+        assert gaussian_variance > 0, (gaussian_variance, num_bases)
 
     args = { 'num_bases': num_bases,
         'error_region': np.array(error_region),
@@ -278,7 +341,8 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
         'use_true_errors':use_true_errors,
         'cap_err_sens':cap_err_sens,
         'perturbations':pert,
-            'small_err_thr':small_err_thr}
+            'small_err_thr':small_err_thr,
+            'verbose':verbose}
 
     if pre_break_duration is not None:
         args['pre_break_duration'] = np.ascontiguousarray( pre_break_duration, dtype=np.int32)                  
@@ -299,6 +363,12 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
         args['true_errors'] = np.ascontiguousarray( true_errors, dtype=np.float64)
     else:
         args['true_errors'] = np.ascontiguousarray( np.zeros(len(pert)), dtype=np.float64)
+
+    datargns = ['pre_break_duration','channel_mask','pause_mask','true_errors']
+    for argn in datargns:
+        nn = np.sum( np.isnan(args[argn]) )
+        if nn > 1:
+            raise ValueError(f'Got {nn} NaN in {argn}, should have zero')
 
     ## for debug
     #for an,av in args.items():

@@ -22,6 +22,8 @@ def calc(error_region, initial_sensitivity,
         use_true_errors = False,
         cap_err_sens = True,
         verbose=0):
+    # perturbations is used only for calc of error_sim
+
     #for k,v in args.items():
     #    if k != 'perturbation':
     #        print(k,v)
@@ -54,12 +56,12 @@ def calc(error_region, initial_sensitivity,
 
     # Where is the target located (cm)?
     #from collections.abc import Iterable
-    #target_reach = target_loc
-    #if not isinstance(target_reach, Iterable):
-    #    target_reach = [0] * len(perturbations)
-    target_reach = np.repeat(target_loc, len(perturbations)  )
-    #if not isinstance(target_reach, Iterable):
-    #    target_reach = [0] * len(perturbations)
+    #target_to_reach = target_loc
+    #if not isinstance(target_to_reach, Iterable):
+    #    target_to_reach = [0] * len(perturbations)
+    target_to_reach = np.repeat(target_loc, len(perturbations)  )
+    #if not isinstance(target_to_reach, Iterable):
+    #    target_to_reach = [0] * len(perturbations)
 
     # What is the initial reach (cm)?
     x_0 = 0
@@ -68,31 +70,36 @@ def calc(error_region, initial_sensitivity,
     # motor output is org_feedback - target_loc
     motor_output = np.zeros(len(perturbations))
     motor_output[0] = x_0
-    error_pred = np.ascontiguousarray( np.zeros(len(perturbations), dtype=np.float64) ) # predicted errors
+    error_sim = np.ascontiguousarray( np.zeros(len(perturbations), dtype=np.float64) ) # predicted errors
     err_sens = np.repeat(np.nan, len(perturbations) ) 
     ws = np.full( (len(perturbations), num_bases), np.nan )
 
 
     error_for_update = np.nan
     error_for_update_w = np.nan
+ 
+    # err_sens is ES in the beg of trial, before any feedback recieved
+    err_sens[0] = initial_sensitivity
 
+    # the idea is that it goes from 1 to last index
     rng = np.arange(len(perturbations) - 1, dtype=np.int64)
-    #print(rng)
+    ESadd = np.nan  # for debug print mostly
     for i in rng:
+        # i has meaning of _previous_ trial
 
         if pause_mask[i]:
             print(i,'paaause')
             assert i > 0
             assert np.isnan( perturbations[i]  )
             w = w * np.exp( - weight_forgetting_exp_pause )
-            error_pred[i] = np.nan
+            error_sim[i] = np.nan
             s = np.nan # in this case we don't want to save ES
             motor_output[i] = np.nan # on the prev trial we assigned it to not-nan assuming that it was a regular trial
 
             if use_true_errors:
                 error_for_update = true_errors[i-1]
             else:
-                error_for_update = error_pred[i-1]
+                error_for_update = error_sim[i-1]
 
             # here unlike in the main equations we update weights first
             # here we use i-1, not i like in main equations
@@ -107,29 +114,40 @@ def calc(error_region, initial_sensitivity,
                      sensory_noise_variance)
         else:
             # know it in the end of the trial
-            error_pred[i] = motor_output[i] - (target_reach[i] + perturbations[i]) + \
+            # this is preceived error
+            # it mixed unknown things (perturbations) and known internalthings (motor_output)
+            # motor_output[i] was set on the previous cycle iteration
+            # error_sim is rather error_sim
+            error_sim[i] = motor_output[i] - (target_to_reach[i] + perturbations[i]) + \
                     np.random.randn() * execution_noise_variance
             if channel_mask[i]:
-                error_pred[i] = 0
+                error_sim[i] = 0
 
+            # to update ES we use most recent error
+            # but for update of weights we use the prev one
+            # for i =0 we don't update weights
             if use_true_errors:
                 error_for_update = true_errors[i]
                 if i > 0:
                     error_for_update_w = true_errors[i-1]
             else:
-                error_for_update = error_pred[i]
+                error_for_update = error_sim[i]
                 if i > 0:
-                    error_for_update_w = error_pred[i-1]
+                    error_for_update_w = error_sim[i-1]
 
             if pre_break_duration[i] > 1e-10:
                 # decay weights in pause
-                w = w * np.exp( - weight_forgetting_exp_pause * pre_break_duration[i] ) 
+                decay = np.exp( - weight_forgetting_exp_pause * pre_break_duration[i] )          
+                w *= decay
+                if verbose > 0:
+                    print(i,'pre break ',pre_break_duration[i], decay)
 
             # Now that we have the error on the reach, we can determine the next
             # motor output
             #print('i = ',i)
             #print(w.shape, gaussian_centers.shape, gaussian_variances.shape)
-            s = initial_sensitivity + get_sensitivity(error_for_update, w, gaussian_centers, gaussian_variances)
+            ESadd = get_sensitivity(error_for_update, w, gaussian_centers, gaussian_variances)
+            s = initial_sensitivity + ESadd
             #assert isinstance(s,float), (type(s), s)
             if (s > 1) and cap_err_sens:
                 if verbose:
@@ -138,31 +156,45 @@ def calc(error_region, initial_sensitivity,
 
             #print(i,'kddc')
             # Create the motor output for the next trial
+            # uses err sens on (beginning of) next trial so the output is for next trial too
             motor_output[i+1] = alpha * motor_output[i] -\
                 s * (error_for_update + np.random.randn() * \
                      sensory_noise_variance)
             #print(i,'post kddc')
 
-            # Update the weights
+            # Update the weights, they will have influence on next trial
+            # (so for err_sens[i+2] )
             if i > 0:
                 signc =  np.sign(error_for_update_w * error_for_update)
                 # if both are larger than thr
-                if np.min(np.abs(np.array([error_for_update_w, error_for_update]) ))  >= small_err_thr:
-                    w = update_weights(error_for_update_w, w,
+                errs_now = np.array([error_for_update_w, error_for_update])
+
+                w = decay_weights(w, alpha_w)
+                # for min they bascially always skip
+                #if np.min(np.abs(errs_now ))  >= small_err_thr:
+                if np.max(np.abs(errs_now ))  >= small_err_thr:
+                    _e = error_for_update_w
+                    #_e = error_for_update
+                    w = update_weights(_e, w,
                         gaussian_centers, gaussian_variances,
-                        signc, eta, alpha_w )
+                        signc, eta )
+                else:
+                    if verbose > 0:
+                        print(i,'skip update ', errs_now)
             #print(i,'post uw')
 
         err_sens[i+1] = s
         ws[i] = w
         #print(i,err_sens[i+1])
-        #print(i,w)
+        if verbose > 1:
+            print(i,'add ES[i+1]=',ESadd,'  max w = ',
+                np.max(np.abs(w )), ' motor out = ', motor_output[i+1] )
 
     #print(err_sens[-1])
 
 
     #err_sens = np.array(err_sens)
-    return (motor_output,error_pred,ws,err_sens,
+    return (motor_output,error_sim,ws,err_sens,
             gaussian_centers,gaussian_variances)
 
 @jit(nopython=True)
@@ -180,13 +212,20 @@ def get_sensitivity(error, weights, centers, variances):
     return sensitivity
 
 @jit(nopython=True)
-def update_weights(error, weights, centers, variances, sign_consist, eta,
-                   alpha_w):
+def decay_weights(weights, alpha_w):
+    weights_upd = alpha_w * weights
+    return weights_upd
+
+@jit(nopython=True)
+def update_weights(error, weights, centers, variances, 
+                sign_consist, eta):
+    # weight decay happens in a separate function that should be called before this one
     # sign_consist is sign consistency
     g_x = np.exp(-(error - centers)**2 / (2 * variances**2))
     #invarg = g_x * g_x.T
     invarg = g_x[:,None] @ g_x[:,None].T
-    weights_upd = alpha_w * weights + eta * sign_consist * np.linalg.pinv(invarg) @ g_x
+    #weights_upd = alpha_w * weights + eta * sign_consist * np.linalg.pinv(invarg) @ g_x
+    weights_upd = weights + eta * sign_consist * np.linalg.pinv(invarg) @ g_x
     return weights_upd
 
 def plot_bases(weights, centers, variances):
@@ -218,8 +257,8 @@ def plot_adaptation(weights, centers, variances):
     plt.ylabel('Adaptation')
     plt.show()
 
-def plot_motor_output(perturbations, target_reach, motor_output):
-    plt.plot(range(1, len(perturbations) + 1), perturbations + target_reach, linewidth=2)
+def plot_motor_output(perturbations, target_to_reach, motor_output):
+    plt.plot(range(1, len(perturbations) + 1), perturbations + target_to_reach, linewidth=2)
     plt.plot(range(1, len(perturbations) + 1), motor_output, linewidth=2)
     plt.legend(['Reach Goal', 'Motor Output'])
     plt.xlabel('Trial #')
@@ -283,7 +322,7 @@ def gen_markov_perturbation(n, zeta):
 #
 #        # Subplot 2
 #        plt.subplot(2, 1, 2)
-#        plot_motor_output(perturbations, target_reach, motor_output)
+#        plot_motor_output(perturbations, target_to_reach, motor_output)
 #
 #        # Figure 2
 #        plt.figure(2)

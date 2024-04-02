@@ -14,6 +14,7 @@ except ImportError:
     import io as StringIO
 
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
+#os.environ['OMP_NUM_THREADS']='1'
 
 
 # path_data = '/Volumes/Samsung_T1/MEGdata/MemErrors/'

@@ -4677,7 +4677,7 @@ def truncateNIHDfFromErr(df, err_col = 'error', varn = 'err_sens', mult = 1):
     # estimate error at second halfs of init stage
     qs_initstage = 'pert_stage_wb.abs() < 1e-10'
     df_init = df.query(qs_initstage + ' and trialwb >= 10')
-    grp = df_init.groupby(['subject','pert_stage'])
+    #grp = df_init.groupby(['subject','pert_stage'])
 
     stds = df_init.groupby(['subject'])[err_col].std()#.std()
     mestd = stds.mean()
