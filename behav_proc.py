@@ -4493,8 +4493,18 @@ def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=Fa
     if isinstance(alt,str):
         alt = [alt]
 
-    df1 = df_.query(qs1)
-    df2 = df_.query(qs2)
+    try:
+        df1 = df_.query(qs1)
+    except Exception as e:
+        print(f'myttest: Exception {e} for {qs1}')
+        raise ValueError(f'bad qs {qs1}')
+
+    try:
+        df2 = df_.query(qs2)
+    except Exception as e:
+        print(f'myttest: Exception {e} for {qs2}')
+        raise ValueError(f'bad qs {qs2}')
+
     if len(cols_checkdup):
         assert not df1.duplicated(cols_checkdup).any()
         assert not df2.duplicated(cols_checkdup).any()
@@ -4549,11 +4559,20 @@ def decorateTtestRest(ttrs):
 
     ttrs['ttstr']  = ttrs.apply(f,axis=1)
 
-def comparePairs(df_, varn, col, alt = ['two-sided','greater','less'], paired=False,
-                 pooled = 2):
-    ttrs = comparePairs_(df_,varn,col, pooled=True, alt=alt, paired=paired)
-    ttrs_np = comparePairs_(df_,varn,col, pooled=False, alt=alt, paired=paired)
-    ttrs = pd.concat([ttrs,ttrs_np], ignore_index=1)
+def comparePairs(df_, varn, col, 
+                 alt = ['two-sided','greater','less'], paired=False,
+                 pooled = 2, updiag = True, qspairs = None):
+    assert len(df_)
+    ttrs = []
+    if int(pooled) == 1:
+        ttrs = comparePairs_(df_,varn,col, pooled=True, 
+                             alt=alt, paired=paired, qspairs = qspairs)
+        ttrs += [ttrs]
+    if (int(pooled) == 0) or (pooled == 2):
+        ttrs_np = comparePairs_(df_,varn,col, pooled=False, 
+            alt=alt, paired=paired, updiag = updiag, qspairs = qspairs)
+        ttrs += [ttrs_np]
+    ttrs = pd.concat(ttrs, ignore_index=1)
 
     ttrssig = ttrs.query('pval <= 0.05').copy()
     ttrssig['starcode'] = '*'
@@ -4568,17 +4587,24 @@ def comparePairs(df_, varn, col, alt = ['two-sided','greater','less'], paired=Fa
     decorateTtestRest(ttrssig)
     return  ttrssig, ttrs
 
-def comparePairs_(df_, varn, col, pooled=True , alt=  ['two-sided','greater','less'], paired=False):
+def comparePairs_(df_, varn, col, pooled=True , alt=  ['two-sided','greater','less'], paired=False, updiag = True, qspairs = None):
+    '''
+    all upper diag pairs of col values
+    '''
     from behav_proc import myttest
     assert len(df_)
-    colvals = df_[col].unique()
 
     ttrs = []
 
+    if isinstance(col, (list,np.ndarray) ):
+        cols = col
+    else:
+        cols = [col]
+
     if not pooled:
         if col is not None:
-            s1 = ['subject', col, varn]
-            s2 = ['subject', col]
+            s1 = ['subject'] + cols +  [varn]
+            s2 = ['subject'] +  cols
         else:
             s1 = ['subject',  varn]
             s2 = ['subject' ]
@@ -4587,20 +4613,36 @@ def comparePairs_(df_, varn, col, pooled=True , alt=  ['two-sided','greater','le
     #print(df_.groupby()
 
     #colvals = colvals[~np.isnan(colvals)]
-    for cvi,cv in enumerate(colvals):
-        #vals1 = df.query('@col == @cv')
-        for cvj,cv2 in enumerate(colvals[cvi+1:]):
-            #vals2 = df.query('@col == @cv2')
-            cv_ = cv
-            cv2_ = cv2
-            if isinstance(cv,str):
-                cv_ = '"' + cv + '"'
-                cv2_ = '"' + cv2 + '"'
-            qs1 = f'{col} == {cv_}'
-            qs2 = f'{col} == {cv2_}'
+    if qspairs is None:
+        colvals = df_[col].unique()
+        for cvi,cv in enumerate(colvals):
+            #vals1 = df.query('@col == @cv')
+            if updiag:
+                loop2 = enumerate(colvals[cvi+1:])
+            else:
+                loop2 = enumerate(colvals)
+            for cvj,cv2 in loop2:
+                # need if not updiag
+                if cv == cv2:
+                    continue
+
+                #vals2 = df.query('@col == @cv2')
+                cv_ = cv
+                cv2_ = cv2
+                if isinstance(cv,str):
+                    cv_ = '"' + cv + '"'
+                    cv2_ = '"' + cv2 + '"'
+                qs1 = f'{col} == {cv_}'
+                qs2 = f'{col} == {cv2_}'
+                ttrs_ = myttest(df_,qs1, qs2, varn, alt=alt, paired=paired)
+                ttrs_['val1'] = cv
+                ttrs_['val2'] = cv2
+                ttrs += [ttrs_]
+    else:
+        for qs1,qs2 in qspairs:
             ttrs_ = myttest(df_,qs1, qs2, varn, alt=alt, paired=paired)
-            ttrs_['val1'] = cv
-            ttrs_['val2'] = cv2
+            ttrs_['val1'] = qs1
+            ttrs_['val2'] = qs2
             ttrs += [ttrs_]
 
     ttrs = pd.concat(ttrs, ignore_index=1)

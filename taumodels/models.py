@@ -25,7 +25,8 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         raise ValueError('not implemented yet')
 
     # weight_forgetting_exp_pause is starting
-    weight_retention_pause0 = 0.9
+    weight_forgetting_pause0 = 0.9
+    state_forgetting_pause0 = 0.9
 
     error_region_size = np.abs(pert).max() * 1.2
     assert error_region_size > 1e-10
@@ -59,6 +60,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         # positive values mean decay because  w *= exp(-weight_forgetting_exp_pause * break_dur) 
         # before upper was =2
         args_opt['weight_forgetting_exp_pause'] = (-2,  4)
+        args_opt['state_forgetting_exp_pause'] = (-2,  4)
 
     #   ('gaussian_variance', (0.1,5)), # of gaussians
     #   ('execution_noise_variance', (0, error_region_size / 2 )),
@@ -114,19 +116,21 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         #if pause_mask is not None:
         if optimize_initial_err_sens == 'optimize':
             if 'weight_forgetting_exp_pause' in args_opt:
-                (ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause ) = pars
+                (ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
                 pause_mask_ = pause_mask
             else:
                 (ES0, eta, alpha, alpha_w ) = pars
-                weight_forgetting_exp_pause = weight_retention_pause0
+                weight_forgetting_exp_pause = weight_forgetting_pause0
+                state_forgetting_exp_pause = state_forgetting_pause0
                 pause_mask_ = np.zeros_like(pert, dtype=bool)
         else:
             if 'weight_forgetting_exp_pause' in args_opt:
-                (eta, alpha, alpha_w, weight_forgetting_exp_pause ) = pars
+                (eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
                 pause_mask_ = pause_mask
             else:
                 (eta, alpha, alpha_w ) = pars
-                weight_forgetting_exp_pause = weight_retention_pause0
+                weight_forgetting_exp_pause = weight_forgetting_pause0
+                state_forgetting_exp_pause = state_forgetting_pause0
                 pause_mask_ = np.zeros_like(pert, dtype=bool)
 
             ES0 = ES0_
@@ -144,6 +148,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
                 execution_noise_variance = execution_noise_variance,
                 gaussian_variance = None, alpha_w = alpha_w,
                 weight_forgetting_exp_pause = weight_forgetting_exp_pause,
+                state_forgetting_exp_pause = state_forgetting_exp_pause,
                 pre_break_duration = pre_break_duration,
                 EC_mask = EC_mask, error_region = error_region,
                 target_loc = target_loc, pause_mask = pause_mask_,
@@ -216,7 +221,8 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
             d['initial_sensitivity'] = ES0_
         #weight_forgetting_exp_pause
         if 'weight_forgetting_exp_pause' not in args_opt:
-            d['weight_forgetting_exp_pause'] = weight_retention_pause0
+            d['weight_forgetting_exp_pause'] = weight_forgetting_pause0
+            d['state_forgetting_exp_pause'] = state_forgetting_exp_pause
 
         #(ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause ) = pars
         r = simMoE( pert, **d,
@@ -297,6 +303,7 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
                gaussian_variance = None, alpha_w = 1.,
                EC_mask = None, error_region = None,
             weight_forgetting_exp_pause = 1e-3,
+            state_forgetting_exp_pause = 1e-3,
               num_bases = 10, target_loc = 0, pause_mask = None,
               pre_break_duration = None, true_errors = None,
                use_true_errors = False, cap_err_sens = True,
@@ -338,6 +345,7 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
         'sensory_noise_variance': sensory_noise_variance,
         'target_loc': target_loc,
         'weight_forgetting_exp_pause':weight_forgetting_exp_pause,
+        'state_forgetting_exp_pause':state_forgetting_exp_pause,
         'use_true_errors':use_true_errors,
         'cap_err_sens':cap_err_sens,
         'perturbations':pert,

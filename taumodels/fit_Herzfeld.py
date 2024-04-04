@@ -27,6 +27,7 @@ except NameError:
     from datetime import datetime
     print('Data mtime',datetime.fromtimestamp(os.stat(fnf_NIH).st_mtime))
 
+numtrain_CC = 12
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--n_jobs',  default = 40, type=int )
@@ -55,35 +56,41 @@ subject = argscmd.subject
 
 assert argscmd.fitmask in ['no','stable','random']
 
-dfos = dfcc_all_NIH_.query('trial_shift_size == 1 and '
-    'trial_group_col_calc == "trials" and retention_factor_s == "0.924"'
-    ' and subject == @subject').copy()
-assert not dfos.duplicated(['trials']).any()
 
-dfos['perturbation_pscadj'] = dfos['perturbation']
-dfos.loc[dfos['pert_seq_code'] == 1, 
-    'perturbation_pscadj'] = -dfos['perturbation']
+try :
+    print(len(dfos) )
+    if dfos.iloc[0]['subject'] == argscmd.subject:
+        redfos = False
+    else:
+        redfos = True
+except NameError:
+    redfos = True
+
+if redfos:
+    dfos = dfcc_all_NIH_.query('trial_shift_size == 1 and '
+        'trial_group_col_calc == "trials" and retention_factor_s == "0.924"'
+        ' and subject == @subject').copy()
+    assert not dfos.duplicated(['trials']).any()
+
+    dfos['perturbation_pscadj'] = dfos['perturbation']
+    dfos.loc[dfos['pert_seq_code'] == 1, 
+        'perturbation_pscadj'] = -dfos['perturbation']
+    dfos['trial_index'] = dfos['trials']
+    #path_data_cc = '/home/demitau/data_Quentin/full_experiments/context_change_behav/results'
+
+    #dfos['error_deg'] = dfos['error'] * 180 / np.pi
+    dfos['error_deg__'] = dfos['error_pscadj'] * 180 / np.pi
 
 # # main run
 # nt = 1000
 # nsub = 4
 # subjects_sub = subjects[0:nsub]
-# numtrain = 12
 # dfc = df.query('subject in @subjects_sub and trial_index < @nt and trial_index >= @numtrain').copy()
 # dfc.loc[dfc.query('error_lh2_ang_deg.abs() > 60').index, 'error_lh2_ang_deg'] = np.nan
 # # TODO: maybe I should invalidate too big errors, they are clearly outliers
-numtrain = 12
 # do_plot = 0
 # #ipython.run_line_magic('run',' -i ' + scr)
 
-dfos['trial_index'] = dfos['trials']
-
-#path_data_cc = '/home/demitau/data_Quentin/full_experiments/context_change_behav/results'
-
-#dfos['error_deg'] = dfos['error'] * 180 / np.pi
-dfos['error_deg__'] = dfos['error_pscadj'] * 180 / np.pi
-
-coln_error = 'error_lh2_ang_deg'
 
 
 
@@ -125,7 +132,8 @@ if dfname == 'NIH':
     coln_error_ = 'error_deg__'
 else:         
     qs += ' and trial_index >= @numtrain'            
-    coln_error_ = coln_error
+    coln_error__ = 'error_lh2_ang_deg'
+    coln_error_ = coln_error__
 
 
 
@@ -140,34 +148,35 @@ else:
     print(f'ES_thr (calc from all) = {ES_thr}')
 
 
-#clear_outlier = 120
-clear_outlier = ES_thr * 5
-#dfos = dfos.query(qs).copy()
-inds = dfos.query(
-    f'{coln_error_}.abs() > {clear_outlier}').index
-dfos.loc[inds,coln_error_] = np.nan
+if redfos:
+    #clear_outlier = 120
+    clear_outlier = ES_thr * 5
+    #dfos = dfos.query(qs).copy()
+    inds = dfos.query(
+        f'{coln_error_}.abs() > {clear_outlier}').index
+    dfos.loc[inds,coln_error_] = np.nan
 
 
-############   here we set arrays tha will be used for calc
-error = dfos[coln_error_].values
-perturb = dfos['perturbation_pscadj'].values
-perturb[perturb > 180] = perturb[perturb > 180] - 360
-perturb[perturb < -180] = perturb[perturb < -180] + 360
+    ############   here we set arrays tha will be used for calc
+    error = dfos[coln_error_].values
+    perturb = dfos['perturbation_pscadj'].values
+    perturb[perturb > 180] = perturb[perturb > 180] - 360
+    perturb[perturb < -180] = perturb[perturb < -180] + 360
 
-if dfname == 'NIH':
-    #EC_mask = np.array( [0] * len(dfos) )
-    EC_mask = None
-else:
-    EC_mask = (dfos['trial_type'] == "error_clamp").values
+    if dfname == 'NIH':
+        #EC_mask = np.array( [0] * len(dfos) )
+        EC_mask = None
+    else:
+        EC_mask = (dfos['trial_type'] == "error_clamp").values
 
-pre_break_duration = dfos['pre_break_duration'].values
-err_sens = dfos['err_sens'].values
+    pre_break_duration = dfos['pre_break_duration'].values
+    err_sens = dfos['err_sens'].values
 
-plr = []
+    from behav_proc import truncateNIHDfFromErr
+    dfos_thr = truncateNIHDfFromErr(dfos)
+    #err_sens_thr = dfos_thr['err_sens_trunc']
 
-from behav_proc import truncateNIHDfFromErr
-dfos_thr = truncateNIHDfFromErr(dfos)
-err_sens_thr = dfos_thr['err_sens_trunc']
+
 
 if argscmd.fitmask == 'stable':
     fitmask_vals = (dfos['env'] == 'stable').values
@@ -238,6 +247,10 @@ args = nruns * [ arg ];
 
 if argscmd.exit_after == "args_prep":
     sys.exit(0)
+
+######################################################
+######################################################
+
 
 from behav_proc import aggRows
 plr = pd.DataFrame(plr, columns=['minres','pard','arg','subject']) 

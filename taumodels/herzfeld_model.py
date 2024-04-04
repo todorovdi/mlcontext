@@ -9,6 +9,7 @@ def calc(error_region, initial_sensitivity,
         alpha,  # retention
         alpha_w, # retention of weights
         weight_forgetting_exp_pause,
+        state_forgetting_exp_pause,
         execution_noise_variance,
         sensory_noise_variance,
         target_loc,        
@@ -92,6 +93,7 @@ def calc(error_region, initial_sensitivity,
             print(i,'paaause')
             assert i > 0
             assert np.isnan( perturbations[i]  )
+            # TODO: here I need some pause duration perhaps
             w = w * np.exp( - weight_forgetting_exp_pause )
             error_sim[i] = np.nan
             s = np.nan # in this case we don't want to save ES
@@ -125,7 +127,19 @@ def calc(error_region, initial_sensitivity,
             # it mixed unknown things (perturbations) and known internalthings (motor_output)
             # motor_output[i] was set on the previous cycle iteration
             # error_sim is rather error_sim
-            error_sim[i] = motor_output[i] - (target_to_reach[i] + perturbations[i]) + \
+
+            prev_mot_out_eff = motor_output[i]
+            if (i>0) and (pre_break_duration[i-1] > 1e-10):
+                # decay weights in pause
+                decay = np.exp( - weight_forgetting_exp_pause * pre_break_duration[i] )          
+                w *= decay
+                if verbose > 0:
+                    print(i,'pre break ',pre_break_duration[i], decay)
+
+                decay_st = np.exp( - state_forgetting_exp_pause * pre_break_duration[i] )          
+                prev_mot_out_eff *= decay_st
+
+            error_sim[i] = prev_mot_out_eff - (target_to_reach[i] + perturbations[i]) + \
                     np.random.randn() * execution_noise_variance
             if channel_mask[i]:
                 error_sim[i] = 0
@@ -142,12 +156,6 @@ def calc(error_region, initial_sensitivity,
                 if i > 0:
                     error_for_update_w = error_sim[i-1]
 
-            if pre_break_duration[i] > 1e-10:
-                # decay weights in pause
-                decay = np.exp( - weight_forgetting_exp_pause * pre_break_duration[i] )          
-                w *= decay
-                if verbose > 0:
-                    print(i,'pre break ',pre_break_duration[i], decay)
 
 
             # Update the weights, they will have influence on next trial

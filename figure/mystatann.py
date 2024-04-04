@@ -1,43 +1,57 @@
 from behav_proc import compare0,comparePairs
 import numpy as np
-def plotSig0(ax,x,y,txt='*',hor=False, df=None, coln=None, colpair=None, paired=True,
-           pooled=False, alt='two-sided', verbose=0):
+def plotSig0(ax,x,y,txt='*',hor=False, df=None, coln=None, colx=None, 
+           pooled=False, alt='two-sided', verbose=0, xt=None):
         #TODO:::
-    ttrs1 = compare0(df.query(f'{colpair} == @x'), coln, alt=[alt] )
+    df_ = df.query(f'{colx} == {x}')
+    if len(df_) == 0:
+        raise ValueError('Empty fo colx == {} and x == {}'.format(colx, x) )
+    print(len(df_))
+    ttrs1 = compare0(df_, coln, alt=[alt], cols_addstat = [coln] )
     qs = 'alternative == @alt'
     ttrssig = ttrs1.query(qs + ' and pval <= 0.05')
     if verbose:
         display(ttrs1)
 
-    lab2tick = getLab2Tick(ax, hor)
-    #print(lab2tick)
-    if not isinstance(x,str):
-        x = str(x)
+    if xt is None:
+        lab2tick = getLab2Tick(ax, hor)
+        #print(lab2tick)
+        if not isinstance(x,str):
+            x = str(x)
 
-    if x not in lab2tick:
-        print(lab2tick)
-    xt = lab2tick[x]
+        if x not in lab2tick:
+            print(lab2tick)
+        xt = lab2tick[x]
 
     if len(ttrssig):
         #print(f'xt = {xt} y ={y}')
         if hor:
-            ax.text(y,xt,txt)
+            ax.text(y,xt,txt, ha='center')
         else:
-            ax.text(xt,y,txt)
-    return ttrssig
+            ax.text(xt,y,txt, va='center') # center is untested here
+    return ttrs1,ttrssig
 
 def plotSig0All(ax,y,txt='*',hor=False, df=None, coln=None, colpair=None, paired=True,
            pooled=False, alt='two-sided'):
+    '''
+    significance of > 0
+    y is coordinate where to put star
+    '''
+    ttrs = []
     for x in df[colpair].unique():
         try:
-            ttrssig = plotSig0(ax,x,y,txt=txt,hor=hor, df=df, coln=coln, colpair=colpair, paired=paired,
+            ttrs_,ttrssig_ = plotSig0(ax,x,y,txt=txt,hor=hor, df=df, coln=coln, colx=colpair, paired=paired,
             pooled=pooled, alt=alt)
-            ttrssig['varval'] = x
+            ttrssig_['varval'] = x
             #if verbose:
             #    display(ttrssig)
+            ttrssigs += [ttrssig_ ]
+            ttrs += [ttrs_]
         except KeyError as e:
             print('KeyErrro ',str(e))
             raise e
+
+    return pd.concat(ttrs, ignore_index=True),pd.concat(ttrssigs,ignore_index=True)
 
 def getLab2Tick(ax ,hor=False):
 
@@ -63,12 +77,13 @@ def getLab2Tick(ax ,hor=False):
     #        lab2tick[lab.get_text()] = lab._x
     return lab2tick
 
-def plotSig(ax,x1,x2,y,ticklen=2,txt='*',hor=False, df=None, coln=None, colpair=None, paired=True,
+def plotSig(ax,x1,x2,y,ticklen=2,txt=None,hor=False, df=None, coln=None, colpair=None, paired=True,
            pooled=False, alt='two-sided', verbose=0, meanloc_voffset = 0, graded_signif = True,
-           fontsize = None ):
+           fontsize = None, lab2tick = None ):
     # x1 and x2 are tick labels
 
-    lab2tick = getLab2Tick(ax, hor)
+    if lab2tick is None:
+        lab2tick = getLab2Tick(ax, hor)
     #print(lab2tick)
 
     df_ = df.query(f'{colpair} in [@x1,@x2]')
@@ -88,6 +103,7 @@ def plotSig(ax,x1,x2,y,ticklen=2,txt='*',hor=False, df=None, coln=None, colpair=
     if verbose:
         display(ttrssig)
 
+    # draw hor line connecting
     if not isinstance(x1,str):
         x1 = str(x1)
     if not isinstance(x2,str):
@@ -101,6 +117,7 @@ def plotSig(ax,x1,x2,y,ticklen=2,txt='*',hor=False, df=None, coln=None, colpair=
                 [y-ticklen,y,y,y-ticklen], c='k')
 
     if graded_signif:
+        assert txt is None
         txt = ttrssig.iloc[0]['starcode']
         #print(ttrssig)
     #print(x1,x2, y, len(ttrssig))
@@ -112,15 +129,19 @@ def plotSig(ax,x1,x2,y,ticklen=2,txt='*',hor=False, df=None, coln=None, colpair=
         ax.text(meanloc,y,txt, ha='center', fontsize = fontsize)
     return ttrssig
 
-def plotSigAll(ax, yst, yinc, ticklen=2,txt='*',hor=False, df=None, coln=None, colpair=None, paired=True,
+def plotSigAll(ax, yst, yinc, ticklen=2,txt=None,
+               hor=False, df=None, coln=None, colpair=None, paired=True,
            pooled=False, alt='two-sided', verbose=0, pairs = None, meanloc_voffset = 0,
                graded_signif = True, fontsize = None):
-    vals = list(sorted(df[colpair].unique()))
+    '''yst is y starting from bottom'''
     ycur = yst
 
     if pairs is None:
+        vals = list(sorted(df[colpair].unique()))
         pairs = square_updiag(vals)
     pairs = list(pairs)
+ 
+    ttrssigs = []
     print('pairs = ',pairs)
     for x1,x2  in pairs:
     #for i,x1 in enumerate(vals):
@@ -133,10 +154,12 @@ def plotSigAll(ax, yst, yinc, ticklen=2,txt='*',hor=False, df=None, coln=None, c
                         fontsize = fontsize)
             if len(r):
                 ycur += yinc
+                ttrssigs += [r]
         except KeyError as e:
             print(str(e))
 
-    return ycur
+    import pandas as pd
+    return ycur, pd.concat(ttrssigs, ignore_index=1)#.reset_index()
 
 def square_updiag(iterables):
     # prouct without duplicates and diag
