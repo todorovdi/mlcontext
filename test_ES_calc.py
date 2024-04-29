@@ -34,6 +34,9 @@ parser.add_argument('--save_suffix',  default='_test', type=str )
 parser.add_argument('--use_sub_angles',  default=0, type=int )
 parser.add_argument('--read_behav_version',  default='v2', type=str )
 parser.add_argument('--n_subjects',  default=20, type=int )
+parser.add_argument('--coln_error',  default='error', type=str )
+parser.add_argument('--coln_correction_calc',  default=None, type=str )
+ 
 # script flow params
 parser.add_argument('--do_read',  default=1, type=int )
 parser.add_argument('--do_collect',  default=1, type=int )
@@ -158,6 +161,14 @@ badcols =  checkErrBounds(df_all)
 #%debug
 if args.do_add_cols:
     addBehavCols(df_all)
+
+from base2 import subAngles
+df_all['vals_for_corr'] = subAngles(df_all['target_locs'], df_all['org_feedback']) # movement 
+vars_to_pscadj = ['vals_for_corr']
+for varn in vars_to_pscadj:
+    df_all[f'{varn}_pscadj'] = df_all[varn]
+    df_all.loc[df_all['pert_seq_code'] == 1, f'{varn}_pscadj']= -df_all[varn]
+
 #try:
 #    addBehavCols(df_all)
 #except Exception as e:
@@ -206,7 +217,8 @@ if args.do_calc_ES:
         trial_shift_sizes = np.arange(1, args.trial_shift_size_max + 1),
                  addvars=[], use_sub_angles = use_sub_angles, 
             retention_factor = retention_factor,
-            reref_target_locs = args.reref_target_locs)
+            reref_target_locs = args.reref_target_locs, 
+        coln_error=args.coln_error, coln_correction_calc = args.coln_correction_calc)
 
     #assert not df_all_multi_tsz.duplicated().any() 
     assert not df_all_multi_tsz.duplicated(['subject','trials','trial_group_col_calc','trial_shift_size','retention_factor_s']).any()

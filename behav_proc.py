@@ -768,7 +768,10 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
 
         df_all['error_deg'] = (df_all['error'] / np.pi) * 180 
 
-        vars_to_pscadj = [ 'error', 'perturbation']
+
+        df_all['vals_for_corr'] = df_all['target_locs'] - df_all['org_feedback'] # movement 
+
+        vars_to_pscadj = [ 'error', 'perturbation', 'vals_for_corr']
         # 'prev_error' ?
         for varn in vars_to_pscadj:
             df_all[f'{varn}_pscadj'] = df_all[varn]
@@ -799,6 +802,396 @@ def addBehavCols(df_all, inplace=True, skip_existing = False,
         print('bad cols ', badcols)
 
     return df_all
+
+def addBehavCols2(df):
+    '''this is not a replacement of addBehavCols, it just adds more stuff
+
+        args: 
+            df -- one row one trial
+    '''
+    assert df.groupby(['subject'])['trial_index'].diff().max() == 1
+    assert not df.duplicated(['subject','trials']).any()
+    #del df_all_multi_tsz
+    #df['env'] = df['environment'].apply(lambda x: envcode2env[x])
+    assert 'env' in df
+    df['feedback_deg'] = df['feedback'] / np.pi * 180
+    df['error_deg'] = df['error'] / np.pi * 180 
+
+
+    checkErrBounds(df,['error','prev_error','error_deg'])
+
+
+    df['env'] = df['env'].astype('category')
+    df['subject'] = df['subject'].astype('category')
+    df['trial_index'] = df['trials']
+
+    df['error_abs'] = df['error'].abs()
+    df['prev_error_abs'] = df['prev_error'].abs()
+
+    df['prev_error_pscadj'] = df.groupby(['subject','block_name'],
+            observed=True)['error_pscadj'].shift(1, fill_value=0)
+    df['prev_error_pscadj_abs'] = df['prev_error_pscadj'].abs()
+
+
+    # remove NaN for random
+    df['pert_stage_wb'] = df['pert_stage_wb'].where(
+        df['env'] =="stable", -1 )
+    df['pert_stage_wb'] = df['pert_stage_wb'].astype(int)
+
+    df['pert_stage'] = df['pert_stage'].where(
+        df['env'] =="stable", -1 )
+    df['pert_stage'] = df['pert_stage'].astype(int)
+
+    print( df['pert_stage'].unique(),  df['pert_stage_wb'].unique() )
+
+    df['ps_'] = 'rnd'
+    c = df['pert_stage_wb'].isin([1,3])
+    df.loc[c,'ps_'] = 'pert' 
+    c = df['pert_stage_wb'].isin([2,4])
+    df.loc[c,'ps_'] = 'washout' 
+    c = df['pert_stage_wb'].isin([0])
+    df.loc[c,'ps_'] = 'pre' 
+    print( df['ps_'].unique() )
+
+    # solve problem with first trial in pert having high ES because it was not preceived yet
+    # so I shift everything
+    df['ps2_'] = None
+    #c = df['trialwpertstage_wb'] == 0
+    #df.loc[c,'ps2_']  = df['ps_'].shift(1)
+
+    df['ps2_']  = df.groupby(['subject','block_name'], observed=True).shift(1)['ps_']
+    df.loc[ (df['env'] == 'stable') & (df['trialwb'] == 0), 'ps2_' ]  = 'pre'   # otherwise it is None
+    df.loc[ (df['env'] == 'random') & (df['trialwb'] == 0), 'ps2_' ]  = 'rnd'   # otherwise it is None
+    #print( df['ps2_'].unique() )
+    #print( df.loc[df['ps2_'].isnull(),['trials','ps2_']])
+    nu = df['ps2_'].isnull()
+    #display(df[nu])
+    assert not nu.any(), np.sum(nu)
+    dfneq =  (df['ps_'] != df['ps2_'])
+    #print( df.loc[dfneq, ['subject','trials','trialwb','ps2_','ps_','pert_stage']].iloc[:20])
+    _mx  = df.loc[dfneq].groupby(['subject','pert_stage'], observed=True).size().max() 
+    assert _mx == 1, _mx
+
+    #print( df['ps2_'].unique() )
+    #dfneq =  (df['ps_'] != df['ps2_'])
+    #assert df.loc[dfneq].groupby(['subject','pert_stage'], observed=True).size().max() == 1
+
+    # add contra
+    df['ps3_'] = 'rnd'
+    c = df['pert_stage_wb'].isin([1])
+    df.loc[c,'ps3_'] = 'pert_pro' 
+    c = df['pert_stage_wb'].isin([3])
+    df.loc[c,'ps3_'] = 'pert_contra' 
+    c = df['pert_stage_wb'].isin([2,4])
+    df.loc[c,'ps3_'] = 'washout' 
+    c = df['pert_stage_wb'].isin([0])
+    df.loc[c,'ps3_'] = 'pre' 
+    print( df['ps3_'].unique() )
+
+    # separate randoms
+    df['ps4_'] = 'rnd'
+    c = df['pert_stage_wb'].isin([1,3])
+    df.loc[c,'ps4_'] = 'pert' 
+    c = df['pert_stage_wb'].isin([2,4])
+    df.loc[c,'ps4_'] = 'washout' 
+    c = df['block_name'] == 'random1'
+    df.loc[c,'ps4_'] = 'rnd1' 
+    c = df['block_name'] == 'random2'
+    df.loc[c,'ps4_'] = 'rnd2' 
+    print( df['ps4_'].unique() )
+
+    df['trialwpertstage_wb'] = df['trialwpertstage_wb'].where(df['env'] =="stable", 
+                                        df['trialwb'])
+    df['trialwpertstage_wb'] = df['trialwpertstage_wb'].astype(int)
+
+    assert not df.duplicated(['subject','trials']).any()
+
+    df['thr'] = "mestd*0" # for compat
+    df = addErrorThr(df)
+
+    ###################################
+
+    #dfc = df_wthr # NOT COPY here, we really want to add it to 
+    dfc = df # NOT COPY here, we really want to add it to 
+    # df_wthr (to filter TAN by consistency later)
+    dfc['err_sens_change'] = dfc['err_sens'] - dfc['prev_err_sens']
+
+    # without throwing away small errors
+    dfc['subj'] = dfc['subject'].str[3:5]
+
+    dfc['prevprev_error'] = dfc.groupby(['subject'],
+                    observed=True)['prev_error'].shift(1, fill_value=0)
+    dfc['err_sign_same'] =  np.sign( dfc['prev_error'] ) *\
+        np.sign( dfc['prevprev_error'] )  
+
+    dfc['err_sens_change'] = dfc['err_sens'] - dfc['prev_err_sens']
+
+    dfc['dist_rad_from_prevprevtgt'] = \
+        dfc.groupby('subject', observed=True)['target_locs'].diff(2).abs()
+
+    # if one of the errors is small
+    m = (dfc['prevprev_error'].abs() * 180 / np.pi < dfc['error_deg_initstd'] ) | \
+        (dfc['prev_error'].abs() * 180 / np.pi <  dfc['error_deg_initstd']   ) 
+    # if both of the errors are small
+    m2 = (dfc['prevprev_error'].abs() * 180 / np.pi < dfc['error_deg_initstd'] ) & \
+        (dfc['prev_error'].abs() * 180 / np.pi <  dfc['error_deg_initstd']   ) 
+
+    # set sign to one when unclear
+    dfc['err_sign_same2'] = dfc['err_sign_same']
+    dfc['err_sign_same2'] = dfc['err_sign_same2'].where( m, 1)#.astype(int)
+
+    # set sign to zero when unclear
+    dfc['err_sign_same3'] = dfc['err_sign_same']
+    dfc['err_sign_same3'] = dfc['err_sign_same3'].where( m, 0)#.astype(int)
+
+    # set sign to minus one when unclear
+    dfc['err_sign_same4'] = dfc['err_sign_same']
+    dfc['err_sign_same4'] = dfc['err_sign_same4'].where( m, -1)#.astype(int)
+
+    # set sign to zero when unclear, more strict
+    dfc['err_sign_same5'] = dfc['err_sign_same']
+    dfc['err_sign_same5'] = dfc['err_sign_same5'].where( m2, 0)#.astype(int)
+
+    # set NaNs to 0
+    mnan = ~(dfc['prevprev_error'].isna() | dfc['prev_error'].isna())
+    for coln_suffi in range(1,6):
+        if coln_suffi == 1:
+            s = ''
+        else:
+            s = str(coln_suffi)
+        coln_cur = 'err_sign_same' + s
+        dfc[coln_cur] = dfc[coln_cur].where( mnan, 0)
+        dfc[coln_cur] = dfc[coln_cur].astype(int)
+
+    dfc['dist_rad_from_prevprevtgt'] = dfc['dist_rad_from_prevprevtgt'].\
+        apply(lambda x: f'{x:.2f}' )
+    dfc['dist_rad_from_prevprevtgt'] 
+    #assert not dfc['err_sign_same'].isna().any()
+    #dfc['err_sign_same'] = dfc['err_sign_same'].astype(int)
+
+    dfc['err_sign_pattern'] = np.sign( dfc['prevprev_error'] ).apply(str) + \
+        np.sign( dfc['prev_error'] ).apply(str)    
+    print('N bads =',sum(dfc['err_sign_pattern'].str.contains('nan')))
+    dfc.loc[dfc['err_sign_pattern'].str.contains('nan'),'err_sign_pattern'] = ''
+    dfc['err_sign_pattern'] = dfc['err_sign_pattern'].astype(str)
+    dfc['err_sign_pattern'] = dfc['err_sign_pattern'].str.replace('1.0','1')
+
+    # for stats
+    dfc['error_pscadj_abs'] = dfc['error_pscadj'].abs()
+    dfc['trialwpertstage_wb'] = dfc['trialwpertstage_wb'].\
+        where(dfc['environment'] == 0, dfc['trialwb'])
+    dfc['trialwpertstage_wb'] = dfc['trialwpertstage_wb'].astype(int)
+
+    dfc['error_change'] = dfc['error'] - dfc['error'].shift(1)
+    dfc['error_pscadj_change'] = dfc['error_pscadj'] - dfc['error_pscadj'].shift(1)
+    def f(x):    
+        if x > np.pi:
+            x -= 2*np.pi
+        elif x < -np.pi:
+            x += 2*np.pi
+        return x
+    dfc['error_change'] = dfc['error_change'].apply(f)
+    dfc['error_pscadj_change'] = dfc['error_pscadj_change'].apply(f)
+    dfc.loc[dfc['trialwb'] == 0, 'err_sens'] = np.nan
+
+    ##########################
+
+    dfni = df[~np.isinf(df['err_sens'])]
+    ES_thr = calcESthr(dfni, 5.)
+    dfall = truncateNIHDfFromES(df, mult=5., ES_thr=ES_thr)
+
+
+    ###################################
+    # just get perturabtion and env scheme from one subject
+    # will be needed for plotting time resovled
+    #dfall = dfall.reset_index()
+    dfc_p = df.query(f'subject == "{subjects[0]}"')
+    dfc_p = dfc_p.sort_values('trials')
+    pert = dfc_p['perturbation'].values[:192*4]
+    tr   = dfc_p['trials'].values[:192*4]
+    envv = dfc_p['environment'].values[:192*4].astype(float)
+    envv[envv == 0] = np.nan
+    pert[envv == 1] = np.nan
+
+    ##############################
+
+    return df,dfall,ES_thr,envv,pert
+
+def addWindowStatCols(dfc, ES_thr, varn0s = ['error_pscadj', 'error_pscadj_abs'],
+                     histlens_min = 3, histlens_max = 40,
+                      mav_d__make_abs = False, min_periods = 2, cleanTan = True   ):
+    from pandas.errors import PerformanceWarning
+    import warnings
+    print( 'dfc.trial_group_col_calc.nunique() = ', dfc.trial_group_col_calc.nunique() )
+
+    dfcs = dfc.sort_values(
+        ['pert_seq_code', 'subject', 'trial_group_col_calc','trials']).copy()
+
+    assert dfcs.trials.diff().max() == 1
+    # good to add block name because we make a pause between so supposedly we loose memory about last errors
+    grp = dfcs.\
+        groupby(['pert_seq_code', 'subject', 'trial_group_col_calc','block_name'],
+               observed=True)
+
+    #varn0s = ['err_sens','error', 'org_feedback']
+    #varn0s = ['err_sens','error_pscadj', 'error_change','error_pscadj_abs'] #, 'org_feedback_pscadj']
+    #varn0s = ['error_pscadj', 'error_pscadj_abs'] #, 'org_feedback_pscadj']
+
+    
+    histlens = np.arange(histlens_min, histlens_max)
+    ddof = 1 # pandas uses 1 by def for std calc
+    for std_mavsz_ in histlens:
+        for varn in varn0s:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore',category=PerformanceWarning)
+
+                for g,gi in grp.groups.items():
+                    dfcs.loc[gi,f'{varn}_std{std_mavsz_}'] = dfcs.loc[gi,varn].shift(1).\
+                        rolling(std_mavsz_, min_periods = min_periods).std(ddof=ddof)   
+                    dfcs.loc[gi,f'{varn}_mav{std_mavsz_}'] = dfcs.loc[gi,varn].shift(1).\
+                        rolling(std_mavsz_, min_periods = min_periods).mean()   
+
+                dfcs[f'{varn}_invstd{std_mavsz_}'] = 1/dfcs[f'{varn}_std{std_mavsz_}']
+                dfcs[f'{varn}_var{std_mavsz_}']    = dfcs[f'{varn}_std{std_mavsz_}'] ** 2
+                dfcs[f'{varn}_mavsq{std_mavsz_}']  = dfcs[f'{varn}_mav{std_mavsz_}'] ** 2
+                # shoud I change? so far I took abs of mav for mav d std and mav d var
+                if mav_d__make_abs:
+                    dfcs[f'{varn}_mav_d_std{std_mavsz_}']  = dfcs[f'{varn}_mav{std_mavsz_}'].abs() / dfcs[f'{varn}_std{std_mavsz_}']
+                    dfcs[f'{varn}_mav_d_var{std_mavsz_}']  = dfcs[f'{varn}_mav{std_mavsz_}'].abs() / dfcs[f'{varn}_var{std_mavsz_}']
+                else:
+                    dfcs[f'{varn}_mav_d_std{std_mavsz_}']  = dfcs[f'{varn}_mav{std_mavsz_}'] / dfcs[f'{varn}_std{std_mavsz_}']
+                    dfcs[f'{varn}_mav_d_var{std_mavsz_}']  = dfcs[f'{varn}_mav{std_mavsz_}'] / dfcs[f'{varn}_var{std_mavsz_}']
+                dfcs[f'{varn}_Tan{std_mavsz_}']    = dfcs[f'{varn}_mavsq{std_mavsz_}'] / dfcs[f'{varn}_var{std_mavsz_}']
+                dfcs[f'{varn}_invmavsq{std_mavsz_}'] = 1 / dfcs[f'{varn}_mavsq{std_mavsz_}']
+                dfcs[f'{varn}_invmav{std_mavsz_}']   = 1 / dfcs[f'{varn}_mav{std_mavsz_}']
+                dfcs[f'{varn}_std_d_mav{std_mavsz_}']   = dfcs[f'{varn}_std{std_mavsz_}'] / dfcs[f'{varn}_mav{std_mavsz_}']
+                dfcs[f'{varn}_invTan{std_mavsz_}']   = dfcs[f'{varn}_std{std_mavsz_}']**2 / dfcs[f'{varn}_mav{std_mavsz_}']**2
+
+    if cleanTan:
+        print('Cleaning Tan')
+        for std_mavsz_ in histlens:
+            for varn in varn0s:
+                c = dfcs['trialwb'] < std_mavsz_
+                dfcs.loc[c,f'{varn}_Tan{std_mavsz_}'] = np.nan
+
+                
+    # remove too big ES
+    dfcs1 = dfcs.query('err_sens.abs() <= @ES_thr')
+    dfcs_fixhistlen  = truncateDf(dfcs1, 'err_sens', q=0.0, infnan_handling='discard',  cols_uniqify = ['subject'],
+                                  verbose=True) #,'env'
+    dfcs_fixhistlen['environment'] = dfcs_fixhistlen['environment'].astype(int)
+    dfcs_fixhistlen_untrunc = dfcs_fixhistlen.copy()
+    import gc; gc.collect()
+    print('addWindowStatCols: Finished')
+            
+    return dfcs, dfcs_fixhistlen, dfcs_fixhistlen_untrunc, histlens
+    #dfall_notclean_ = pd.concat(dfs)
+    # ttrs = pd.concat(ttrs)
+    # ttrs = ttrs.rename(columns={'p-val':'pval'})
+
+def getQueryPct(df,qs,verbose=True):
+    szprop = df.query(qs).groupby(['subject'],observed=True).size() / df.groupby(['subject'],observed=True).size()
+    szprop *= 100
+    me,std = szprop.mean(), szprop.std()
+    if verbose:
+        print(f'{qs} prpopration mean = {me:.3f} %, std = {std:.3f} %')
+    return me,std
+
+def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, varnames_Tan = [ 'error_pscadj_abs', 'error_pscadj']):
+    '''
+    it NaNifies outliers but does not remove them (because if I were to remove rows for all, the dataset will become super small)
+    '''
+    # remove too large entries
+    maxhl = np.max(histlens) ; print(maxhl)
+
+    # NaN-ify too big stat values
+    std_mult = 5.
+    
+    suffixes = 'mav,std,invstd,mavsq,mav_d_std,mav_d_var,Tan,invmavsq,invmav,std_d_mav,invTan'.split(',')
+
+    varnames_all = []
+    for varn0 in ['error_pscadj_abs', 'error_pscadj']: #'error_change']:
+        for std_mavsz_ in histlens:#[1::10]:
+            #varnames_toshow0_ = []
+            for suffix in suffixes:
+                varn = f'{varn0}_{suffix}{std_mavsz_}'
+            #    varn = 
+            #for varn in  ['{varn0}_std{std_mavsz_}',
+            #              '{varn0}_invstd{std_mavsz_}',                     
+            #             '{varn0}_mavsq{std_mavsz_}','{varn0}_invmavsq{std_mavsz_}',
+            #              '{varn0}_mav_d_std{std_mavsz_}','{varn0}_std_d_mav{std_mavsz_}',
+            #              '{varn0}_mav_d_var{std_mavsz_}',
+            #             '{varn0}_Tan{std_mavsz_}','{varn0}_invTan{std_mavsz_}',
+            #             '{varn0}_std{std_mavsz_}',
+            #             '{varn0}_mav{std_mavsz_}','{varn0}_invmav{std_mavsz_}']:        
+                varnames_all += [varn.format(varn0=varn0,std_mavsz_=std_mavsz_)]
+    varnames_all            
+
+    # here untrunc meaning without removing big stat vals (but big ES vals were removed already)
+    dfcs_fixhistlen_ = dfcs_fixhistlen_untrunc.copy()
+    #dfcs_fixhistlen_ = dfcs_fixhistlen
+    #cs = np.ones(len(dfcs_fixhistlen), dtype=bool)
+    #for varnames_toshow in varnames_toshow0:
+    me_pct_excl = []
+    for varn in varnames_all:
+        std = dfcs_fixhistlen_untrunc[varn].std()
+        c = dfcs_fixhistlen_untrunc[varn].abs() > std*  std_mult
+        me_,std_ = getQueryPct(dfcs_fixhistlen_untrunc, f'{varn} > {std* std_mult}', False)
+        print('Num excl: {:30}, mean={:.3} %, std={:.3f} len={:7},  stdthr={:.4f}'.format(varn,me_, std_, len(c), std*std_mult) )
+        dfcs_fixhistlen_.loc[c,varn] = np.nan
+        me_pct_excl += [{'varn':varn, 'mean_excl':me_, 'std_excl':std_,
+                         'std_thr':std*std_mult}]
+    me_pct_excl = pd.DataFrame(me_pct_excl)
+
+    kill_Tan_2nd = False
+    if kill_Tan_2nd:
+        varnames_all_Tanlike = []
+        for varn0 in varnames_Tan: #'error_change']:
+            for std_mavsz_ in range(2,maxhl+1):#[1::10]:
+                #varnames_toshow0_ = []
+                for varn in  ['{varn0}_mav_d_std{std_mavsz_}',
+                              '{varn0}_mav_d_var{std_mavsz_}',
+                             '{varn0}_Tan{std_mavsz_}']:        
+                    varnames_all_Tanlike += [varn.format(varn0=varn0,std_mavsz_=std_mavsz_)]
+
+        for varn in varnames_all_Tanlike:
+            dfcs_fixhistlen_.loc[dfcs_fixhistlen_['trialwb'] == 2, varn] = np.nan
+    dfcs_fixhistlen = dfcs_fixhistlen_ # this will be used for corr calc
+    return dfcs_fixhistlen, me_pct_excl
+
+def _addErrorThr(df, stds):
+    # estimate error at second halfs of init stage
+    df_wthr = df.merge(stds, on='subject')
+
+    df_wthr['error_initstd'] = df_wthr.error_deg_initstd /  180 * np.pi 
+    #df_wthr
+    return df_wthr
+
+def _calcStds(df):
+    qs_initstage = 'pert_stage_wb.abs() < 1e-10'
+    df_init = df.query(qs_initstage + ' and trialwb >= 10')
+    grp = df_init.groupby(['subject','pert_stage'],observed=True)
+    #display(grp.size())
+    #df_init['feedback_deg'].min(), df_init['feedback_deg'].max()
+
+    #grp['error_deg'].std()
+
+    stds = df_init.groupby(['subject'],observed=True)['error_deg'].std()#.std()
+    return stds
+
+def addErrorThr(df):
+    # def df_thr thing
+    stds = _calcStds(df)
+    mestd = stds.mean()
+
+    print('mestd = {:.4f}, stds.std() = {:.4f} '.format(mestd, stds.std() ) )
+
+    stds = stds.to_frame().reset_index().rename(columns={'error_deg':'error_deg_initstd'})
+
+
+    df_wthr = _addErrorThr(df, stds)
+    return df_wthr 
+
 
 def pscAdj_NIH(df_all, cols, subpi = False, inplace=True):
     if not inplace:
@@ -1108,11 +1501,13 @@ def getMaskNotNanInf(vals, axis = None):
     return r
 
 def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
-               return_mask = False, trialcol = 'trials',
-               cols_uniqify = ['trial_shift_size',
-                               'trial_group_col_calc', 'retention_factor_s'] , verbose=False ,
-               hi = None, low=None,
-               trunc_hi = True, trunc_low = True, abs=False, retloc=False):
+    return_mask = False, trialcol = 'trials',
+    cols_uniqify = ['trial_shift_size',
+                                'trial_group_col_calc', 'retention_factor_s'] , 
+    verbose=False ,
+    hi = None, low=None,
+    trunc_hi = True, trunc_low = True, abs=False, retloc=False):
+
     if not inplace:
         df = df.copy()
 
@@ -1233,6 +1628,9 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
         print('dubplicate check ')
         assert not df.duplicated().any()
     elif infnan_handling == 'discard':
+        if verbose:
+            sz = df[~mask].groupby('subject').size() / df.groupby('subject').size() * 100 
+            print( f'Discarded percentage {sz.mean():.3f}, (std={sz.std():.3f} )' )
         df = df[mask]
 
         #subj2qts = calcQuantilesPerESCI(df, coln, q=q)
@@ -4524,6 +4922,9 @@ def myttest(df_, qs1, qs2, varn, alt = ['two-sided','greater','less'], paired=Fa
 
 def compare0(df, varn, alt=['greater','less'], cols_addstat = []):
     from pingouin import ttest
+    '''
+        returns ttrs (not only sig)
+    '''
     if isinstance(alt,str):
         alt = [alt]
     ttrs = []
@@ -4562,6 +4963,9 @@ def decorateTtestRest(ttrs):
 def comparePairs(df_, varn, col, 
                  alt = ['two-sided','greater','less'], paired=False,
                  pooled = 2, updiag = True, qspairs = None):
+    '''
+    returns sig,all
+    '''
     assert len(df_)
     ttrs = []
     if int(pooled) == 1:
@@ -4659,7 +5063,7 @@ def reshiftPi(df,coln):
     df[coln] = df[coln].apply(f)
 
         
-def addWindowCols(df, cols = ['error', 'err_sens','error_pscadj', 'error_change'], 
+def addWindowCols_DEPRECATED(df, cols = ['error', 'err_sens','error_pscadj', 'error_change'], 
                   window_sizes =  [3, 5,10,15], shift = True):
     #, 'org_feedback_pscadj'] ):
     assert not df.duplicated(['subject','trials']).any()      # maybe I can get oveer it but not now
@@ -4721,7 +5125,7 @@ def truncateNIHDfFromErr(df, err_col = 'error', varn = 'err_sens', mult = 1):
     df_init = df.query(qs_initstage + ' and trialwb >= 10')
     #grp = df_init.groupby(['subject','pert_stage'])
 
-    stds = df_init.groupby(['subject'])[err_col].std()#.std()
+    stds = df_init.groupby(['subject'], observed=True)[err_col].std()#.std()
     mestd = stds.mean()
     if len(stds) > 1:
         stdstd = stds.std()
@@ -4764,8 +5168,40 @@ def truncateNIHDfFromErr2(df_wthr, mults):
         
     dfall_notclean = pd.concat(dfs)
     dfall = truncateDf(dfall_notclean, 'err_sens', q=0.0, infnan_handling='discard', 
-                       cols_uniqify = ['subject','env','thr'])
+                       cols_uniqify = ['subject','env','thr'],
+                       verbose=True)
 
+    return dfall
+
+def calcESthr(df, mult):
+    assert not np.isinf(df['err_sens']).any()
+    dfni = df                                           
+    dfni_d = dfni.groupby(['subject'],observed=True)\
+        ['err_sens'].describe().reset_index()
+    ES_thr = dfni_d[dfni_d.columns[1:]].mean().to_dict()['std'] * mult
+    #ES_thr_single = ES_thr
+    return ES_thr
+
+def truncateNIHDfFromES(df_wthr, mult, ES_thr=None):
+    # remove trials with error > std_mult * std of error
+    std_mult = mult
+
+    dfni = df_wthr[~np.isinf(df_wthr['err_sens'])]
+    if ES_thr is None:
+        ES_thr = calcESthr(dfni, mult)
+        print(f'ES_thr (recalced) = {ES_thr}')
+
+    dfni_g = dfni.query('err_sens.abs() <= @ES_thr')
+    nremoved_pooled = len(dfni) - len(dfni_g)
+
+    sz = dfni.groupby(['subject'],observed=True).size()
+    sz_g = dfni_g.groupby(['subject'],observed=True).size()
+    mpct = ((sz - sz_g) / sz).mean() * 100
+    print(f'Mean percentage of removed trials = {mpct:.3f}%, '
+          f'pooled = {nremoved_pooled / len(dfni) * 100:.3f}%')
+
+    dfall = dfni_g.copy()
+    dfall['thr'] = "mestd*0" # just for compat
     return dfall
 
 # mamba install seaborn ipykernel shapely matplotlib statsmodels pyqt pingouin scipy pandas
@@ -4881,38 +5317,62 @@ def adjustErrBoundsPi(df, cols):
 
 #####################
 
-def corrMean(dfallst, trialcol = 'trialwpertstage_wb', stagecol = 'pert_stage_wb', 
+def corrMean(dfallst, coltocorr = 'trialwpertstage_wb', 
+             stagecol = 'pert_stage_wb', 
              coln = 'err_sens', method = 'pearson', covar = None):
+    '''
+    compute correlation with p-value within subject and also mean across
+    does it within condition defined by stagecol
+
+    returns:
+        tuple of correlation dataframes
+        first is mean within across subjects, second with separate subjects
+        
+    '''
     # corr or partial correlation within participant, averaged across participants
     import pingouin as pg
 
     def f(df_):
         try:
             if covar is None:
-                r = pg.corr( df_[trialcol], df_[coln],  method=method)
+                r = pg.corr( df_[coltocorr], df_[coln],  method=method)
             else:
-                r = pg.partial_corr( df_, trialcol, coln, covar, method=method)
+                r = pg.partial_corr( df_, coltocorr, coln, covar, method=method)
             r['method'] = method
-            r['mean_x'] = df_[trialcol].mean()
+            r['mean_x'] = df_[coltocorr].mean()
             r['mean_y'] = df_[coln].mean()
-            r['std_x'] = df_[trialcol].std()
+            r['std_x'] = df_[coltocorr].std()
             r['std_y'] = df_[coln].std()
         except ValueError as e:
             return None
         return r
-    corrs_per_subj_me0 = dfallst.groupby(['thr','subject',stagecol]).apply(f)
 
+    groupcols0 = []
+    if 'thr' in dfallst.columns:
+        groupcols0 = ['thr'] 
+    groupcols = groupcols0 + [stagecol]
+    groupcols2 = groupcols0 + ['subject', stagecol]
+
+    # separate subjects
+    corrs_per_subj_me0 = dfallst.groupby(groupcols2).apply(f)
+    corrs_per_subj_me0['method'] = method
+    
+
+    # mean over subjects
     corrs_per_subj_me = corrs_per_subj_me0.rename(columns={'p-val':'pval'})
     corrs_per_subj_me = corrs_per_subj_me.\
-        groupby(['thr',stagecol], observed=True)[['r','pval',
+        groupby(groupcols, observed=True)[['r','pval',
             'mean_x','mean_y','std_x','std_y']].mean(numeric_only = 1)
-    #corrs_per_subj_me['method'] = method
+    corrs_per_subj_me['method'] = method
     corrs_per_subj_me['varn'] = covar
 
     return corrs_per_subj_me, corrs_per_subj_me0
 
 
 def formatRecentStatVarnames(isec, histlen_str=' (histlen='):
+    '''
+    takes list of varnames, outputs list of nice varnames
+    '''
     isec_nice = []
     for s in isec:
         s2 = s.replace('error_pscadj_abs','Error magnitude')\

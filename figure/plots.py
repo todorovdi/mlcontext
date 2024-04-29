@@ -501,17 +501,25 @@ def plotSlide(df, dfconddif0_pvd, dfconddif0r_pvd, dfconddif_pvd, vsfigns, cols0
     print(f'Finished, plotted {ctr} figures')
     return fg,ctr
 
-def genStRandLegendHandles(rect=True):
+def genStRandLegendHandles(rect=True, include_labels = False):
+    '''
+    ret stable,random
+    '''
     import matplotlib.patches as mpatches
     from matplotlib.lines import Line2D
+    if include_labels:
+        ils = dict(label='stable')
+        ilr = dict(label='random')
+    else:
+        ils,ilr = {},{}
     if rect:
-        rect1 = mpatches.Rectangle((0, 0), 1, 1, color='tab:orange')
-        rect2 = mpatches.Rectangle((0, 0), 1, 1, color='tab:grey')
+        rect1 = mpatches.Rectangle((0, 0), 1, 1, color='tab:orange', **ils)
+        rect2 = mpatches.Rectangle((0, 0), 1, 1, color='tab:grey', **ilr)
     else:
         ls = '-'
         llw = 2
-        rect1 = Line2D([0], [0], color='tab:orange', lw=llw, ls=ls)
-        rect2 = Line2D([0], [0], color='tab:grey', lw=llw, ls=ls)
+        rect1 = Line2D([0], [0], color='tab:orange', lw=llw, ls=ls, **ils)
+        rect2 = Line2D([0], [0], color='tab:grey', lw=llw, ls=ls, **ilr)
     return list([rect1,rect2])
 
 def plotPatterns(X,y,epinfo,precalc_patterns, precalc_filters):
@@ -559,7 +567,9 @@ def plotPatterns(X,y,epinfo,precalc_patterns, precalc_filters):
     #cbar.set_label("AUC")
 
 def relplot_multi(sep_ys_by = 'hue', **kwargs):
-    '''like relplot but for multiple ys (they go get separated by hue)'''
+    '''like relplot but for multiple ys (they go get separated by hue)
+    sep_ys_by is WITHIN row separation
+    '''
     assert 'y' not in kwargs
     assert sep_ys_by not in kwargs
     assert 'data' in kwargs
@@ -567,6 +577,10 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
     assert '__varname' not in kwargs['data']
     assert '__varval' not in kwargs['data']
     assert '__varrow' not in kwargs['data']
+    kind = kwargs.get('kind','line')
+
+    if sep_ys_by == 'col' and kind == 'density':
+        raise ValueError('not implemented, use row or hue. Col is supposed to be used for condition variable')
 
     if 'facet_kws' not in kwargs:
         kwargs['facet_kws'] = {'sharex':True, 'sharey':False}
@@ -587,6 +601,16 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
         else:
             szstr = f'N={szmin}'
 
+
+    def density_plot(x,y, **kwargs):
+        #ax = sns.kdeplot(data=dfcs_fixhistlen,
+        #           x='err_sens',y=vn, fill=False, hue=coln_col)
+        df__ = pd.DataFrame( np.array(list(zip(x,y))))
+        ax = sns.kdeplot(data=df__,
+                x=x,y=y, fill=True, **kwargs)
+        ax.axhline(0,ls=':', c='r')
+        ax.axvline(0,ls=':', c='r')
+
     dfs = []
 
     df['__varname'] = pd.Series(['']*len(df), dtype=str)
@@ -602,6 +626,8 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
         del kwargs['ys']
         #for i,yn in enumerate(kwargs['ys']):
         kwargs['data'] = df
+        if kind == 'density':
+            raise ValueError('not implemented, use version with list of lists')
         fg = sns.relplot(**kwargs,y='__varval',
                          **{sep_ys_by:'__varname'} )
 
@@ -620,7 +646,11 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
         for i,yns in enumerate(ys):
             for j,yn in enumerate(yns):
                 df['__varval' ] = df[yn]
-                df['__varname'] = yn + f' {szstr}' 
+                ynext = yn + f' {szstr}'  
+                if kind == 'line':
+                    df['__varname'] = ynext
+                else:
+                    df['__varname'] = yn
                 df['__varrow'] = i
                 dfs += [df.copy()]
         df = pd.concat(dfs, ignore_index = True)
@@ -642,7 +672,16 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
         else:
             ylims = None
 
-        fg = sns.relplot(**kwargs,y='__varval',
+
+        if kind == 'density':
+            x = kwargs['x']
+            del kwargs['x']
+            subkws = kwargs['facet_kws']
+            del kwargs['facet_kws']
+            fg = sns.FacetGrid(**{sep_ys_by:'__varname'}, **kwargs, **subkws) #col='__varrow', data=kwargs['data'])
+            fg.map(density_plot,  x, "__varval", label='')          
+        else:
+            fg = sns.relplot(**kwargs,y='__varval',
                          **{sep_ys_by:'__varname'}, row='__varrow')
 
         for i,yns in enumerate(ys):
