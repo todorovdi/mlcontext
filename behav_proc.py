@@ -4966,6 +4966,7 @@ def comparePairs(df_, varn, col,
     '''
     returns sig,all
     '''
+    assert isinstance(paired, bool)
     assert len(df_)
     ttrs = []
     if int(pooled) == 1:

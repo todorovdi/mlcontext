@@ -639,61 +639,21 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
 def _minim_D():
     return 0
 
-def fitDiedrischenModel(dfos, coln_error, linalg_error_handling = 'ignore', nruns=1, online_feedback = True):
-    # n_jobs == 1 always here
-
+def fitDiedrischenModel(perturb_cursubj, 
+                        measured_error,  
+        linalg_error_handling = 'ignore', nruns=1, online_feedback = True):
     from taumodels.state_space_fit_toolbox.state_space_fit import state_space_fit
     from scipy.optimize import minimize # Import the minimize function from scipy.optimize module
 
-    # we'll shift it later if offline feedback but we need to calc beh with unshifted
-    perturb_cursubj0        = dfos['perturbation'].values
-    measured_error         = dfos[coln_error].values
-    perturb_cursubj        = dfos['perturbation'].values
-    #if online_feedback:
-    #    perturb_cursubj        = dfos['perturbation'].values
-    #else:
-    #    perturb_cursubj        = dfos['perturbation'].shift(1).values
-    #    perturb_cursubj[0] = 0
-    behavior_cursubj = perturb_cursubj0 - measured_error
-    #behavior_cursubj = perturb_cursubj - measured_error; behavior_cursubj[0] = 0
-
-    #                              a0   b0   x00
-    #params_init = np.array([   1,  0.1,  0])[None,:]
-    #                             amin amax bmin bmax x0min x0max
-    #search_space  = np.array([   1,   1,   0, 0.5,  -15, 15])[None,:]
+    behavior_cursubj = perturb_cursubj - measured_error
     search_space  = np.array([   0.3,   1,   0, 0.8,  -45, 45])[None,:]
 
     parnames0 = 'A,B,X0'.split(',')
     optbounds = list(zip( search_space[0,::2], search_space[0,1::2])  )
-
-
-    # optimization options
-
-    #opts = {'method': 'SLSQP', 'tol':1e-10, 'options':{'maxiter':3000}} # Set the optimization options as a dictionary
-    #nbOptParams = len(parnames0)
-
-    #modeltype2res = {}
-    #behavior[:,s] = measured_error[:,s] # Use numpy indexing to get a column of an array
-    #nas = np.isnan(behavior_cursubj)
-    #_fnz = np.flatnonzero
     #One-dimensional linear interpolation for monotonically increasing sample points.
-    # np.interp 1st s args
-    #xarray_like
-    #The x-coordinates at which to evaluate the interpolated values.
-
-    #xp1-D sequence of floats
-    #The x-coordinates of the data points, must be increasing if argument period is not specified. Otherwise, xp is internally sorted after normalizing the periodic boundaries with xp = xp % period.
-
-    #fp1-D sequence of float or complex
-    #The y-coordinates of the data points, same length as xp.
-    #behavior_cursubj[nas] =\
-    #    np.interp(_fnz(nas),_fnz(~nas),behavior_cursubj[~nas]) # Interpolate NaNs using numpy indexing and numpy.interp
-
     behavior_cursubj = interpnan(behavior_cursubj)
-
     assert not np.isnan(behavior_cursubj).any()
 
-    #print(perturb_cursubj[190:200])
     # Fit a one-state model without retention factor (Diedrieschen, 2003),
     # using a deterministic lmse approach
     #print( params_init_Diedrischen, search_space_Diedrischen )
@@ -704,9 +664,7 @@ def fitDiedrischenModel(dfos, coln_error, linalg_error_handling = 'ignore', nrun
             x = np.random.uniform(lower, upper)
             x0.append(x)
         x0 = np.array(x0)
-        #print('x0 = ', dict(zip(parnames0, x0 ) ) )
         params_init = x0[None,:]
-        #print(params_init.shape)
 
         r = state_space_fit(behavior_cursubj, perturb_cursubj,
                 params_init, search_space,'lmse', 'norm',
@@ -714,27 +672,15 @@ def fitDiedrischenModel(dfos, coln_error, linalg_error_handling = 'ignore', nrun
                 sep_err_begend = not online_feedback)
         plr += [r]
 
-    #plr = Parallel(n_jobs=n_jobs, backend='multiprocessing',
-    #               )(delayed(_minim)(*arg, *x0,
-    #                optbounds,opts,
-    #                perturb,error, pause_mask, bclip, modelBeforeSwitch, reg) for arg in args)
-
     minfval = np.inf
     # when using lmse noises_var = np.var(output - behavior)
     for r in plr:
-        #nbT,startIdx,res = r
-        #print(nbT,startIdx, res.fun)
         output, params, asymptote, noises_var, states, performances  = r
         AICc, mse = performances
         if mse < minfval:
             minfval = mse
             # only defined if come inside this if
             ropt = r
-
-    #pars = [*parvec, nbT_opt, startIdx_opt]
-
-
-
 
     #outs_ output, params, asymptote, noises_var, states, performances
     # asymptote is not very useful for me
@@ -753,28 +699,123 @@ def fitDiedrischenModel(dfos, coln_error, linalg_error_handling = 'ignore', nrun
 
     return d
 
-def fitAlbertModel(dfos, coln_error, linalg_error_handling = 'ignore',
-                  use_mex = 0  ):
+def fitAlbertModel(perturb_cursubj, measured_error, 
+    linalg_error_handling = 'ignore', use_mex = 0,
+                   B_step = 0.01, A_step = 0.01,
+                   force_constraints = True, search_method = 'norm',
+                   params_init_type = 'random'):
     from taumodels.state_space_fit_toolbox.state_space_fit import state_space_fit
     from scipy.optimize import minimize # Import the minimize function from scipy.optimize module
-    perturb_cursubj        = dfos['perturbation'].values
-    measured_error = dfos[coln_error].values
     behavior_cursubj = perturb_cursubj - measured_error
 
     # Fit a two-state model with retention factor using stochastic EM approach
     # (Albert, 2018) optimizing parameters in log-space
-    params_init =       np.array( [[0.95, 0.05,  0], # Use nested lists to create a 2D array in Python
-                                [0.7,  0.3,  0]] )
+    # with .T it is A1,A2,B1,B2,X01,X02
+    params_init_def = np.array( [[0.95, 0.05,  0], 
+                                   [0.7,  0.3,  0]] ).T
     #                             amin amax bmin bmax x0min x0max
-    search_space =       np.array( [[ 0.2,   1,   0, 0.5,    0,  0], # Use nested lists to create a 2D array in Python
-                                [ 0.2,   1,   0, 0.5,  -15, 15]] )
+    #param_bounds = np.array( [[ 0.2,   1,   0, 0.8,  0,  0], 
+    #                                [ 0.2,   1,   0, 0.8,  -45, 45]] )
 
-    r = state_space_fit(behavior_cursubj, perturb_cursubj,
-            params_init, search_space, 'em', 'log',
-                        linalg_error_handling = linalg_error_handling,
-                        use_mex = use_mex)
+    param_bounds = np.array( [[ 0.1,   0.2,   0,   0.0,  -45, 0.], 
+                                [ 1,     1,   0.8, 0.8,   45, 0.]] )
+    # this should be consisistent with how simulate_deterministic_state_space does
+    # reads parameters
+    #parnames = 'a1 b1 x01 a2 b2 x02'.split(' ')
+    parnames = 'A1 A2 B1 B2 X01 X02'.split(' ')
+    # A1,B1 is fast
 
-    output, params, asymptote, noises_var, states, performances  = r
+    if params_init_type == 'random':
+        x0 = []
+        for i in range(param_bounds.shape[1]):
+            lower,upper = param_bounds[:,i]
+            x = np.random.uniform(lower, upper)
+            x0.append(x)
+        x0 = np.array(x0)
+        params_init = x0
+    elif params_init_type == 'def':
+        param = params_init_def
+
+    print('param_bounds.shape = ',param_bounds.shape)
+
+
+    #r = state_space_fit(behavior_cursubj, perturb_cursubj,
+    #        params_init, param_bounds, 'em', 'log',
+    #                    linalg_error_handling = linalg_error_handling,
+    #                    use_mex = use_mex)
+    #output, params, asymptote, noises_var, states, performances  = r
+
+
+    from state_space_fit_toolbox.state_space_fit import simulate_deterministic_state_space
+    
+
+    def deterministic_ss_mse(S, perturb, behavior, search_method):
+        # S: set of parameters [a1, ..., as, b1, ... bs, x01, ..., x0s]
+        #print('deterministic_ss_mse: S = ',S)
+        #print('deterministic_ss_mse: S shape = ',S.shape)
+
+        # this simulation does not really uses behavior even though it takes it
+        # as a parameter
+        # search_method is either norm or log
+        model_estimate,state_estim = \
+            simulate_deterministic_state_space(S, perturb, behavior,
+            search_method )
+        #print(model_estimate.shape, behavior.shape)
+        mse = np.mean((model_estimate - behavior)**2)
+        return mse
+    f = deterministic_ss_mse
+
+    #bds = list(zip(param_bounds[0, ::2],
+    #                param_bounds[0, 1::2]) )
+
+    #bds = list(zip(param_bounds[:, ::2].flatten(), param_bounds[:, 1::2].flatten() ) )
+    bds = list(zip(param_bounds[0, :], param_bounds[1, :]) )
+    print('search space',param_bounds)
+    print('bds',bds)
+    print('init',params_init.flatten())
+
+    cons = []
+    if force_constraints:
+        if A_step is not None:
+            def constrA(x):
+                # retention of first should be lower, so A1 should be smaller than A2
+                A1,A2 = x[0],x[1]
+                return A2 - A1 - A_step
+            cons += [ {'type':'ineq', 'fun':constrA} ]
+        if B_step is not None:
+            def constrB(x):
+                # LR of first should be faster, so B1 should be bigger than B2
+                B1,B2 = x[2],x[3]
+                return B1 - B2 - B_step
+            cons += [ {'type':'ineq', 'fun':constrB} ]
+
+    #step = 1e-8
+    #opts = {'method': 'SLSQP', 'tol':1e-10,
+    #        'options':{'maxiter':3000, 'eps':step, 'disp':0} }
+
+    res = minimize(f, params_init.flatten(), 
+        args=(perturb_cursubj, behavior_cursubj, search_method),
+                   bounds = bds, constraints=cons ) 
+
+    y_pred,state = simulate_deterministic_state_space(res.x, perturb_cursubj, 
+                behavior_cursubj, search_method ) 
+
+    res.xd = dict(zip(parnames, res.x) )
+    res.x0 = x0
+    res.B_step = B_step
+    res.A_step = A_step
+    res.force_constraints = force_constraints
+
+
+    #noises_var = np.var(output - behavior)
+    #mse_opt = np.mean((output - behavior)**2)
+    #lik_opt = (N / 2) * (-mse_opt / noises_var - np.log(noises_var) - np.log(2 * np.pi))
+    #AICc = 2 * nbOptParams - 2 * lik_opt + \
+    #    (2 * nbOptParams * (nbOptParams + 1)) / \
+    #    (N - nbOptParams - 1)
+
+    return res, y_pred,state
+
     d = {'output': output,
      'params': params,
      'asymptote': asymptote,
@@ -783,12 +824,6 @@ def fitAlbertModel(dfos, coln_error, linalg_error_handling = 'ignore',
      'performances': performances}
 
     d['y_pred'] = d['output']  # for compatibility
-
-    #performances = [AICc, mse_opt] # mse_opt is the MSE for best params
-
-    #modeltype2res['Albert'] = d
-
-    return d
 
 def getBestHerzPar(plr2):
     import pandas as pd

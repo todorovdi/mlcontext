@@ -104,7 +104,9 @@ def get_target_angles(num_targets, target_location_pattern, spread=15, defloc = 
 
 class VisuoMotor:
 
-    def add_param(self, name, value):
+    def add_param(self, name, value, overwrite = True):
+        if not overwrite:
+            assert name not in self.params
         self.params.update({name: value})
         self.paramfile.write(name + ' = ' + str(value) + '\n')
 
@@ -120,20 +122,14 @@ class VisuoMotor:
     def initialize_parameters(self, info, subdir = 'data'):
         # self.debug = False
         self.params = {}
-        self.task_id = 'context_change'
         self.subject_id = info['participant']
         self.session_id = info['session']
         self.timestr = time.strftime("%Y%m%d_%H%M%S")
 
-        
-
         if not os.path.exists(subdir):
             os.makedirs(subdir)
-        #if self.debug:
-        #    self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id)
-        #else:
             
-        self.filename = pjoin(subdir, self.subject_id + '_' + self.task_id +
+        self.filename = pjoin(subdir, self.subject_id + '_' + info.get('task_id','')  +
                              '_' + self.timestr)
         param_fn = self.filename + '.param'
         self.paramfile = open(param_fn, 'w')
@@ -141,12 +137,12 @@ class VisuoMotor:
         self.logfile = open(self.filename + '.log', 'w')
         # for debug mostly
         self.trigger_logfile = open(self.filename + '_trigger.log', 'w')
+        self.copy_param(info,'task_id','context_change')
 
 
         ij = info.get('joystick',None)
         if ij is None:
             self.add_param('controller_type', 'joystick')
-            #self.add_param('controller_type', 'mouse')
         else:
             if ij:
                 self.add_param('controller_type', 'joystick')
@@ -185,8 +181,8 @@ class VisuoMotor:
 
             # for controller coords computation
             # I want same accuracy in X and Y dir
-            self.add_param('width_for_cccomp',  1080)
-            self.add_param('height_for_cccomp', 1080)
+            self.copy_param(info,'width_for_cccomp',  1080)
+            self.copy_param(info,'height_for_cccomp', 1080)
         elif ssz == 'auto':
             raise ValueError('not implemented')
         elif ssz.find('x') >= 0:
@@ -213,7 +209,7 @@ class VisuoMotor:
         self.add_param('FPS', 120)
         #self.add_param('FPS', 60)
         self.add_param_comment('# Radius of the cursor')
-        self.add_param('radius_cursor', 10)
+        self.copy_param(info,'radius_cursor', 10)
 
         self.add_param('radius_home', self.params['radius_cursor'] * 3.5)
         self.add_param('radius_home_strict_inside',
@@ -224,8 +220,11 @@ class VisuoMotor:
 
         # distance from the start location to the target center
         self.add_param_comment('# Radius of the invisible boundary')
-        self.add_param('dist_tgt_from_home',
-                int(round(self.params['height']*0.5*0.7)))
+
+        
+        self.copy_param(info,'dist_tgt_from_home_mult',0.7)
+        self.copy_param(info,'dist_tgt_from_home',
+                int(round(self.params['height']*0.5*self.params['dist_tgt_from_home_mult'])))
 
         self.add_param_comment('# Use eye tracker?')
         self.add_param('use_eye_tracker', 1)
@@ -242,8 +241,11 @@ class VisuoMotor:
         self.copy_param(info, 'trigger_device', None)
         self.copy_param(info, 'flush_log_freq', 'every_frame')
 
+        # minimum allowed total duration of the task in seconds
+        self.copy_param(info, 'min_duration_s', 20)
+
         # to minimize change of screen content
-        self.add_param('ITI_show_home',1)
+        self.copy_param(info, 'ITI_show_home',1)
 
         self.add_param('max_EUR_reward', 10)
         self.add_param('success_rate_expected', 0.9) # not only hits but total reward
@@ -251,7 +253,7 @@ class VisuoMotor:
         self.add_param('reward_rounding', 'end')
 
         # can be 'no'
-        self.add_param('autmatic_joystick_center_calib_adjust', 'end_ITI')
+        self.copy_param(info,'autmatic_joystick_center_calib_adjust', 'end_ITI')
 
 
         self.copy_param(info, 'noise_fb', 0)
@@ -342,7 +344,7 @@ class VisuoMotor:
         # enables or disable return phase
         #self.add_param('rest_after_return',1)
         self.add_param('rest_after_return',0)
-        self.add_param('prep_after_rest',1)
+        self.copy_param(info,'prep_after_rest',1)
 
         self.add_param('return_home_after_pause',1)
         self.add_param('return_home_after_ITI',1)
@@ -424,12 +426,12 @@ class VisuoMotor:
 
         many_contexts = 0
         if many_contexts:
-            self.add_param('pert_block_types',
+            self.copy_param(info,'pert_block_types',
                 'rot-15,rot15,rot30,rot60,rot90,scale-,scale+,reverse_x')
         else:
             #self.add_param('pert_block_types','rot-15,rot15,rot30,rot60')
             #self.add_param('pert_block_types','rot-15,rot15,rot30')
-            self.add_param('pert_block_types','rot-20,rot20')
+            self.copy_param(info,'pert_block_types','rot-20,rot20')
 
         self.add_param('spec_trial_modN',8)
         self.add_param('allow_context_conseq_repetition', 0)
@@ -467,6 +469,9 @@ class VisuoMotor:
         self.copy_param(info, 'block_len_min',6)
         self.copy_param(info, 'block_len_max',11)
         self.copy_param(info, 'n_context_appearences',7)
+        self.copy_param(info, 'pert_blocks_inc_veridical',1)
+
+ 
 
         # alternative giving 55 min as well
         #self.add_param('block_len_min',10)
@@ -610,7 +615,7 @@ class VisuoMotor:
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False,
                  seed= None, start_fullscreen = 0,
-                save_tigger_and_trial_infos_paramfile = 1, parafile_close= 1,
+                save_tigger_and_trial_infos_paramfile = 1, paramfile_close= 1,
                 subdir='data', gen_trial_infos = True, init_params = True ):
 
         if not os.path.exists(subdir):
@@ -772,12 +777,12 @@ class VisuoMotor:
         #
         "A la fin de chaque mouvement, la couleur du cercle central "
         "changera (vert ou rouge)\n pour vous indiquer si vous avez atteint "
-        "correctement la cible ou non.\n"
+        "correctement la cible ou non.\n")
 
-        f'\nParfois il y aura des pauses de {self.params["pause_duration"]} secondes. Restez calme, ne faites rien,\n'
-            f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indiquera la fin de la pause\n'
+        self.instuctions_str += (f'\nParfois il y aura des pauses de {self.params["pause_duration"]} secondes. Restez calme, ne faites rien,\n'
+            f'et surtout gardez {ctrl_str} dans la position neutre. La réapparition du curseur indiquera la fin de la pause\n')
         #"N'oubliez pas : vous devez garder le courseur (donc votre main aussi) stable à la fin pour que le movuement soit consideré terminé.\n"
-        f'{retpos_str}\n'
+        self.instuctions_str += (f'{retpos_str}\n'
         "Après avoir terminé, vous recevrez une récompense (bonus) en euros\n proportionnelle à votre performance :)")
         if instr_calib:
             self.instuctions_str += '\n\nAppuyez sur "c" pour calibrer le joystick'
@@ -898,7 +903,9 @@ class VisuoMotor:
         self.scale_params = {'scale-':self.params['scale_neg'],
                              'scale+':self.params['scale_pos']}
         self.pert_block_types = self.params['pert_block_types'].split(',')
-        self.vis_feedback_types = self.pert_block_types + ['veridical']
+        self.vis_feedback_types = self.pert_block_types
+        if self.params['pert_blocks_inc_veridical']:
+            self.vis_feedback_types +=  ['veridical']
         if gen_trial_infos:
             vfti_seq, ct_inds = self.genContextSeq(verbose=0)
 
@@ -1157,7 +1164,7 @@ class VisuoMotor:
             #               , indent=4)
             #self.paramfile.write( s + '\n' )
 
-        if parafile_close:
+        if paramfile_close:
             self.paramfile.close()
 
 
@@ -1287,6 +1294,11 @@ class VisuoMotor:
                 self._display_surf = pygame.display.set_mode(self.size, pygame.FULLSCREEN,  display = display)
             else:
                 self._display_surf = pygame.display.set_mode(self.size,  display = display)
+
+        info = pygame.display.Info()
+        self.display_width  = info.current_w
+        self.display_height = info.current_h
+
         self._running = True
 
     def save_scr(self, trial_info = None, prefix=None):

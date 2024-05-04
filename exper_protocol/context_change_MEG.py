@@ -12,19 +12,18 @@ import math
 from os.path import join as pjoin
 from itertools import product  # ,repeat
 import argparse
-import pylink
-#import EyeLink
 #from utils import get_target_angles
 
 from context_change import (fnuniquify,trial_info2trgtpl_upd,gget,get_target_angles)
 from context_change import VisuoMotor
 
-# eyelink calib
-from CalibrationGraphicsPygame import CalibrationGraphics
 
 #/usr/share/EyeLink/SampleExperiments/Python/examples/Pygame_examples
 
-from eyelink_helpers import *
+# eyelink calib
+#from CalibrationGraphicsPygame import CalibrationGraphics
+#import EyeLink
+#from eyelink_helpers import *
 
 # at CRNL we have EyeLink 1000 Plus
 # Ask Seb for 15 min!
@@ -32,7 +31,7 @@ from eyelink_helpers import *
 class VisuoMotorMEG(VisuoMotor):
 
     def initialize_parameters(self, info, subdir):
-        info['show_diode'] = 1
+        #info['show_diode'] = 1
         #info['conseq_veridical_allowed'] = 0
         info['conseq_veridical_allowed'] = 1   # Wolpert said we should allow
         info['conseq_veridical_allowed_3inarow'] = 0  # We discussed with R he said we should prohibit
@@ -51,17 +50,16 @@ class VisuoMotorMEG(VisuoMotor):
         if info.get('time_feedback', None) is None:
             info['time_feedback'] = expected_reaction_time + saefty_dur + (0.75 - expected_reaction_time)
 
-        info['block_len_min'] = 7
-        info['block_len_max'] = 11 # NOT including. So largest will be 10
-        info['n_context_appearences'] = 11
+        # now it is set in parser default vals
+        #info['block_len_min'] = 7
+        #info['block_len_max'] = 11 # NOT including. So largest will be 10
+        #info['n_context_appearences'] = 11
 
-
-
-        info['special_trials'] = ['ECpair_prebreak']
-        # we had 20
-        # the larger the more task success, the fewer explicit (according to Li-Ann Leow
-        info['radius_target'] = 30
-        #info['radius_target'] = 40
+        #info['special_trials'] = info['special_trials'].split(',') # ['ECpair_prebreak']
+        ## we had 20
+        ## the larger the more task success, the fewer explicit (according to Li-Ann Leow
+        #info['radius_target'] = 30
+        ##info['radius_target'] = 40
 
         #info['target_location_pattern'] =  'fan'
         info['target_location_pattern'] =  'fan_right'
@@ -86,6 +84,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'aux_info_print_log', 0 )
         self.copy_param(info, 'reward_only_if_leave_home', 0 )
 
+        # this if eyetracker dummy mode
         self.copy_param(info, 'dummy_mode', 1)
         self.copy_param(info, 'maxMEGrec_dur', 11 * 60)  # this is not counting pauses
         self.copy_param(info, 'max_time_between_breaks', 10 * 55)  # this soft, is not counting pauses. If 60, then have to regen too often
@@ -98,9 +97,19 @@ class VisuoMotorMEG(VisuoMotor):
         self.add_param('expected_break_duration', 60.) # sec
         self.add_param('allow_restart_from_break', 1 )
 
-        ##############
+        self.copy_param(info, 'use_eyetracker', 1)
+        self.copy_param(info, 'play_start_sound', 1)
+        self.copy_param(info, 'insert_breaks', 1)
+        self.copy_param(info, 'show_joy_coords_during_instructions', 0 )
+        self.copy_param(info, 'show_EUR_reward_end', 1)
 
-        pns_ver_save = ['pylink','pygame']
+        ##############
+        self.use_eyetracker = self.params['use_eyetracker']
+
+        pns_ver_save = ['pygame']
+        if self.use_eyetracker:
+            import pylink
+            pns_ver_save += ['pylink']
         for pn in pns_ver_save:
             self.add_param(pn + '.version', str(eval(pn + '.__version__' ) )  )
         
@@ -266,20 +275,23 @@ class VisuoMotorMEG(VisuoMotor):
         #raise ValueError('st')
 
 
-    def prepVars(self, insert_breaks = True):
-        self.el_tracker = EL_init(self.params['dummy_mode'] )
-
+    def prepVars(self, info, insert_breaks = True):
         import time
-        # this is important to use newly generated time here, because if we reload the task after exiting, we don't want to overwrite edf file
-        self.timestr_hms = time.strftime("%H%M%S")
-        self.edf_file = open_edf_file(self.el_tracker, 
-            self.timestr_hms, self.params)
+        self.el_tracker = None
+        if self.use_eyetracker:
+            from eyelink_helpers import EL_init, open_edf_file, EL_config
+            self.el_tracker = EL_init(self.params['dummy_mode'] )
 
-        preamble_text = 'RECORDED BY %s' % os.path.basename(__file__)
-        self.el_tracker.sendCommand(f"add_file_preamble_text '{preamble_text}'" )
-        self.el_tracker.setOfflineMode()
+            # this is important to use newly generated time here, because if we reload the task after exiting, we don't want to overwrite edf file
+            self.timestr_hms = time.strftime("%H%M%S")
+            self.edf_file = open_edf_file(self.el_tracker, 
+                self.timestr_hms, self.params)
 
-        EL_config(self.el_tracker, self.params['dummy_mode'])
+            preamble_text = 'RECORDED BY %s' % os.path.basename(__file__)
+            self.el_tracker.sendCommand(f"add_file_preamble_text '{preamble_text}'" )
+            self.el_tracker.setOfflineMode()
+
+            EL_config(self.el_tracker, self.params['dummy_mode'])
 
         self.instuctions_eyelink_calib_str = (f"Pour calibrer eyetracker, appuyez 'e'. Sinon appuyez sur un bouton du joystick pour commencer \n")
         #self.phase_after_restart = 'REST'
@@ -320,7 +332,10 @@ class VisuoMotorMEG(VisuoMotor):
         self.phase_start_times['current_trial'] = time.time()
 
         # start phase
-        self.current_phase = "EYELINK_CALIBRATION_PRE"
+        if self.use_eyetracker: 
+            self.current_phase = "EYELINK_CALIBRATION_PRE"
+        else:
+            self.current_phase = "TASK_INSTRUCTIONS"
 
         self.dummy_eyelink_counter = None  # set to meaningful value when press 'e'
 
@@ -360,6 +375,7 @@ class VisuoMotorMEG(VisuoMotor):
 
 
         if insert_breaks:
+            print('INSERT _BREAKS')
             self.insertBreaks()
 
             # add two ECs to the end
@@ -462,10 +478,13 @@ class VisuoMotorMEG(VisuoMotor):
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
-                 seed= None, start_fullscreen = 0):
+                 seed= None, start_fullscreen = 0, subdir='dataMEG'):
         self.initial_time = time.time()
 
-        subdir='dataMEG'
+        if not os.path.exists(subdir):
+            print('creating subdir ',subdir)
+            os.makedirs(subdir)
+        
         self.subdir = subdir
         import pickle
 
@@ -475,7 +494,7 @@ class VisuoMotorMEG(VisuoMotor):
         last_fn_base = None
         from utils import getLastInfo, getLastFname
 
-        if par['continue_from_last'] is not None:
+        if info['continue_from_last'] is not None:
             last_fn_base = getLastFname(subdir)  # returns full path
 
             if last_fn_base is None:
@@ -540,7 +559,7 @@ class VisuoMotorMEG(VisuoMotor):
         VisuoMotor.__init__(self, info, task_id, use_true_triggers, debug,
                             seed, start_fullscreen,
                             save_tigger_and_trial_infos_paramfile = 0,
-                            parafile_close = 0, subdir=subdir,
+                            paramfile_close = 0, subdir=subdir,
                             gen_trial_infos = (last_fn_base is None),
                             init_params = (last_fn_base is None))
 
@@ -550,7 +569,8 @@ class VisuoMotorMEG(VisuoMotor):
         assert self.params['trigger_device'] == 'parallel'
 
 
-        CTD_to_export = self.prepVars(insert_breaks = (last_fn_base is None))
+        CTD_to_export = self.prepVars(info, insert_breaks = (last_fn_base is None) and \
+                self.params['insert_breaks'] )
 
 
         # recalc durtot_all
@@ -564,19 +584,24 @@ class VisuoMotorMEG(VisuoMotor):
         print(f'UPD: Expected trial duration = {self.trial_dur_expected} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message')
 
         if not self.debug:
-            assert (self.durtot_all / 60.) > 50, ('Too few trials, please restart'
+            assert (self.durtot_all / 60.) > self.params['min_duration_s'], ('Too few trials, please restart'
             f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
 
 
         self.color_diode_off = self.color_bg
         self.phase_after_pause = 'TRAINING_END'  
+        #if self.params['motor_prep_duration'] > 1e-10:
+        #    self.phase_after_REST = 'GO_CUE_WAIT_AND_SHOW'
+        #else:
+        #    self.phase_after_REST = 'TARGET_AND_FEEDBACK'
+        
 
         if sys.platform in ['linux', 'linux2', 'darwin']:
             assert not self.use_true_triggers
         elif sys.platform in ['win32', 'cygwin'] :
             assert self.use_true_triggers
 
-        if par['continue_from_last'] == 'trial':
+        if info['continue_from_last'] == 'trial':
             self.reward_accrued = reward_accrued_before_last_trial
             self.trial_index = last_trial_ind
 
@@ -589,16 +614,16 @@ class VisuoMotorMEG(VisuoMotor):
                 print('advance trial_index by 1 to avoid starting from break')
                 print( 'trial_info = ',self.trial_infos[self.trial_index] )
 
-        elif par['continue_from_last'] == 'block':
+        elif info['continue_from_last'] == 'block':
             self.reward_accrued = reward_accrued_before_last_block
             self.trial_index = last_block_first_trial_ind
             print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
-        elif par['continue_from_last'] == 'pause':
+        elif info['continue_from_last'] == 'pause':
             raise ValueError('Have to implement reward reward_accrued')
             self.reward_accrued = None
             self.trial_index = last_phase + 1
             print(f'We continue prev task run starting with trial {self.trial_index} with reward_accrued = {self.reward_accrued}')
-        elif par['continue_from_last'] == 'break':
+        elif info['continue_from_last'] == 'break':
             raise ValueError('Have to implement reward reward_accrued')
             self.reward_accrued = None
             self.trial_index = last_break + 1
@@ -629,6 +654,9 @@ class VisuoMotorMEG(VisuoMotor):
                     "mouvements.\n La récompense n'est pas calculée lors de cet entraînement.")
                 #self.phase2text['TRAINING_END': 'La tâche principale commence maintenant']
                 self.phase2text['TRAINING_END_AFTER_BREAK'] = 'La tâche recommence maintenant'
+        if 'first_phase_after_start' in info:
+            print('override  first_phase_after_start')
+            self.first_phase_after_start = info['first_phase_after_start']
 
         if last_fn_base is None:
             # we need params inited
@@ -755,11 +783,12 @@ class VisuoMotorMEG(VisuoMotor):
 
 
     def playSound(self):
-        print("Play sound")
-        pygame.mixer.init()
-        oggfile = 'beep-06.mp3'
-        pygame.mixer.music.load(oggfile)
-        pygame.mixer.music.play()
+        if self.params['play_start_sound']:
+            print("Play sound")
+            pygame.mixer.init()
+            oggfile = 'beep-06.mp3'
+            pygame.mixer.music.load(oggfile)
+            pygame.mixer.music.play()
 
     def on_init(self):
         r = pygame.init()
@@ -788,10 +817,17 @@ class VisuoMotorMEG(VisuoMotor):
                 self._display_surf = pygame.display.set_mode(self.size, pygame.FULLSCREEN,  display = display)
             else:
                 self._display_surf = pygame.display.set_mode(self.size,  display = display)
+
+        info = pygame.display.Info()
+        self.display_width  = info.current_w
+        self.display_height = info.current_h
+        print('Current disp size = ',self.display_width,self.display_height)
+
         self._running = True
 
     def on_phase_change(self, prev_phase, prev_trial_index):
-        self.el_tracker.sendMessage('phase change to %s' % self.current_phase)
+        if self.el_tracker is not None:
+            self.el_tracker.sendMessage('phase change to %s' % self.current_phase)
 
         self.phase_start_times[self.current_phase] = time.time()
         # do I need it?
@@ -816,7 +852,8 @@ class VisuoMotorMEG(VisuoMotor):
             self.log_flush()
 
     def on_trial_change(self, prev_trial_index, prev_trial_info):
-        self.el_tracker.sendMessage('TRIALID %d' % self.trial_index)
+        if self.el_tracker is not None:
+            self.el_tracker.sendMessage('TRIALID %d' % self.trial_index)
 
         trial_info2 = self.trial_infos[self.trial_index]
         tc = time.time()
@@ -824,7 +861,9 @@ class VisuoMotorMEG(VisuoMotor):
         self.phase_start_times['current_trial'] = tc
 
         # Finding the smallest element in tis_break that is larger than ti
-        closest_break = next((x for x in self.tis_break if x > self.trial_index), -1)
+        closest_break = None
+        if self.params['insert_breaks']:
+            closest_break = next((x for x in self.tis_break if x > self.trial_index), -1)
 
         print(f'TIME: trial completed in {tdif:.2f} sec')
         print(f'------------- Trial index change! {prev_trial_index} -> {self.trial_index} (N total {len(self.trial_infos)}, next break {closest_break})')
@@ -895,7 +934,12 @@ class VisuoMotorMEG(VisuoMotor):
             rnd = False
             if self.params['reward_rounding'] == 'end':
                 rnd = True
-            perfstrs = self.getPerfInfoStrings(reward_type = ['money'],
+
+            if self.params['show_EUR_reward_end']:
+                reward_type_toshow = ['money']
+            else:
+                reward_type_toshow = ['hit']
+            perfstrs = self.getPerfInfoStrings(reward_type = reward_type_toshow,
                                          inc_mvt_num = False,
                                          inc_last_reward = False,
                                                round = rnd)
@@ -1163,8 +1207,15 @@ class VisuoMotorMEG(VisuoMotor):
                     #    self.restartTask(very_first = 1, phase = phase_after_calib)
                         self.current_phase = phase_after_calib 
                 else:
-                    EL_calibration(self.el_tracker, self.start_fullscreen)
-                    EL_getEyeInfo(self.el_tracker)
+                    if self.el_tracker is not None:
+                        from eyelink_helpers import EL_calibration,EL_getEyeInfo
+                        EL_calibration(self.el_tracker, self.start_fullscreen)
+                        EL_getEyeInfo(self.el_tracker)
+                    else:
+                        print('NO EYELINK!!!')
+                        print('NO EYELINK!!!')
+                        print('NO EYELINK!!!')
+                        print('NO EYELINK!!!')
 
                     #self.restartTask( very_first = 1, phase = phase_after_calib)
                     self.current_phase = phase_after_calib 
@@ -1182,6 +1233,21 @@ class VisuoMotorMEG(VisuoMotor):
                 #                   font_size = self.foruser_font_size)
                 self.drawTextMultiline(instr, font = self.myfont_popup,
                                        pos_label= 'center', voffset_glob = -300 )
+
+                if self.params['show_joy_coords_during_instructions']:
+                    if self.clock is not None:
+                        fps = self.clock.get_fps()
+                    else:
+                        fps = None
+                    if self.params['controller_type'] == 'joystick':
+                        ax1 = self.HID_controller.get_axis(0)
+                        ax2 = self.HID_controller.get_axis(1)
+                        axstr = f'joystick axes=({ax1:.3f},{ax2:.3f})'
+                    else:
+                        px,py = self.HID_controller.get_pos()
+                        axstr = f'mouse pos=({px:.3f},{py:.3f})'
+                    debugstrs = [f'{axstr}, FPS={fps:4.0f}']
+                    self.drawTextMultiline(debugstrs)
             elif self.current_phase == "EYELINK_CALIBRATION_PRE":
                 self._display_surf.fill(self.color_bg)
                 instr = self.instuctions_eyelink_calib_str.split('\n')
@@ -1383,13 +1449,14 @@ class VisuoMotorMEG(VisuoMotor):
         try:
             # make it hang
             #EL_driftCorrect(self.el_tracker, dummy_mode) # NEW commenting it
-
-            self.el_tracker.setOfflineMode()
-            self.el_tracker.sendMessage('MEG start trigger sent')
-            self.el_tracker.startRecording(1, 1, 1, 1)
-            # Allocate some time for the tracker to cache some samples
-            pylink.pumpDelay(100)
-            self.el_tracker.sendMessage('Eyelink rec start after 100ms delay')
+            if self.el_tracker is not None:
+                import pylink
+                self.el_tracker.setOfflineMode()
+                self.el_tracker.sendMessage('MEG start trigger sent')
+                self.el_tracker.startRecording(1, 1, 1, 1)
+                # Allocate some time for the tracker to cache some samples
+                pylink.pumpDelay(100)
+                self.el_tracker.sendMessage('Eyelink rec start after 100ms delay')
 
             # record a message to mark the start of scanning
         except RuntimeError as error:
@@ -1481,7 +1548,9 @@ class VisuoMotorMEG(VisuoMotor):
         called in vars_update
         rotates coordinates
         '''
-        assert perturbation in self.vis_feedback_types
+        # it can be during initial training even if not later
+        if perturbation != 'veridical':
+            assert perturbation in self.vis_feedback_types, perturbation
 
         scale = 1.
         rotang_deg = 0.
@@ -2220,9 +2289,11 @@ class VisuoMotorMEG(VisuoMotor):
         self.logfile.close()
         self.trigger_logfile.close()
 
-        EL_abort(self.el_tracker)
-        EL_disconnect(self.el_tracker, self.edf_file, 
-                       self.filename, self.params['dummy_mode'])
+        if self.el_tracker is not None:
+            from eyelink_helpers import EL_abort,EL_disconnect
+            EL_abort(self.el_tracker)
+            EL_disconnect(self.el_tracker, self.edf_file, 
+                           self.filename, self.params['dummy_mode'])
         pygame.quit()
         exit()
 
@@ -2409,10 +2480,7 @@ class VisuoMotorMEG(VisuoMotor):
         self.on_cleanup(0)
 
 
-
-if __name__ == "__main__":
-    # note: when adding new arg here if I want it to be present in self.params, I need to 
-    # explicitly run self.copy_param in initialize_parameters function
+def make_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', default='no' )
     parser.add_argument('--fullscreen', default=0, type=int )
@@ -2421,13 +2489,16 @@ if __name__ == "__main__":
     parser.add_argument('--participant', default='debug' )
     #parser.add_argument('--session', default='debugsession' )
     parser.add_argument('--show_dialog', default=1, type=int )
+    parser.add_argument('--show_diode', default=1, type=int )
     # can be  <int width>x<int hegiht>
     parser.add_argument('--screen_size', default='fixed', type=str )
     parser.add_argument('--test_err_clamp', default=0, type=int)
     parser.add_argument('--test_pause',    default=0,  type=int)
     parser.add_argument('--test_break',    default=0,  type=int)
+    parser.add_argument('--use_eyetracker',    default=1,  type=int)
     parser.add_argument('--dummy_mode',     type=int)
     parser.add_argument('--test_end_task',    default=0,  type=int)
+    parser.add_argument('--play_start_sound',    default=1,  type=int)
     parser.add_argument('--num_training',       type=int)
     parser.add_argument('--test_trial_ind', default =-1,   type=int)
     parser.add_argument('--noise_fb',    type=int)
@@ -2437,6 +2508,19 @@ if __name__ == "__main__":
     parser.add_argument('--aux_info_print_log', default=0,  type=int)
     parser.add_argument('--max_time_between_breaks',  type=int) # in seconds
     parser.add_argument('--reward_only_if_leave_home', default=0, type=int) # by def reward always at least a bit
+    parser.add_argument('--insert_breaks', default=1, type=int) 
+    parser.add_argument('--min_duration_s', default=50, type=float) 
+    parser.add_argument('--first_phase_after_start', default='TRAINING_START', type=str) 
+
+    #
+    parser.add_argument('--radius_target', default=30, type=float) 
+    parser.add_argument('--special_trials', default='ECpair_prebreak', type=str) 
+    parser.add_argument('--n_context_appearences', default=11, type=int) 
+    parser.add_argument('--block_len_min', default=7,  type=int) 
+    # NOT including. So largest will be 10 
+    parser.add_argument('--block_len_max', default=11, type=int) 
+    parser.add_argument('--pert_block_types', default='rot-20,rot20', type=str) 
+ 
                                              
     # def 0.2
     parser.add_argument('--discrepancy_red_lr',  type=float)
@@ -2458,7 +2542,16 @@ if __name__ == "__main__":
 
     parser.add_argument('--exit_after_ntrials', default=None, type=int)
     parser.add_argument('--flush_log_freq', type=str)
+    parser.add_argument('--task_id', type=str)
  
+    return parser
+
+if __name__ == "__main__":
+    # note: when adding new arg here if I want it to be present in self.params, I need to 
+    # explicitly run self.copy_param in initialize_parameters function
+    parser = make_parser()
+    parser.add_argument('--task_id', default='context_change', type=str)
+
     args = parser.parse_args()
     par = vars(args)
 
@@ -2495,8 +2588,6 @@ if __name__ == "__main__":
     #    info['participant'] = 'Dmitrii_test'
 
     info['session'] = 'session1'
-
-
     for p,v in par.items():
         if p not in ['participant', 'session']:
             info[p] = v

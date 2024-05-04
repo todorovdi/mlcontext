@@ -2,6 +2,7 @@
 import numpy as np
 import os
 from state_space_fit_toolbox.pyEMtoolbox import generalized_expectation_maximization
+from numba import jit
 
 # Author: Lucas Struber
 # Email: lucas.struber@univ-grenoble-alpes.fr
@@ -211,7 +212,11 @@ def state_space_fit(behavior, perturb, params_init=None,
                 bounds=bds)
 
         elif nbStates == 2:
-            res = minimize(deterministic_ss_mse, params_init.flatten(), args=(perturb, behavior, search_method),
+            if sep_err_begend:
+                f = deterministic_ss_mse2
+            else:
+                f = deterministic_ss_mse
+            res = minimize(f, params_init.flatten(), args=(perturb, behavior, search_method),
                 bounds=list(zip(params_search_ranges[:, [0, 2, 4]].flatten(), params_search_ranges[:, [1, 3, 5]].flatten())),
                 constraints={'type': 'ineq', 'fun':
                     lambda x: A_con @ x - b_con.flatten()})
@@ -302,6 +307,7 @@ def state_space_fit(behavior, perturb, params_init=None,
 
     return output, params, asymptote, noises_var, states, performances
 
+@jit(nopython=True)
 def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     # Summary: simulate a state-space model ignoring noises from a set of
     # parameters
@@ -331,6 +337,10 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     A = S[:nbStates] # Use slicing to get the first nbStates elements of S
     b = S[nbStates:2*nbStates] # Use slicing to get the next nbStates elements of S
     X0 = S[2*nbStates:] # Use slicing to get the remaining elements of S
+
+    #A = S[::3]
+    #b = S[1::3]
+    #X0 = S[2::3]
 
     if search_space == 'log':
         A = 1 / (1 + np.exp(-A)) # Use numpy.exp for element-wise
@@ -363,7 +373,10 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     # later y_pred will be compared with behavior
     return y_pred, state
 
+@jit(nopython=True)
 def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verbose=0):
+    # 2nd ver is for offline feedback
+
     # Summary: simulate a state-space model ignoring noises from a set of
     # parameters
     #
@@ -399,6 +412,7 @@ def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verb
         A = 1 / (1 + np.exp(-A)) # Use numpy.exp for element-wise
         b = 1 / (1 + np.exp(-b))
 
+    # it is sum of states, not endpoint and not error
     y_pred = np.zeros_like(behavior) # Use numpy.zeros_like to create an array
     # of zeros with the same shape and type as behavior
 
@@ -413,10 +427,12 @@ def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verb
 
     # not shifted pert. I.e. pert[n] pertubation indeed happening on trial n, even if not percieved until the end of trial
     for t in range(1, len(behavior)):
-        err_est_before_mvt = perturb[t-1] - y_pred[t]
+        # before I had ... - y_pred[t]
+        err_est_before_mvt = perturb[t-1] - y_pred[t-1] 
         err_observed = perturb[t] - y_pred[t]
 
         #pert_to_use = perturb[t]
+        # stat[t] is that state in the beginning of trial t
         for s in range(nbStates):
             state[t][s] = A[s]*state[t-1][s] +\
                 b[s]*err_est_before_mvt 
@@ -424,10 +440,12 @@ def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verb
         # for offline feedback it should be y_pred[t+1] = state[t]
         # y_pred[t] will be compared in the end with behavior[t]
         y_pred[t] = np.sum(state[t])
-        err_pred[t] = err_est_before_mvt
+        err_pred[t] = err_est_before_mvt # err as predicted before mvt
 
         if verbose:
-            print(f'{t}: p[t-1]={perturb[t-1]:.3f} p[t]={perturb[t]:.3f} y_pred[t-1]={y_pred[t-1]:.3f} ep={err_est_before_mvt:.3f} eo={err_observed:.3f} y_pred[t]={y_pred[t]:.3f}')
+            print('Need to reimplem')
+            #print(f'{t}: p[t-1]={perturb[t-1]:.3f} p[t]={perturb[t]:.3f} y_pred[t-1]={y_pred[t-1]:.3f} ep={err_est_before_mvt:.3f} eo={err_observed:.3f} y_pred[t]={y_pred[t]:.3f}')
+
         # if offline fb
         # in the end of trial t-1 we will have info about perturb[t-1]
         # we update y_pred[t] (before making movement) 
