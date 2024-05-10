@@ -430,8 +430,10 @@ def _minim_T(nbT,startIdx, a0,c0,b0,x00, state_retention_pause0, optbounds, opts
                                         motor_var = motor_var  )
     if pause_mask is None:
         IC = [a0,c0,b0,x00]
+        parnames = 'a0,c0,b0,x00'.split(',')
     else:
         IC = [a0,c0,b0,x00,state_retention_pause0],
+        parnames = 'a0,c0,b0,x00,state_retention_pause0'.split(',')
 
     res = minimize(f,IC, bounds=optbounds,**opts)
 
@@ -454,7 +456,11 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
                 online_feedback=True,
                 use_true_error=False, use_true_error_stats=True,
                inds_state_reset = [], stats_powers=(2,-2),
-                motor_var = 0.):
+                motor_var = 0.,
+                coln_pert = 'perturbation_pscadj'):
+    '''
+    motor_var is used to compute random noise during simulation (determines random distr sigma)
+    '''
     # modelBeforeSwitch = 'NoAdapt'  # then ignore Bstart
 
 
@@ -511,10 +517,10 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     error = dfos.query('subject == @subj')[coln_error].to_numpy()
 
     if online_feedback:
-        perturb = dfos.query('subject == @subj')['perturbation'].to_numpy()
+        perturb = dfos.query('subject == @subj')[coln_pert].to_numpy()
         #perturb_cursubj        = dfos['perturbation'].values
     else:
-        perturb = dfos.query('subject == @subj')['perturbation'].shift(1).to_numpy()
+        perturb = dfos.query('subject == @subj')[coln_pert].shift(1).to_numpy()
         #perturb_cursubj        = dfos['perturbation'].shift(1).values
         perturb[0] = 0
 
@@ -546,9 +552,9 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
             args += [(nbT,startIdx,*x0) ]
 
     args = nruns * args
-    print(f'Start parallel over nbTrials and startIdx, {len(args) } args over {n_jobs} workers')
     #a0,c0,b0,x00,state_retention_pause0
     if n_jobs > 1:
+        print(f'fitTanModel: Start parallel over nbTrials and startIdx, {len(args) } args over {n_jobs} workers')
         plr = Parallel(n_jobs=n_jobs, backend='multiprocessing',
                        )(delayed(_minim_T)(*arg,
                         optbounds,opts,
@@ -559,6 +565,7 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
                                            motor_var) \
                             for arg in args)
     else:
+        print(f'fitTanModel: Start not parallel over nbTrials and startIdx, {len(args) } args')
         plr = [ _minim_T(*arg, optbounds,opts,
                         perturb,error, pause_mask, bclip,
                         modelBeforeSwitch, reg,
@@ -584,6 +591,7 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     parnames = parnames0 + 'NbPreviousTrials,StartIdx'.split(',')
     nbOptParams = len(parnames)
     pars_  = dict(zip(parnames,pars) )
+    print(pars_)
     out_cursubj['params'] = pars_
 
     # run simulation
@@ -597,7 +605,7 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     out_cursubj['optres'] = minres
     out_cursubj['adaptation_rate'] = adaptationRate_Tan
 
-    print(minres)
+    print('minres = ',minres)
     #print('adaptationRate_Tan.shape = ',adaptationRate_Tan.shape)
 
     out_cursubj['y_pred'] = output_Tan
