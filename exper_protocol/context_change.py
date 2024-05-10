@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# needed for joystick
+# Copyright (c) 2024 Dmitrii Todorov todorovdi@gmail.com
+# Licensed under the MIT License (see LICENSE file)
+
 import pygame
 # from pygame.locals import *
-from psychopy import gui, core
+#from psychopy import gui, core
 import time
 import os
 # import logging
@@ -29,6 +31,8 @@ def fnuniquify(path):
     return path
 
 def gget(d,k,defv):
+    '''if k not present OR d[k] is None, return defv, 
+       otherwise return d[k]'''
     v = d.get(k,defv)
     if v is None:
         v = defv
@@ -205,13 +209,12 @@ class VisuoMotor:
 
         self.add_param_comment('# DESIRED Frames per second for plotting')
         # obesrved FPS can be slighlty different
-        #self.add_param('FPS', 120)
-        self.add_param('FPS', 120)
+        self.copy_param(info, 'FPS', 120)
         #self.add_param('FPS', 60)
         self.add_param_comment('# Radius of the cursor')
         self.copy_param(info,'radius_cursor', 10)
 
-        self.add_param('radius_home', self.params['radius_cursor'] * 3.5)
+        self.copy_param(info, 'radius_home', self.params['radius_cursor'] * 3.5)
         self.add_param('radius_home_strict_inside',
                        self.params['radius_home'] - self.params['radius_cursor'])
 
@@ -242,7 +245,7 @@ class VisuoMotor:
         self.copy_param(info, 'flush_log_freq', 'every_frame')
 
         # minimum allowed total duration of the task in seconds
-        self.copy_param(info, 'min_duration_s', 20)
+        self.copy_param(info, 'min_duration_min', 20)
 
         # to minimize change of screen content
         self.copy_param(info, 'ITI_show_home',1)
@@ -347,7 +350,7 @@ class VisuoMotor:
         self.copy_param(info,'prep_after_rest',1)
 
         self.add_param('return_home_after_pause',1)
-        self.add_param('return_home_after_ITI',1)
+        self.copy_param(info, 'return_home_after_ITI',1)
         self.add_param('hit_when_passing',0)
 
         ######################  Rendering params
@@ -378,22 +381,22 @@ class VisuoMotor:
         # can be also offline but needs redebugging
         self.add_param('feedback_type', 'online')
 
-        self.add_param('perf_notif_start_delay', 1.500) # in sec
+        self.copy_param(info, 'perf_notif_start_delay', 1.500) # in sec
         # 'no' or 'explosion'
         #self.add_param('hit_notif', 'no')
         #self.add_param('hit_notif', 'explosion')
-        self.add_param('hit_notif', 'home_color_change')
+        self.copy_param(info, 'hit_notif', 'home_color_change')
         #   'target_explode', 'cursor_explode', 'text', 'no'
         #self.add_param('miss_notif', 'no')
-        self.add_param('miss_notif', 'home_color_change')
+        self.copy_param(info, 'miss_notif', 'home_color_change')
 
         if self.params['hit_notif'] == 'home_color_change':
             assert self.params['ITI_show_home']
         if self.params['miss_notif'] == 'home_color_change':
             assert self.params['ITI_show_home']
 
-        #self.add_param('perf_feedback_duration', 0.7) # for explosion
-        self.add_param('perf_feedback_duration', 0.1)
+        #self.add_param(info, 'perf_feedback_duration', 0.7) # for explosion
+        self.copy_param(info, 'perf_feedback_duration', 0.1)
 
 
         self.add_param_comment('# What info do we print during pause')
@@ -1100,6 +1103,7 @@ class VisuoMotor:
                            'time_feedback', 'time_at_home']
         durtot = 0.
         for durpar in duration_params:
+            print(durpar, self.params[durpar] )
             durtot += self.params[durpar]
         # no breaks included
         self.durtot_all =  (len(self.trial_infos ) - n_pauses) * durtot + \
@@ -3056,6 +3060,7 @@ if __name__ == "__main__":
     if show_dialog:
         info['participant'] = ''
         info['session'] = ''
+        from psychopy import gui, core
         dlg = gui.DlgFromDict(info)
         if not dlg.OK:
             core.quit()

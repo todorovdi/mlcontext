@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# Copyright (c) 2024 Dmitrii Todorov todorovdi@gmail.com
+# Licensed under the MIT License (see LICENSE file)
+
 # needed for joystick
 import pygame
 # from pygame.locals import *
@@ -41,7 +44,6 @@ class VisuoMotorMEG(VisuoMotor):
         #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
 
         info['trigger_device'] = 'parallel'
-        info['home_position_loc'] = 'below_center'
 
         # estimates from beh experiment: 0.3 in the beginning, 0.2 in end 
         expected_reaction_time = 0.25 
@@ -72,12 +74,14 @@ class VisuoMotorMEG(VisuoMotor):
 
         VisuoMotor.initialize_parameters(self, info, subdir=subdir)
 
+
         #24 ms delay photodiode
         #self.params['diode_width'] = 1920
         self.params['diode_width'] = 500
         #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
         self.copy_param(info, 'movement_duration_after_lh', 0.75 - expected_reaction_time )
+        self.copy_param(info,'home_position_loc', 'below_center')
 
         self.copy_param(info, 'participant_can_release_break', 0 )
         self.copy_param(info, 'finish_cond_print_log', 0 )
@@ -102,7 +106,9 @@ class VisuoMotorMEG(VisuoMotor):
         self.copy_param(info, 'insert_breaks', 1)
         self.copy_param(info, 'show_joy_coords_during_instructions', 0 )
         self.copy_param(info, 'show_EUR_reward_end', 1)
+        self.copy_param(info, 'show_reward_always', 0)
 
+        #print('\<show_reward_always\> = ',self.params['show_reward_always'])
         ##############
         self.use_eyetracker = self.params['use_eyetracker']
 
@@ -575,6 +581,7 @@ class VisuoMotorMEG(VisuoMotor):
 
         # recalc durtot_all
         self.durtot_all =  (len(self.trial_infos ) - self.n_pauses) * self.trial_dur_expected 
+        #print(self.durtot_all)
         if self.n_pauses > 0:
             self.durtot_all += (self.n_pauses - self.n_breaks) * (self.params['pause_duration'] + self.params['training_text_show_duration']  ) # now we show text before exiting pause
         self.durtot_all += self.n_breaks * ( self.params['expected_break_duration'] + self.params['training_text_show_duration'])
@@ -584,7 +591,7 @@ class VisuoMotorMEG(VisuoMotor):
         print(f'UPD: Expected trial duration = {self.trial_dur_expected} sec, total = {self.durtot_all} sec (={self.durtot_all/60:.1f} min). This excludes time for reading instructions and looking at the final congrats message')
 
         if not self.debug:
-            assert (self.durtot_all / 60.) > self.params['min_duration_s'], ('Too few trials, please restart'
+            assert (self.durtot_all / 60.) > self.params['min_duration_min'], ('Too few trials, please restart'
             f'(this will use different seed and hopefully problem disappears) [{self.durtot_all / 60.}]' )
 
 
@@ -967,6 +974,18 @@ class VisuoMotorMEG(VisuoMotor):
             self._display_surf.fill(self.color_bg)
             if self.debug:
                 perfstrs = self.getPerfInfoStrings()
+                self.drawTextMultiline( perfstrs, font = self.myfont_popup,
+                                       pos_label = 'upper_right')
+
+            # show ongoing performance info in the upper right corner
+            elif self.params['show_reward_always']:
+                if self.params['show_EUR_reward_end']:
+                    reward_type_toshow = ['money']
+                else:
+                    reward_type_toshow = ['hit']
+                perfstrs = self.getPerfInfoStrings(reward_type =
+                   reward_type_toshow, inc_mvt_num = True,
+                   inc_last_reward = False, round = False)
                 self.drawTextMultiline( perfstrs, font = self.myfont_popup,
                                        pos_label = 'upper_right')
 
@@ -2332,7 +2351,7 @@ class VisuoMotorMEG(VisuoMotor):
                     phase = self.first_phase_after_start
                 self.restartTask(very_first = 1, phase=phase)
             # if task was started and a button was pressed, release break
-            elif self.params['participant_can_release_break']:
+            elif (self.task_started == 1) and self.params['participant_can_release_break']:
                 self.moveHome()
                 self.free_from_break = 1
 
@@ -2509,8 +2528,9 @@ def make_parser():
     parser.add_argument('--max_time_between_breaks',  type=int) # in seconds
     parser.add_argument('--reward_only_if_leave_home', default=0, type=int) # by def reward always at least a bit
     parser.add_argument('--insert_breaks', default=1, type=int) 
-    parser.add_argument('--min_duration_s', default=50, type=float) 
+    parser.add_argument('--min_duration_min', default=50, type=float) 
     parser.add_argument('--first_phase_after_start', default='TRAINING_START', type=str) 
+    parser.add_argument('--show_reward_always', default=0, type=int) 
 
     #
     parser.add_argument('--radius_target', default=30, type=float) 
@@ -2521,6 +2541,8 @@ def make_parser():
     parser.add_argument('--block_len_max', default=11, type=int) 
     parser.add_argument('--pert_block_types', default='rot-20,rot20', type=str) 
  
+ 
+    parser.add_argument('--return_home_after_ITI', default=1, type=int) 
                                              
     # def 0.2
     parser.add_argument('--discrepancy_red_lr',  type=float)
@@ -2537,8 +2559,6 @@ def make_parser():
     parser.add_argument('--maxMEGrec_dur',  type=float)
 
     parser.add_argument('--continue_from_last', default=None, type=str)
-
-
 
     parser.add_argument('--exit_after_ntrials', default=None, type=int)
     parser.add_argument('--flush_log_freq', type=str)
