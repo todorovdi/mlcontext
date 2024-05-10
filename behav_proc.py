@@ -3179,7 +3179,7 @@ def compareTriggers(df, dfev, dftriglog):
 def addBasicInfo(df, phase2trigger, params,
                 home_position, target_coords,
                 phase_to_collect = 'TARGET_AND_FEEDBACK', training_end_sep_trial = False,
-                reshifted = 0 ):
+                reshifted = 0, def_subject_ind = 1, check_num_context_appearances = 1 ):
     ####
     # This is for context change experiment
     ############################################################
@@ -3234,7 +3234,8 @@ def addBasicInfo(df, phase2trigger, params,
     dfc['target_locs'] = dfc.apply(f,1)
 
     pertn2pertv = dict( zip(['veridical', 'rot15', 'rot30', 'rot-15',
-                            'rot-20','rot20', 'error_clamp' ],[0,15,30,-15,-20,20, 0]) )
+                            'rot-20','rot20', 
+                             'rot45', 'rot90','rot135', 'error_clamp' ],[0,15,30,-15,-20,20, 45, 90,135, 0]) )
 
     dfc['perturbation'] = dfc.apply(lambda row: pertn2pertv[row['vis_feedback_type']],1 )
 
@@ -3284,9 +3285,10 @@ def addBasicInfo(df, phase2trigger, params,
 
     # just for convenience to have an interger index
     # since numbers start from 0 and we had a pilot, assign 0 to pilot
-    dfcc['subject_ind'] = dfcc['subject'].str[-3:]
-    dfcc.loc[dfcc['subject'].str.contains('pilot'), 'subject_ind'] = 0
-    dfcc['subject_ind'] = dfcc['subject_ind'].astype(int)
+    if def_subject_ind:
+        dfcc['subject_ind'] = dfcc['subject'].str[-3:]
+        dfcc.loc[dfcc['subject'].str.contains('pilot'), 'subject_ind'] = 0
+        dfcc['subject_ind'] = dfcc['subject_ind'].astype(int)
 
 
     all_ctx, cpls = genCtxPairLists(dfcc)
@@ -3323,7 +3325,7 @@ def addBasicInfo(df, phase2trigger, params,
         dfcc.loc[grp.groups[g], 'Nctx_app'] =  r
         #print(g, r.max(), dfcc_tmp['block_ind'].unique())
 
-    if not reshifted:
+    if not reshifted and check_num_context_appearances:
         assert np.max(dfcc['Nctx_app'] ) == params['n_context_appearences']
 
 
@@ -3384,7 +3386,7 @@ def addBasicInfo(df, phase2trigger, params,
         return ang / np.pi * 180
         #eturn ang
     # TODO: _abs here is misleading, it is not absolute value, just not related to target
-    dfcc['feedback_abs'] = dfcc.apply(f,1)
+    dfcc['feedback_tgt_unrel'] = dfcc.apply(f,1)
 
     def f(row):
         fb = (row['unpert_feedbackX'],  row['unpert_feedbackY'])
@@ -3395,14 +3397,14 @@ def addBasicInfo(df, phase2trigger, params,
         #ang -= np.pi / 2
         return ang / np.pi * 180
         #eturn ang
-    dfcc['org_feedback_abs'] = dfcc.apply(f,1)
+    dfcc['org_feedback_tgt_unrel'] = dfcc.apply(f,1)
 
 
     # feedback is relative to the target (including pert)
-    dfcc['feedback']     = (dfcc['feedback_abs'] - 90)    - (dfcc['target_locs'] - 90)
+    dfcc['feedback']     = (dfcc['feedback_tgt_unrel'] - 90)    - (dfcc['target_locs'] - 90)
     # org feedback is relative to the target (NOT including pert)
-    dfcc['org_feedback'] = dfcc['org_feedback_abs'] - dfcc['target_locs']
-    dfcc['error_endpoint_ang'] = dfcc['feedback_abs'] - dfcc['target_locs']
+    dfcc['org_feedback'] = dfcc['org_feedback_tgt_unrel'] - dfcc['target_locs']
+    dfcc['error_endpoint_ang'] = dfcc['feedback_tgt_unrel'] - dfcc['target_locs']
 
     #################################  compound error info
 
@@ -3534,7 +3536,7 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc['prev_block_pert'] = dfcc['prev_block_pert'].where(c, np.nan)
     dfcc['prev_block_pert'] = dfcc['prev_block_pert'].fillna(None, method='ffill')
 
-    dfcc_all['error_lh2_ang_deg'] = dfcc_all['error_lh2_ang'] * 180 / np.pi
+    dfcc['error_lh2_ang_deg'] = dfcc['error_lh2_ang'] * 180 / np.pi
 
     # df  -- row per screen update, with streak relations, all phases
     # dfc -- row per screen update, only TARGET_AND_FEEDBACK
