@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 from numba import jit
 
 @jit(nopython=True, cache=False)
-def calc(error_region, initial_sensitivity,
+def calc(error_region, 
+         initial_sensitivity,
         gaussian_variance, # of gaussians
         eta,  # weight update speed
         alpha,  # retention
@@ -22,6 +23,7 @@ def calc(error_region, initial_sensitivity,
         small_err_thr = 0.,
         use_true_errors = False,
         cap_err_sens = True,
+         initial_state = 0.,
         verbose=0):
     # perturbations is used only for calc of error_sim
 
@@ -65,14 +67,14 @@ def calc(error_region, initial_sensitivity,
     #    target_to_reach = [0] * len(perturbations)
 
     # What is the initial reach (cm)?
-    x_0 = 0
+    x_0 = initial_state
 
     # Loop through each of perturbations
     # motor output is org_feedback - target_loc
     # it is basically the main latent state
     motor_output = np.zeros(len(perturbations))
     motor_output[0] = x_0
-    error_sim = np.ascontiguousarray( np.zeros(len(perturbations), dtype=np.float64) ) # predicted errors
+    error_sim = np.ascontiguousarray( np.ones(len(perturbations), dtype=np.float64) ) * np.nan  # predicted errors
     err_sens = np.repeat(np.nan, len(perturbations) ) 
     ws = np.full( (len(perturbations), num_bases), np.nan )
 
@@ -84,7 +86,8 @@ def calc(error_region, initial_sensitivity,
     err_sens[0] = initial_sensitivity
 
     # the idea is that it goes from 1 to last index
-    rng = np.arange(len(perturbations) - 1, dtype=np.int64)
+    #rng = np.arange(len(perturbations) - 1, dtype=np.int64)
+    rng = np.arange(len(perturbations) , dtype=np.int64)
     ESadd = np.nan  # for debug print mostly
     for i in rng:
         # i has meaning of _previous_ trial
@@ -160,7 +163,7 @@ def calc(error_region, initial_sensitivity,
 
             # Update the weights, they will have influence on next trial
             # (so for err_sens[i+2] )
-            if i > 0:
+            if (i > 0) and ( (i+1) < len(perturbations)):
                 signc =  np.sign(error_for_update_w * error_for_update)
                 # if both are larger than thr
                 errs_now = np.array([error_for_update_w, error_for_update])
@@ -202,12 +205,13 @@ def calc(error_region, initial_sensitivity,
 
             #print(i,'post uw')
 
-        err_sens[i+1] = s  
-        ws[i+1] = w         # I am not sure if it should be i or i+1 here. It is only about saving, it does not affect calc which just uses w. I set it i+1 so that it consistent with index of err_sens
-        #print(i,err_sens[i+1])
-        if verbose > 1:
-            print(i,'add ES[i+1]=',ESadd,'  max w = ',
-                np.max(np.abs(w )), ' motor out = ', motor_output[i+1] )
+        if (i+1) < len(perturbations):
+            err_sens[i+1] = s  
+            ws[i+1] = w         # I am not sure if it should be i or i+1 here. It is only about saving, it does not affect calc which just uses w. I set it i+1 so that it consistent with index of err_sens
+            #print(i,err_sens[i+1])
+            if verbose > 1:
+                print(i,'add ES[i+1]=',ESadd,'  max w = ',
+                    np.max(np.abs(w )), ' motor out = ', motor_output[i+1] )
 
     #print(err_sens[-1])
 

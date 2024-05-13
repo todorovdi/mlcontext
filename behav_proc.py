@@ -1074,13 +1074,14 @@ def addWindowStatCols(dfc, ES_thr, varn0s = ['error_pscadj', 'error_pscadj_abs']
                 c = dfcs['trialwb'] < std_mavsz_
                 dfcs.loc[c,f'{varn}_Tan{std_mavsz_}'] = np.nan
 
+    dfcs_fixhistlen_untrunc = dfcs.copy()
                 
     # remove too big ES
     dfcs1 = dfcs.query('err_sens.abs() <= @ES_thr')
     dfcs_fixhistlen  = truncateDf(dfcs1, 'err_sens', q=0.0, infnan_handling='discard',  cols_uniqify = ['subject'],
                                   verbose=True) #,'env'
     dfcs_fixhistlen['environment'] = dfcs_fixhistlen['environment'].astype(int)
-    dfcs_fixhistlen_untrunc = dfcs_fixhistlen.copy()
+    #dfcs_fixhistlen_untrunc = dfcs_fixhistlen.copy()
     import gc; gc.collect()
     print('addWindowStatCols: Finished')
             
@@ -1097,7 +1098,8 @@ def getQueryPct(df,qs,verbose=True):
         print(f'{qs} prpopration mean = {me:.3f} %, std = {std:.3f} %')
     return me,std
 
-def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, varnames_Tan = [ 'error_pscadj_abs', 'error_pscadj']):
+def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, 
+    varns0 = [ 'error_pscadj_abs', 'error_pscadj'], suffixes = None):
     '''
     it NaNifies outliers but does not remove them (because if I were to remove rows for all, the dataset will become super small)
     '''
@@ -1107,10 +1109,11 @@ def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, varnames_Tan = 
     # NaN-ify too big stat values
     std_mult = 5.
     
-    suffixes = 'mav,std,invstd,mavsq,mav_d_std,mav_d_var,Tan,invmavsq,invmav,std_d_mav,invTan'.split(',')
+    if suffixes is None:
+        suffixes = 'mav,std,invstd,mavsq,mav_d_std,mav_d_var,Tan,invmavsq,invmav,std_d_mav,invTan'.split(',')
 
     varnames_all = []
-    for varn0 in ['error_pscadj_abs', 'error_pscadj']: #'error_change']:
+    for varn0 in varns0: #'error_change']:
         for std_mavsz_ in histlens:#[1::10]:
             #varnames_toshow0_ = []
             for suffix in suffixes:
@@ -1146,7 +1149,7 @@ def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, varnames_Tan = 
     kill_Tan_2nd = False
     if kill_Tan_2nd:
         varnames_all_Tanlike = []
-        for varn0 in varnames_Tan: #'error_change']:
+        for varn0 in varns0: #'error_change']:
             for std_mavsz_ in range(2,maxhl+1):#[1::10]:
                 #varnames_toshow0_ = []
                 for varn in  ['{varn0}_mav_d_std{std_mavsz_}',
@@ -1156,8 +1159,7 @@ def truncLargeStats(dfcs_fixhistlen_untrunc, histlens, std_mult, varnames_Tan = 
 
         for varn in varnames_all_Tanlike:
             dfcs_fixhistlen_.loc[dfcs_fixhistlen_['trialwb'] == 2, varn] = np.nan
-    dfcs_fixhistlen = dfcs_fixhistlen_ # this will be used for corr calc
-    return dfcs_fixhistlen, me_pct_excl
+    return dfcs_fixhistlen_, me_pct_excl
 
 def _addErrorThr(df, stds):
     # estimate error at second halfs of init stage

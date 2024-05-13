@@ -43,6 +43,7 @@ parser.add_argument('--fit_to',  default='errors', type=str )
 parser.add_argument('--num_bases',  default=10, type=int )
 parser.add_argument('--use_true_errors',  default=0, type=int )
 parser.add_argument('--optimize_initial_err_sens',  default=0, type=str )
+parser.add_argument('--optimize_initial_state',  default=0, type=int )
 parser.add_argument('--thr_val_mult',  default=0, type=float )
 
 parser.add_argument('--ES_thr',  default=None, type=float )
@@ -212,6 +213,11 @@ def _opt(**kwargs):
 
 
 optimES0 = 'WRONG'; capES = False; 
+if argscmd.optimize_initial_state:
+    initial_state_bounds = (-45,45)
+else:
+    initial_state_bounds = (0,0)
+
 arg0 = dict(pert=-perturb, errors = error,  EC_mask =EC_mask, 
             pre_break_duration = pre_break_duration,
             err_sens = err_sens, fit_to = argscmd.fit_to, 
@@ -220,6 +226,7 @@ arg0 = dict(pert=-perturb, errors = error,  EC_mask =EC_mask,
             fitmask_vals = fitmask_vals,
             fitmask = argscmd.fitmask,
             cap_err_sens = capES,
+            initial_state_bounds = initial_state_bounds,
              use_true_errors = argscmd.use_true_errors, 
             num_bases = argscmd.num_bases,
            err_handling = 'raise', subject=subject)

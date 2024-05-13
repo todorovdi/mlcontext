@@ -3,7 +3,7 @@ import sys
 from scipy.optimize import minimize
 import os
 from joblib import Parallel, delayed
-
+from base2 import assert_len_equal
 
 
 def calcH_min(pert, errors, EC_mask, pre_break_duration, 
@@ -16,10 +16,20 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
              use_true_errors = False, num_bases = 10, 
               custom_initial_err_sens = 0.,
               small_err_thr = 0., err_handling = 'raise', seed=0,
-              optim_pars = None, save_best_arrays = True):
+              optim_pars = None, save_best_arrays = True,
+               initial_sensitivity_bounds = (0.0000,1.), 
+               weight_update_speed_bounds = (0.001,0.2),  
+               state_retention_bounds    =  (0.1,1),     
+               weight_retention_bounds   =  (0.1,1 ),
+               initial_state_bounds = (-45,45)
+              ):
     # This run minimization search for best parameters for
     # Herzfeld model
     # for one IC
+    if pre_break_duration is None:
+        pre_break_duration = np.zeros_like(pert)
+    if err_sens is None:
+        err_sens = np.ones(len(pert)) * np.nan
 
     if online_feedback:
         raise ValueError('not implemented yet')
@@ -41,26 +51,34 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         ['optimize', 'from_data', 'custom']
 
     args_opt = odict ([])
+    args_opt['initial_sensitivity'] = (0,0)
     if optimize_initial_err_sens == 'optimize':
         # before upper bounds of 0.5
         #args_opt['initial_sensitivity'] = (0.0001,0.5)
-        args_opt['initial_sensitivity'] = (0.0000,1.)
-
+        args_opt['initial_sensitivity'] = initial_sensitivity_bounds
 
     #('alpha', (0.5,1)) ,  # retention
     #('alpha_w',   (0.3,1 ) ),
     args_opt.update( odict ([
         #('initial_sensitivity', (0.0001,0.5)),
-        ('eta', (0.001,0.2)),  # weight update speed
-        ('alpha', (0.1,1)) ,  # retention
-        ('alpha_w',   (0.1,1 ) ),
+        ('eta',      weight_update_speed_bounds),  # weight update speed
+        ('alpha',     state_retention_bounds) ,  # retention
+        ('alpha_w',   weight_retention_bounds ),
     ]) )
+    if initial_state_bounds[1] - initial_state_bounds[0] > 1e-10:
+        args_opt['initial_state'] = initial_state_bounds
     if (pause_mask is not None) or (np.max(pre_break_duration) > 1e-3 ) :
         print('set pause')
         # positive values mean decay because  w *= exp(-weight_forgetting_exp_pause * break_dur) 
         # before upper was =2
         args_opt['weight_forgetting_exp_pause'] = (-2,  4)
         args_opt['state_forgetting_exp_pause'] = (-2,  4)
+    else:
+        args_opt['weight_forgetting_exp_pause'] = (0,0)
+        args_opt['state_forgetting_exp_pause'] = (0,0)
+
+    if pause_mask is None:
+        pause_mask = np.zeros_like(pert)
 
     #   ('gaussian_variance', (0.1,5)), # of gaussians
     #   ('execution_noise_variance', (0, error_region_size / 2 )),
@@ -107,33 +125,39 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         ES0_ = np.mean(es)
         if cap_err_sens:
             ES0_ = max(0, min(1,ES0_) )
+        args_opt['initial_sensitivity'] = (ES0_,ES0_)
     elif optimize_initial_err_sens == 'custom':
         ES0_ = custom_initial_err_sens
+        args_opt['initial_sensitivity'] = (ES0_,ES0_)
 
     sensory_noise_variance = 0
     execution_noise_variance = 0
     def _minim_H(pars):
-        #if pause_mask is not None:
-        if optimize_initial_err_sens == 'optimize':
-            if 'weight_forgetting_exp_pause' in args_opt:
-                (ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
-                pause_mask_ = pause_mask
-            else:
-                (ES0, eta, alpha, alpha_w ) = pars
-                weight_forgetting_exp_pause = weight_forgetting_pause0
-                state_forgetting_exp_pause = state_forgetting_pause0
-                pause_mask_ = np.zeros_like(pert, dtype=bool)
-        else:
-            if 'weight_forgetting_exp_pause' in args_opt:
-                (eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
-                pause_mask_ = pause_mask
-            else:
-                (eta, alpha, alpha_w ) = pars
-                weight_forgetting_exp_pause = weight_forgetting_pause0
-                state_forgetting_exp_pause = state_forgetting_pause0
-                pause_mask_ = np.zeros_like(pert, dtype=bool)
+        (ES0, eta, alpha, alpha_w, initial_state,\
+            weight_forgetting_exp_pause, \
+            state_forgetting_exp_pause ) = pars
+        pause_mask_ = pause_mask
 
-            ES0 = ES0_
+        #if optimize_initial_err_sens == 'optimize':
+        #    if 'weight_forgetting_exp_pause' in args_opt:
+        #        (ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
+        #        pause_mask_ = pause_mask
+        #    else:
+        #        (ES0, eta, alpha, alpha_w ) = pars
+        #        weight_forgetting_exp_pause = weight_forgetting_pause0
+        #        state_forgetting_exp_pause = state_forgetting_pause0
+        #        pause_mask_ = np.zeros_like(pert, dtype=bool)
+        #else:
+        #    if 'weight_forgetting_exp_pause' in args_opt:
+        #        (eta, alpha, alpha_w, weight_forgetting_exp_pause, state_forgetting_exp_pause ) = pars
+        #        pause_mask_ = pause_mask
+        #    else:
+        #        (eta, alpha, alpha_w ) = pars
+        #        weight_forgetting_exp_pause = weight_forgetting_pause0
+        #        state_forgetting_exp_pause = state_forgetting_pause0
+        #        pause_mask_ = np.zeros_like(pert, dtype=bool)
+
+        #    ES0 = ES0_
  
         try:
             # pert is true pert
@@ -144,6 +168,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
             # has execution noise (to get error) and sensory noise (to get motor output pred). Yes, not inversely
             r = simMoE( pert, alpha=alpha,
                            eta=eta, initial_sensitivity=ES0,
+                           initial_state = initial_state,
                 sensory_noise_variance =sensory_noise_variance,
                 execution_noise_variance = execution_noise_variance,
                 gaussian_variance = None, alpha_w = alpha_w,
@@ -222,7 +247,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         #weight_forgetting_exp_pause
         if 'weight_forgetting_exp_pause' not in args_opt:
             d['weight_forgetting_exp_pause'] = weight_forgetting_pause0
-            d['state_forgetting_exp_pause'] = state_forgetting_exp_pause
+            d['state_forgetting_exp_pause'] = state_forgetting_pause0
 
         #(ES0, eta, alpha, alpha_w, weight_forgetting_exp_pause ) = pars
         r = simMoE( pert, **d,
@@ -247,6 +272,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         if np.isnan(error_pred).any() :
             return np.nan
 
+        # errors_ are just errors after interpnan
         fun_full = calcLoss_H(errors_, error_pred, err_sens, err_sens_pred,
                       None, fit_to, reg, verbose = verbose)
 
@@ -255,6 +281,7 @@ def calcH_min(pert, errors, EC_mask, pre_break_duration,
         if save_best_arrays:
             d['error_pred'] = error_pred
             d['err_sens'] = err_sens_pred
+            d['motor_output'] = motor_output
 
     else:
         d = None
@@ -300,6 +327,7 @@ def calcLoss_H(errors_, error_pred, err_sens, err_sens_pred,
 def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
               sensory_noise_variance = 0.,
               execution_noise_variance = 0.,
+              initial_state = 0.,
                gaussian_variance = None, alpha_w = 1.,
                EC_mask = None, error_region = None,
             weight_forgetting_exp_pause = 1e-3,
@@ -341,6 +369,7 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
         'eta': eta,  # weight update speed
         'alpha': alpha,  # retention
         'alpha_w' :alpha_w, # retention of weights
+        'initial_state' :initial_state,
         'execution_noise_variance': execution_noise_variance,
         'sensory_noise_variance': sensory_noise_variance,
         'target_loc': target_loc,
@@ -409,8 +438,9 @@ def simMoE(pert, alpha=1. , eta=0.01, initial_sensitivity= 0.1,
 #    return np.mean( ( errors - error_pred ) **2 )
 
 def _minim_T(nbT,startIdx, a0,c0,b0,x00, state_retention_pause0, optbounds, opts,
-           perturb,error, pause_mask, bclip,  modelBeforeSwitch , reg,
-             inds_state_reset, stats_powers, use_true_error, use_true_error_stats, motor_var):
+           perturb,error,error_stats, 
+           pause_mask, bclip,  modelBeforeSwitch , reg,
+             inds_state_reset, stats_powers, use_true_error, use_true_error_stats, motor_var, rate_is_additive):
     # this function is ran inside parallel  that is why it is not internal
     # Define a lambda function to pass to minimize function
     # optimize first 4 params: A,c,Bstart,X0.
@@ -424,10 +454,14 @@ def _minim_T(nbT,startIdx, a0,c0,b0,x00, state_retention_pause0, optbounds, opts
 
     #print('_minim {} {};'.format(nbT,startIdx) )
     f = lambda P: tan.MSE_error_model_tan(P,nbT,startIdx,
-            modelBeforeSwitch,perturb,error, pause_mask, clip=bclip, reg=reg, inds_state_reset=inds_state_reset, stats_powers=stats_powers,
-        use_true_error=use_true_error,
-        use_true_error_stats =use_true_error_stats,
-                                        motor_var = motor_var  )
+            modelBeforeSwitch,perturb,error, error_stats,
+            pause_mask, clip=bclip, reg=reg, 
+            inds_state_reset=inds_state_reset, 
+            stats_powers=stats_powers,
+            use_true_error=use_true_error,
+            use_true_error_stats =use_true_error_stats,
+            motor_var = motor_var,
+            rate_is_additive = rate_is_additive)
     if pause_mask is None:
         IC = [a0,c0,b0,x00]
         parnames = 'a0,c0,b0,x00'.split(',')
@@ -446,46 +480,50 @@ def interpnan(arr):
     arr[np.isnan(arr)] = np.interp(_fnz(nas),_fnz(~nas),arr[~nas])
     return arr
 
-def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
+def fitTanModel(perturb, error, n_jobs, bclip = (-0.5,0.5),
                modelBeforeSwitch = 'UnkAdapt', pause_mask = None,
                 nruns = 3, reg = 0, neg_error = False,
                 maxNbTrials = 30, maxStartIdx = 12,
                 minNbTrials = 3, minStartIdx = 3,
-                cmin = 1e-6, cmax=0.9,
+                cmin = 0, cmax=0.9,
                 amin = 0.2, amax = 1. - 1e-6,
+                start_rate_bounds = (0,1),
+                initial_state_bounds = (-45,45),
                 online_feedback=True,
                 use_true_error=False, use_true_error_stats=True,
                inds_state_reset = [], stats_powers=(2,-2),
                 motor_var = 0.,
-                coln_pert = 'perturbation_pscadj'):
+                rate_is_additive = 0,
+                error_stats = None,
+                optIC = {}):
     '''
     motor_var is used to compute random noise during simulation (determines random distr sigma)
     '''
     # modelBeforeSwitch = 'NoAdapt'  # then ignore Bstart
 
+    assert_len_equal( perturb, error)
+    if error_stats is not None:
+        assert_len_equal( error_stats, error)
+        error_stats = interpnan(error_stats)
+        assert not np.isnan(error_stats).any()
 
+    # it is not very relevant how exactly this flag is called, the current version just makes
+    # better correspondance with data per trial
+    if not online_feedback :
+        raise ValueError('not implemented')
+
+    x0min,x0max = initial_state_bounds
 
     import taumodels.state_space_Tan2014.error_model_tanSS as tan
-    subjs = dfos['subject'].unique()
-    assert len(subjs) == 1
-    subj = subjs[0]
+    #subjs = dfos['subject'].unique()
+    #assert len(subjs) == 1
+    #subj = subjs[0]
+
     # Parameters initialization
-    #minNbTrials = 3 # minimum number of "retained" trials
-    #maxNbTrials # maxumum number of "retained" trials
-
-    #minStartIdx = 3 # minimum index of first trial where previous trials are taken into account
-    #maxStartIdx = 12 # maximum index of first trial where previous trials are taken into account
-    #a0 = 0.95 # initial retention factor
-    #b0 = 0.01 # initial adaptation factor (for trials before startIdx)
-    #x00 = 0 # initial initial state
-
-    #c0 = 0.001 # initial c coefficient (that is multiplied by the ratio of mean error and error variance)
-    #amin = 0.3 # minimum retention factor
-    #amax = 1 # maximum retention factor
-    bmin = 0 # minimum starting adaptation rate
-    bmax = bclip[1] # maximum starting adaptation rate
-    x0min = -30 # minimum initial state
-    x0max = 30 # maximum initial state
+    bmin = start_rate_bounds[0] # minimum starting adaptation rate
+    bmax = start_rate_bounds[1] # maximum starting adaptation rate
+    #x0min = -30 # minimum initial state
+    #x0max = 30 # maximum initial state
     state_retention_pause0 = 0.9
 
     optbounds = [(amin,amax),(cmin,cmax),(bmin,bmax),(x0min,x0max)]
@@ -502,27 +540,23 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
 
     step = 1e-8
     opts = {'method': 'SLSQP', 'tol':1e-10,
-            'options':{'maxiter':3000, 'eps':step, 'disp':0} }
+            'options':{'maxiter':4000, 'eps':step, 'disp':0} }
 
-    # A, c, b_start, nbT, x0 and error (eventually add startIdx)
-    # nbT = NbPreviousTrials
-    #subj2out_Tan = {}
-    #Q: interpolate NaN trials -- is it good?
     # measured_error has to have shape  trials x subjects
     # loop on the number of subjects
     # for each subject optimization of the model is made separtely
     #for s in dfc['subject'].unique():
     out_cursubj = {}
     #subj2out_Tan[s] = out_cursubj
-    error = dfos.query('subject == @subj')[coln_error].to_numpy()
+    #error = dfos.query('subject == @subj')[coln_error].to_numpy()
 
-    if online_feedback:
-        perturb = dfos.query('subject == @subj')[coln_pert].to_numpy()
-        #perturb_cursubj        = dfos['perturbation'].values
-    else:
-        perturb = dfos.query('subject == @subj')[coln_pert].shift(1).to_numpy()
-        #perturb_cursubj        = dfos['perturbation'].shift(1).values
-        perturb[0] = 0
+    #if online_feedback:
+    #    perturb = dfos.query('subject == @subj')[coln_pert].to_numpy()
+    #    #perturb_cursubj        = dfos['perturbation'].values
+    #else:
+    #    perturb = dfos.query('subject == @subj')[coln_pert].shift(1).to_numpy()
+    #    #perturb_cursubj        = dfos['perturbation'].shift(1).values
+    #    perturb[0] = 0
 
     if neg_error:
         error = -error
@@ -541,39 +575,46 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     for nbT in range(minNbTrials, maxNbTrials+1):
         for startIdx in range(minStartIdx, maxStartIdx+1):
             x0 = []
-            for lower, upper in optbounds:
-                x = np.random.uniform(lower, upper)
+            for pari,(lower, upper) in enumerate(optbounds):
+                x = optIC.get(parnames0[pari], None)
+                if x is None:
+                    x = np.random.uniform(lower, upper)
                 x0.append(x)
 
             if pause_mask is None:
                 x0.append(state_retention_pause0)
 
             x0 = np.array(x0)
+            print('x0 = ',dict(zip(parnames0, x0) ) )
             args += [(nbT,startIdx,*x0) ]
 
     args = nruns * args
+    
+    inds_state_reset = np.array(inds_state_reset)
     #a0,c0,b0,x00,state_retention_pause0
     if n_jobs > 1:
         print(f'fitTanModel: Start parallel over nbTrials and startIdx, {len(args) } args over {n_jobs} workers')
         plr = Parallel(n_jobs=n_jobs, backend='multiprocessing',
                        )(delayed(_minim_T)(*arg,
                         optbounds,opts,
-                        perturb,error, pause_mask, bclip,
+                        perturb,error, error_stats, pause_mask, bclip,
                         modelBeforeSwitch, reg,
                        inds_state_reset, stats_powers,
                         use_true_error, use_true_error_stats,
-                                           motor_var) \
+                                           motor_var, rate_is_additive) \
                             for arg in args)
     else:
         print(f'fitTanModel: Start not parallel over nbTrials and startIdx, {len(args) } args')
         plr = [ _minim_T(*arg, optbounds,opts,
-                        perturb,error, pause_mask, bclip,
+                        perturb,error, error_stats,
+                        pause_mask, bclip,
                         modelBeforeSwitch, reg,
                        inds_state_reset, stats_powers,
                         use_true_error, use_true_error_stats,
-                        motor_var ) for arg in args  ]
+                        motor_var, rate_is_additive ) for arg in args  ]
 
 
+    parvec = None
     for r in plr:
         nbT,startIdx,res = r
         #print(nbT,startIdx, res.fun)
@@ -584,7 +625,16 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
             parvec = res.x
             nbT_opt = nbT
             startIdx_opt = startIdx
+    if parvec is None:
+        nbT,startIdx,res = plr[0]
+        minres = res
+        minfval = res.fun
+        # only defined if come inside this if
+        parvec = res.x
+        nbT_opt = nbT
+        startIdx_opt = startIdx
 
+    print('minfval = ',minfval)
     pars = [*parvec, nbT_opt, startIdx_opt]
 
 
@@ -592,26 +642,42 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     nbOptParams = len(parnames)
     pars_  = dict(zip(parnames,pars) )
     print(pars_)
-    out_cursubj['params'] = pars_
+    out_cursubj['paramsd'] = pars_
 
+
+    if pause_mask is None:
+        pause_mask = np.zeros_like(error)
     # run simulation
     #print(pars)
-    r = tan.error_model_tan(*pars,
-                         modelBeforeSwitch,perturb,error,
-                            motor_var=motor_var)
+    r = tan.error_model_tan(**pars_,
+        modelBeforeSwitch = modelBeforeSwitch,
+        perturb=perturb,error=error, error_stats=error_stats,
+        clip = bclip, pause_mask=pause_mask,
+        use_true_error=use_true_error,
+        use_true_error_stats=use_true_error_stats,
+        inds_state_reset=inds_state_reset,
+        stats_powers=stats_powers,
+        rate_is_additive=rate_is_additive,
+        motor_var=motor_var)
     output_Tan, state_Tan, adaptationRate_Tan = r
+    mse = np.mean( (output_Tan - error)**2 ) 
+
     out_cursubj['states'] = state_Tan
-    out_cursubj['y_pred'] = output_Tan
+    out_cursubj['error_pred'] = output_Tan
     out_cursubj['optres'] = minres
     out_cursubj['adaptation_rate'] = adaptationRate_Tan
+    out_cursubj['mse'] = mse
+
+    minres.mse =  mse
+
 
     print('minres = ',minres)
     #print('adaptationRate_Tan.shape = ',adaptationRate_Tan.shape)
-
-    out_cursubj['y_pred'] = output_Tan
-    out_cursubj['adaptation_rate'] = adaptationRate_Tan
+    #out_cursubj['y_pred'] = output_Tan
+    #out_cursubj['adaptation_rate'] = adaptationRate_Tan
 
     sigma2 = np.var(output_Tan - error)
+
 
     # to make formula shorter
     N = len(error)
@@ -641,6 +707,7 @@ def fitTanModel(dfos, coln_error, n_jobs, bclip = (-0.5,0.5),
     out_cursubj['amin'] =         amin
     out_cursubj['amax'] =         amax
     out_cursubj['motor_var'] =    motor_var
+    out_cursubj['rate_is_additive'] =    rate_is_additive
 
     return out_cursubj
 
@@ -693,8 +760,10 @@ def fitDiedrischenModel(perturb_cursubj,
     #outs_ output, params, asymptote, noises_var, states, performances
     # asymptote is not very useful for me
     output, params, asymptote, noises_var, states, performances  = ropt
+    dp = dict(list(zip( 'A,B,X0'.split(','), params[:,0] )))
     d = {'output': output,
      'params': params,
+     'paramsd' : dp,
      'asymptote': asymptote,
      'noises_var': noises_var,
      'states': states,
@@ -702,7 +771,6 @@ def fitDiedrischenModel(perturb_cursubj,
          'nruns':nruns,
          'online_feedback':online_feedback}
 
-    dp = dict(list(zip( 'A,B,X0'.split(','), params[:,0] )))
     print(dp)
 
     return d

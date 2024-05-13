@@ -1210,3 +1210,5 @@ def subAngles(ang1, ang2):
     r = np.exp(ang1 * 1j) * np.exp(-ang2 * 1j)
     return np.log(r).imag
 
+def assert_len_equal(a1,a2):
+    assert len(a1) == len(a2), (len(a1),len(a2))
