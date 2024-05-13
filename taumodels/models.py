@@ -495,7 +495,7 @@ def fitTanModel(perturb, error, n_jobs, bclip = (-0.5,0.5),
                 motor_var = 0.,
                 rate_is_additive = 0,
                 error_stats = None,
-                optIC = {}):
+                optIC = {}, indmasks_mse = {}):
     '''
     motor_var is used to compute random noise during simulation (determines random distr sigma)
     '''
@@ -539,8 +539,8 @@ def fitTanModel(perturb, error, n_jobs, bclip = (-0.5,0.5),
     # Set the optimization options as a dictionary
 
     step = 1e-8
-    opts = {'method': 'SLSQP', 'tol':1e-10,
-            'options':{'maxiter':4000, 'eps':step, 'disp':0} }
+    opts = {'method': 'SLSQP', 'tol':1e-12,
+            'options':{'maxiter':8000, 'eps':step, 'disp':0} }
 
     # measured_error has to have shape  trials x subjects
     # loop on the number of subjects
@@ -660,7 +660,11 @@ def fitTanModel(perturb, error, n_jobs, bclip = (-0.5,0.5),
         rate_is_additive=rate_is_additive,
         motor_var=motor_var)
     output_Tan, state_Tan, adaptationRate_Tan = r
-    mse = np.mean( (output_Tan - error)**2 ) 
+    errdifsq = (output_Tan - error)**2
+    mse = np.mean( errdifsq ) 
+
+    for imn,im in indmasks_mse.items():
+        out_cursubj[imn] = np.mean( errdifsq[im] )
 
     out_cursubj['states'] = state_Tan
     out_cursubj['error_pred'] = output_Tan
@@ -706,8 +710,11 @@ def fitTanModel(perturb, error, n_jobs, bclip = (-0.5,0.5),
     out_cursubj['cmax'] =         cmax
     out_cursubj['amin'] =         amin
     out_cursubj['amax'] =         amax
+    out_cursubj['initial_state_bounds'] =         initial_state_bounds
     out_cursubj['motor_var'] =    motor_var
     out_cursubj['rate_is_additive'] =    rate_is_additive
+    out_cursubj['inds_state_reset'] = inds_state_reset
+    out_cursubj['optIC'] = optIC
 
     return out_cursubj
 
