@@ -78,6 +78,8 @@ class VisuoMotorMEG(VisuoMotor):
         #24 ms delay photodiode
         #self.params['diode_width'] = 1920
         self.params['diode_width'] = 500
+        
+        self.copy_param(info, 'preferred_display', -1)
         #self.copy_param(info, 'move_duration_fixation_type', 'fix_time_since_go_cue' )
         self.copy_param(info, 'move_duration_fixation_type', 'fix_time_after_leave_home' )
         self.copy_param(info, 'movement_duration_after_lh', 0.75 - expected_reaction_time )
@@ -484,7 +486,7 @@ class VisuoMotorMEG(VisuoMotor):
 
     def __init__(self, info, task_id='',
                  use_true_triggers = 1, debug=False, 
-                 seed= None, start_fullscreen = 0, subdir='dataMEG'):
+                 seed= None, start_fullscreen = 0, subdir='dataMEG', require_true_triggers_on_win = 1):
         self.initial_time = time.time()
 
         if not os.path.exists(subdir):
@@ -606,7 +608,8 @@ class VisuoMotorMEG(VisuoMotor):
         if sys.platform in ['linux', 'linux2', 'darwin']:
             assert not self.use_true_triggers
         elif sys.platform in ['win32', 'cygwin'] :
-            assert self.use_true_triggers
+            if require_true_triggers_on_win:
+                assert self.use_true_triggers, 'we want true triggers for windows'
 
         if info['continue_from_last'] == 'trial':
             self.reward_accrued = reward_accrued_before_last_trial
@@ -807,10 +810,13 @@ class VisuoMotorMEG(VisuoMotor):
         disp_sizes = pygame.display.get_desktop_sizes()
         print(  f'disp_sizes = {disp_sizes}' )
         if len(disp_sizes) > 1:
-            # take widest
-            srt = sorted( list( enumerate(disp_sizes) ), key = lambda x: x[1][0] )
-            srt = list(srt)
-            self.preferred_display = srt[-1][0]
+            if self.params.get('preferred_display',-1) >= 0:
+                # take widest
+                srt = sorted( list( enumerate(disp_sizes) ), key = lambda x: x[1][0] )
+                srt = list(srt)
+                self.preferred_display = srt[-1][0]
+            else:
+                self.preferred_display = self.params['preferred_display']
             print(' self.preferred_display = ',self.preferred_display)
             display = self.preferred_display
         else:
