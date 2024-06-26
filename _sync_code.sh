@@ -110,9 +110,9 @@ $run --mode:$RUNTYPE "$LOCAL_DIR/requirements.yml" "$JUSUF_CODE/"
 cat sync_dest_changes.log
 
 #$SLEEP
-#sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/demitau/remote_in2p3/
+#sshfs $SSH_HOSTNAME:/pbs/home/d/dtodorov /home/$USER/remote_in2p3/
 
-#$run -rtvz --progress --exclude *.npy --exclude *.ds --exclude *results* $DATA_QUENTIN/data2 /home/demitau/remote_in2p3/memerr/data2
+#$run -rtvz --progress --exclude *.npy --exclude *.ds --exclude *results* $DATA_QUENTIN/data2 /home/$USER/remote_in2p3/memerr/data2
 
 
 # echo "  sync souce code"
