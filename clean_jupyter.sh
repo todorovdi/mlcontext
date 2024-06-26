@@ -1,5 +1,6 @@
 #!/bin/bash
-CLUSTER_USER_PATH="judac:/p/project/icei-hbp-2020-0012/lyon"
+#CLUSTER_USER_PATH="judac:/p/project/icei-hbp-2020-0012/lyon"
+CLUSTER_USER_PATH="judac:/p/project1/icei-hbp-2020-0017/lyon"
 CLUSTER_PROJECT_PATH="$CLUSTER_USER_PATH/memerr"
 CLUSTER_CODE_PATH="$CLUSTER_PROJECT_PATH/code"
 SSH_HOSTNAME=judac
@@ -7,13 +8,13 @@ mountpath="$HOME/ju_lyon"
 
 
 DRY_RUN_FLAG=""
-LOCAL_DIR="/home/demitau/memerr_code"
+LOCAL_DIR="/home/$USER/memerr_code"
 FLAGS="-rtvz$DRY_RUN_FLAG --progress"
 # for dry run
 #FLAGS="-rtvzn --progress"; echo "DRY RUN!!"
 #
-#LOCAL=1
-REMOTE=1
+LOCAL=1
+REMOTE=0
 
 if [ $REMOTE -gt 0 ]; then
   DIRECT_SSH=0
@@ -49,14 +50,21 @@ fi
 
 if [ $LOCAL -gt 0 ]; then
   echo " self clean jupyter"
-  sd=jupyter_debug
-  mkdir $LOCAL_DIR/"$sd"_cleaned  
-  python -m nbconvert --ClearOutputPreprocessor.enabled=True $LOCAL_DIR/$sd/*.ipynb --to notebook --output-dir=$LOCAL_DIR/"$sd"_cleaned   
+  #sd=jupyter_debug
+  #mkdir $LOCAL_DIR/"$sd"_cleaned  
+  dirs=("jupyter_behav_bonaiuto" "jupyter_behav_cc" "jupyter_behav_NIH" "jupyter_MEG_cc" "jupyter_MEG_NIH" "jupyter_model_beh")
+  for sd in "${dirs[@]}"; do
+    sdfull="$LOCAL_DIR/$sd"
+    sdfull_res="$LOCAL_DIR/jupyter_cleaned/$sd"
+    echo "processing $sdfull to $sdfull_res"
+    mkdir -p "$sdfull_res"
+    python -m nbconvert --ClearOutputPreprocessor.enabled=True $sdfull/*.ipynb --to notebook --output-dir=$sdfull_res   
+  done
 
   ##
-  sd=jupyter_release
-  mkdir $LOCAL_DIR/"$sd"_cleaned  
-  python -m nbconvert --ClearOutputPreprocessor.enabled=True $LOCAL_DIR/$sd/*.ipynb --to notebook --output-dir=$LOCAL_DIR/"$sd"_cleaned  
+  #sd=jupyter_release
+  #mkdir $LOCAL_DIR/"$sd"_cleaned  
+  #python -m nbconvert --ClearOutputPreprocessor.enabled=True $LOCAL_DIR/$sd/*.ipynb --to notebook --output-dir=$LOCAL_DIR/"$sd"_cleaned  
 fi
 
 

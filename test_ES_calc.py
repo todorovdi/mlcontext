@@ -46,6 +46,8 @@ parser.add_argument('--do_plot',  default=1, type=int )
 parser.add_argument('--do_save',  default=1, type=int )
 parser.add_argument('--save_owncloud',  default=0, type=int )
 parser.add_argument('--perturbation_random_recalc',  default=1, type=int )
+parser.add_argument('--long_shift_numerator',  default=0, type=int )
+ 
 # ES calc params
 parser.add_argument('--trial_shift_size_max',  default=1, type=int )
 parser.add_argument('--do_per_tgt',  default=0, type=int )
@@ -55,6 +57,8 @@ parser.add_argument('--reref_target_locs',  default=0, type=int )
 
  
 args = parser.parse_args()
+
+args.long_shift_numerator  = bool(args.long_shift_numerator)
 
 retention_factor = None
 if ',' in args.retention_factor:
@@ -215,10 +219,12 @@ if args.do_calc_ES:
         computation_ver='computeErrSens3',
         subj_list = subjects[:args.n_subjects], error_type=error_type,
         trial_shift_sizes = np.arange(1, args.trial_shift_size_max + 1),
-                 addvars=[], use_sub_angles = use_sub_angles, 
-            retention_factor = retention_factor,
-            reref_target_locs = args.reref_target_locs, 
-        coln_error=args.coln_error, coln_correction_calc = args.coln_correction_calc)
+        addvars=[], use_sub_angles = use_sub_angles, 
+        retention_factor = retention_factor,
+        reref_target_locs = args.reref_target_locs, 
+        coln_error=args.coln_error, 
+        coln_correction_calc = args.coln_correction_calc,
+        long_shift_numerator=args.long_shift_numerator )
 
     #assert not df_all_multi_tsz.duplicated().any() 
     assert not df_all_multi_tsz.duplicated(['subject','trials','trial_group_col_calc','trial_shift_size','retention_factor_s']).any()

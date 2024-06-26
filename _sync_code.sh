@@ -18,7 +18,7 @@ fi
 
 echo '' > sync_dest_changes.log
 run="python3 $MYSCRIPTS/_rsync_careful.py"
-LOCAL_DIR="/home/demitau/memerr_code"
+LOCAL_DIR="/home/$USER/memerr_code"
 #FLAGS="-rtvh$DRY_RUN_FLAG --progress"
 # for dry run
 #FLAGS="-rtvzn --progress"; echo "DRY RUN!!"

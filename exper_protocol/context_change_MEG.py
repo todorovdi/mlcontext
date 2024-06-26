@@ -2568,7 +2568,7 @@ def make_parser():
 
     parser.add_argument('--exit_after_ntrials', default=None, type=int)
     parser.add_argument('--flush_log_freq', type=str)
-    parser.add_argument('--task_id', type=str)
+    parser.add_argument('--task_id', default='context_change', type=str)
  
     return parser
 
@@ -2576,7 +2576,6 @@ if __name__ == "__main__":
     # note: when adding new arg here if I want it to be present in self.params, I need to 
     # explicitly run self.copy_param in initialize_parameters function
     parser = make_parser()
-    parser.add_argument('--task_id', default='context_change', type=str)
 
     args = parser.parse_args()
     par = vars(args)

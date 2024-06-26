@@ -66,7 +66,9 @@ from numba import jit
 def state_space_fit(behavior, perturb, params_init=None,
     params_search_ranges=None, fit_method='lmse', search_method='norm',
                     linalg_error_handling='raise', use_mex = 1,
+                    inds_state_reset = [],
                     sep_err_begend = 0):
+    inds_state_reset = np.array(inds_state_reset)
     # Add EM-toolbox to path using os module functions
     # behavior is perturb - measured_err
     em_toolbox_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'EM-toolbox')
@@ -183,7 +185,7 @@ def state_space_fit(behavior, perturb, params_init=None,
             else:
                 f = deterministic_ss_mse
             res = minimize(f, params_init.flatten(),
-                args=(perturb, behavior, search_method),
+                args=(perturb, behavior, search_method, inds_state_reset),
                 bounds=bds)
 
         elif nbStates == 2:
@@ -191,13 +193,13 @@ def state_space_fit(behavior, perturb, params_init=None,
                 f = deterministic_ss_mse2
             else:
                 f = deterministic_ss_mse
-            res = minimize(f, params_init.flatten(), args=(perturb, behavior, search_method),
+            res = minimize(f, params_init.flatten(), args=(perturb, behavior, search_method, inds_state_reset),
                 bounds=list(zip(params_search_ranges[:, [0, 2, 4]].flatten(), params_search_ranges[:, [1, 3, 5]].flatten())),
                 constraints={'type': 'ineq', 'fun':
                     lambda x: A_con @ x - b_con.flatten()})
 
         S_opt = res.x
-        output, states, err_pred = simulate_deterministic_state_space(S_opt, perturb, behavior, search_method)
+        output, states, err_pred = simulate_deterministic_state_space(S_opt, perturb, behavior, search_method, inds_state_reset=inds_state_reset)
 
         noises_var = np.var(output - behavior)
         mse_opt = np.mean((output - behavior)**2)
@@ -241,7 +243,8 @@ def state_space_fit(behavior, perturb, params_init=None,
                 num_iter, use_mex, search_method)
 
         # for the optimium param values
-        output, states, err_pred = simulate_deterministic_state_space(S_opt[:3 * nbStates], perturb, behavior, search_method)
+        # output is basically summed stated
+        output, states, err_pred = simulate_deterministic_state_space(S_opt[:3 * nbStates], perturb, behavior, search_method, inds_state_reset=inds_state_reset)
 
         mse_opt = np.mean((output - behavior) ** 2)
         lik_opt = np.max(likelihoods)
@@ -280,10 +283,10 @@ def state_space_fit(behavior, perturb, params_init=None,
 
     params = np.vstack((A, b, x0))
 
-    return output, params, asymptote, noises_var, states, performances
+    return output, params, asymptote, noises_var, states, err_pred, performances
 
 
-def deterministic_ss_mse(S, perturb, behavior, search_method):
+def deterministic_ss_mse(S, perturb, behavior, search_method, inds_state_reset):
     # S: set of parameters [a1, ..., as, b1, ... bs, x01, ..., x0s]
     #print('deterministic_ss_mse: S = ',S)
     #print('deterministic_ss_mse: S shape = ',S.shape)
@@ -293,16 +296,16 @@ def deterministic_ss_mse(S, perturb, behavior, search_method):
     # search_method is either norm or log
     model_estimate,state_estim, err_pred = \
         simulate_deterministic_state_space(S, perturb, behavior,
-        search_method)
+        search_method, inds_state_reset=inds_state_reset)
     #print(model_estimate.shape, behavior.shape)
     mse = np.mean((model_estimate - behavior)**2)
     return mse
 
-def deterministic_ss_mse2(S, perturb, behavior, search_method):
+def deterministic_ss_mse2(S, perturb, behavior, search_method, inds_state_reset):
     #beh = pert - meas_err => err = pert - beh
     model_estimate,state_estim,err_pred = \
         simulate_deterministic_state_space2(S, perturb, behavior,
-        search_method)
+        search_method, inds_state_reset=inds_state_reset)
     #obs_error = perturb - behavior
     #mse = np.mean((obs_error - err_pred)**2)
 
@@ -310,7 +313,8 @@ def deterministic_ss_mse2(S, perturb, behavior, search_method):
     return mse
 
 @jit(nopython=True)
-def simulate_deterministic_state_space(S, perturb, behavior, search_space):
+def simulate_deterministic_state_space(S, perturb, behavior, search_space,
+                                       inds_state_reset ):
     # Summary: simulate a state-space model ignoring noises from a set of
     # parameters
     #
@@ -355,15 +359,21 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     # 2D array of zeros with the given shape
 
     for s in range(nbStates):
-        state[0][s] = X0[s] # Use indexing to access and assign elements of an array
+        state[0,s] = X0[s] # Use indexing to access and assign elements of an array
     y_pred[0] = np.sum(state[0]) # Use numpy.sum to calculate the sum of an array
 
     err_pred = np.zeros(len(behavior)) # Use numpy.zeros to create a
     for t in range(1, len(behavior)):
+        yprev = y_pred[t-1]
+        state_prev = state[t-1,:]
+        if t in inds_state_reset:
+            yprev = 0
+            state_prev[0] = 0 # first is fast
+
         pert_to_use = perturb[t]
         for s in range(nbStates):
-            state[t][s] = A[s]*state[t-1][s] +\
-                b[s]*(pert_to_use - y_pred[t-1]) # pred err
+            state[t,s] = A[s]*state_prev[s] +\
+                b[s]*(pert_to_use - yprev) # pred err
 
         # for offline feedback it should be y_pred[t+1] = state[t]
         # y_pred[t] will be compared in the end with behavior[t]
@@ -379,7 +389,8 @@ def simulate_deterministic_state_space(S, perturb, behavior, search_space):
     return y_pred, state, err_pred
 
 @jit(nopython=True)
-def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verbose=0):
+def simulate_deterministic_state_space2(S, perturb, behavior, search_space, 
+                                       inds_state_reset, verbose=0):
     # 2nd ver is for offline feedback
 
     # Summary: simulate a state-space model ignoring noises from a set of
@@ -427,19 +438,24 @@ def simulate_deterministic_state_space2(S, perturb, behavior, search_space, verb
     err_pred = np.zeros(len(behavior)) # Use numpy.zeros to create a
 
     for s in range(nbStates):
-        state[0][s] = X0[s] # Use indexing to access and assign elements of an array
+        state[0,s] = X0[s] # Use indexing to access and assign elements of an array
     y_pred[0] = np.sum(state[0]) # Use numpy.sum to calculate the sum of an array
 
     # not shifted pert. I.e. pert[n] pertubation indeed happening on trial n, even if not percieved until the end of trial
     for t in range(1, len(behavior)):
         # before I had ... - y_pred[t]
         err_est_before_mvt = perturb[t-1] - y_pred[t-1] 
+        state_prev = state[t-1,:]
+        if t in inds_state_reset:
+            err_est_before_mvt = 0.
+            state_prev[0] = 0 # first is fast
         err_observed = perturb[t] - y_pred[t]
+
 
         #pert_to_use = perturb[t]
         # stat[t] is that state in the beginning of trial t
         for s in range(nbStates):
-            state[t][s] = A[s]*state[t-1][s] +\
+            state[t,s] = A[s]*state_prev[s] +\
                 b[s]*err_est_before_mvt 
 
         # for offline feedback it should be y_pred[t+1] = state[t]

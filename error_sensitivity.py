@@ -143,7 +143,7 @@ def getPrev(vals, defval = np.nan, shiftsz=1):
 
 def getIndShifts(trial_inds, time_locked='target', shiftsz=1):
     ''' can be both global inds and local inds'''
-    insind = [ -1e6 ] * shiftsz
+    insind = [ -1000000 ] * shiftsz
 
     valid_inds_cur  = np.ones( len(trial_inds), dtype=bool )
     valid_inds_next = np.ones( len(trial_inds), dtype=bool )
@@ -275,7 +275,8 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
                     df_fulltraj = None,
                     trajPair2corr = None,
                     verbose = 0, use_sub_angles = 0, retention_factor = 1.,
-                    reref_target_locs = True):
+                    reref_target_locs = True,
+                   long_shift_numerator = False ):
     '''
     computes error sensitiviy across dataset. So indexing is very important here.
     '''
@@ -330,6 +331,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
 
     trial_inds_glob = np.array( behav_df.loc[df_inds, tind_coln])
 
+    # replicating getIndShifts here because it's easier than change there
     if (df_fulltraj is not None) and shiftsz == 1:
 
         prev_trial_inds_glob = np.array( behav_df.loc[df_inds, 'prev_trial_index_valid'])
@@ -357,9 +359,15 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         trial_inds_glob1, valid_inds1, trial_inds_glob2, valid_inds2 = \
                 getIndShifts(trial_inds_glob, time_locked=time_locked, shiftsz=shiftsz)
 
-    trial_inds_loc = np.arange(len(trial_inds_glob ) )
+    trial_inds_loc0 = np.arange(len(trial_inds_glob ) )
+
+    # suffix 1 is for those in the relative past and 2 for those in the relative future
     trial_inds_loc1, valid_inds1, trial_inds_loc2, valid_inds2 = \
-            getIndShifts(trial_inds_loc, time_locked=time_locked, shiftsz=shiftsz)
+        getIndShifts(trial_inds_loc0, time_locked=time_locked, shiftsz=shiftsz)
+    trial_inds_loc1_s1, valid_inds1_s1, _, _ = \
+        getIndShifts(trial_inds_loc0, time_locked=time_locked, shiftsz=1)
+    #_,_, trial_inds_loc2_s1, valid_inds2_s1 = \
+    #    getIndShifts(trial_inds_loc, time_locked=time_locked, shiftsz=1)
 
     target_locs  = np.array(behav_df.loc[df_inds,'target_locs']).copy()
     if reref_target_locs:
@@ -367,6 +375,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
         target_locs -= np.pi
     movement      = np.array(behav_df.loc[df_inds, 'org_feedback'])
 
+    # which values will be in the numerator of the ES  
     if coln_correction_calc is None:
         #correction = (target_angs2 - next_movement) - (target_angs - movement)
         # -belief
@@ -377,16 +386,23 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     else:
         vals_for_corr = behav_df.loc[df_inds, coln_correction_calc].to_numpy()
 
-    vals_for_corr1  = shiftVals(vals_for_corr,
+    # if true then we compute how error changes between now and far past changes wrt error in the far past, which is strange
+    # if false, then we compute how error changes between now and PREVIOUS trials wrt error in the far past 
+    #print(f'{long_shift_numerator=}, {shiftsz=}')
+    if long_shift_numerator:
+        vals_for_corr1  = shiftVals(vals_for_corr,
                                    trial_inds_loc1, valid_inds1)
+    else:
+        vals_for_corr1  = shiftVals(vals_for_corr,
+                                   trial_inds_loc1_s1, valid_inds1_s1)
+
     vals_for_corr2  = shiftVals(vals_for_corr,
-                                   trial_inds_loc2, valid_inds2)
+                        trial_inds_loc2, valid_inds2)
 
 
-    errors1  = shiftVals(errors0,
-                            trial_inds_loc1, valid_inds1)
-    errors2 = shiftVals(errors0,
-                                   trial_inds_loc2, valid_inds2)
+    errors1  = shiftVals(errors0, trial_inds_loc1, valid_inds1)
+    # this should not NOT _s1
+    errors2  = shiftVals(errors0, trial_inds_loc2, valid_inds2)
 
     nonhit_err1_compat = shiftVals(nonhit,
                             trial_inds_loc1, valid_inds1,
@@ -403,7 +419,6 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     if df_fulltraj is not None:
 
         correction = []
-
         #raise ValueError('DEBUG')
         #for trial_inds_glob1, valid_inds1, trial_inds_glob2
         for gti1,gti2 in zip(trial_inds_glob1, trial_inds_glob2):
@@ -421,12 +436,13 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
             #def areaBetween(xs,ys, xs2, ys2, start ,end):
         correction = np.array(correction)
     else:
-        # assuming it is ofb - target
+        # it HAS to be target-centered here,
+        # otherwise multiplying by retention factor is bad
+        # so assuming it is ofb - target
         if use_sub_angles:
             correction = subAngles(retention_factor * vals_for_corr1, vals_for_corr2)
         else:
             correction =  retention_factor * vals_for_corr1 -  vals_for_corr2
-
 
     df_esv = {}
     df_esv['trial_inds_glob'] = trial_inds_glob

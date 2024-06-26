@@ -436,7 +436,9 @@ class VisuoMotor:
             #self.add_param('pert_block_types','rot-15,rot15,rot30')
             self.copy_param(info,'pert_block_types','rot-20,rot20')
 
-        self.add_param('spec_trial_modN',8)
+        self.copy_param(info, 'block_ind_spec_trial_min',3)
+        self.copy_param(info, 'spec_trial_modN',8)
+        self.copy_param(info, 'spec_trial_reminder__pause_block_end',4)
         self.add_param('allow_context_conseq_repetition', 0)
         # one can also use combinations of scale and rot
         # 'scale-&rot-15','scale-&rot30'
@@ -1029,12 +1031,14 @@ class VisuoMotor:
                 #    pause_block_middle, error_clamp_pair_middle,\
                 #            error_clamp_sandwich_middle = 0,1,0
 
-                if bi > 2: #or self.debug:
-                    N = self.params['spec_trial_modN']
+                N = self.params['spec_trial_modN']
+                r_be = self.params['spec_trial_reminder__pause_block_end']
+                bi_spec_trial_min = self.params['block_ind_spec_trial_min']
+                if bi >= bi_spec_trial_min: #or self.debug:
                     if bi % N == 0:
                         if 'pause_block_middle' in self.params['special_trials']:
                             pause_block_middle       = 1
-                    elif bi % N == 4:
+                    elif bi % N == r_be:
                         if 'pause_block_end' in self.params['special_trials']:
                             pause_block_end          = 1
                     elif bi % N == 2:

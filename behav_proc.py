@@ -250,6 +250,8 @@ def addTrueMvtTime(dfcc_all, dfc_all, home_position,radius_home,
         # slower
         #tmin2 = dftr.query('jax2_std > @thr')['time_since_trial_start'].min()
         return tmin1, tmin2, time_lh, time_l3h
+
+    #####  caring about possible joystick bugs (when it gets mechanically locked in some direction) #############
     # tm == true movement (assuming before they just
     # follow easy joystick traj is not true move)
     # this time counts since trial start
@@ -1424,13 +1426,14 @@ def analyzeTraj( XY, tgtXY, home_position, radius_home, indlh = None,
 
 
     if indlh is not None:
+        # point where trajectory exited home
         ptlh = XYhc[indlh]
         lh_pt0adj = ptlh - pt0
-        # angle from vertical starting at 0 pt
+        # angle from vertical starting at 0th pt
         ang_lh = np.math.atan2( *lh_pt0adj )
         error_lh_ang = ( ang_lh - ang_tgt  )
 
-
+        # some number of frames after leaving home when we'll measure 
         nframes_offset = min( nframes_offset, len(XYhc ) - indlh - 1 )
 
         ptpostlh = XYhc[indlh + nframes_offset]
@@ -1700,7 +1703,8 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
         df_fulltraj = None,  trajPair2corr = None,
         drop_feedback = False,
         verbose=0, use_sub_angles = 0, retention_factor = 1.,
-                          reref_target_locs = True):
+          reref_target_locs = True,
+          long_shift_numerator = False, err_sens_coln = 'err_sens'  ):
     '''
         if allow_duplicating is False we don't allow creating copies
         of subsets of indices within subject (this can be useful for decoding)
@@ -1788,16 +1792,17 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
             if computation_ver == 'computeErrSens3':
                 if df_fulltraj is not None:
                     addargs = {'df_fulltraj': \
-                               df_fulltraj.query(f'subject == "{subj}"'),
-                               'trajPair2corr':trajPair2corr}
+                       df_fulltraj.query(f'subject == "{subj}"'),
+                       'trajPair2corr':trajPair2corr }
                 else:
                     addargs = addargs0
                     addargs['reref_target_locs'] = reref_target_locs
+                addargs['long_shift_numerator'] = long_shift_numerator
             else:
                 addargs = addargs0
 
 
-            escoln = 'err_sens'
+            
             for tsz in trial_shift_sizes:
                 for rf in retention_factor:
                     #if tsz == 0:
@@ -1814,15 +1819,15 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                         error_type=error_type,
                         colname_nh = coln_nh,
                         correct_hit = 'inf', shiftsz = tsz,
-                        err_sens_coln=escoln,
+                        err_sens_coln=err_sens_coln,
                         coln_nh_out = coln_nh_out,
                         time_locked = time_locked, addvars=addvars,
                         target_info_type = target_info_type,
                         coln_correction_calc = coln_correction_calc,
                         coln_error = coln_error,
                         recalc_non_hit = False, 
-                                  retention_factor = float(rf),
-                                  **addargs)
+                        retention_factor = float(rf),
+                        **addargs)
 
                     print(f'computation_ver = {computation_ver}. retention_factor={rf} tsz = {tsz}')
                     if computation_ver == 'computeErrSens2':
@@ -1834,7 +1839,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                     # if I don't convert to array then there is an indexing problem
                     # even though I try to work wtih db_inds it assigns elsewhere
                     # (or does not assigne at all)
-                    es_vals = np.array( df_esv[escoln] )
+                    es_vals = np.array( df_esv[err_sens_coln] )
                     assert np.any(~np.isnan(es_vals)), tgn  # at least one is not None
                     assert np.any(~np.isinf(es_vals)), tgn  # at least one is not None
 
@@ -1843,7 +1848,7 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                     dfcur = df.copy()
                     dfcur['trial_shift_size'] = tsz  # NOT _nh, otherwise different number
                     dfcur['time_locked'] = time_locked  # NOT _nh, otherwise different number
-                    dfcur[escoln] = es_vals  # NOT _nh, otherwise different number
+                    dfcur[err_sens_coln] = es_vals  # NOT _nh, otherwise different number
                     dfcur['trial_group_col_calc'] = tgn
                     dfcur['error_type'] = error_type
                     # here it means shfited by 1 within subset
@@ -1855,9 +1860,10 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
 
                     # copy columns including prev_err_sens
                     for cn in ['trial_inds_glob_prevlike_error', 'trial_inds_glob_nextlike_error',
-                               f'prev_{escoln}', 'prev_error', 
+                               f'prev_{err_sens_coln}', 'prev_error', 
                                'retention_factor', 'retention_factor_s',
-                               'vals_for_corr1','vals_for_corr2']:
+                               'vals_for_corr1','vals_for_corr2',
+                              'prevlike_error' ]:
                         if cn not in df_esv.columns:
                             print(f'WARNING: {cn} not in df_esv.columns')
                         else:
@@ -2823,7 +2829,8 @@ def row2multierr_test(home_position, target_coords, params,
     #print(r)
 
 def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
-                  home_position, params, revert_pert= False):
+                  home_position, params, revert_pert= False,
+                  norm_coef = None):
     from scipy.interpolate import interp1d
     from shapely.geometry import LineString
     from exper_protocol.utils import screen2homec
@@ -2910,8 +2917,9 @@ def calcAdvErrors(dfcc, dfc, grp_perti, target_coords,
     #      'ang_tgt', 'ang_ofb_lh']] =\
     #    dfcc.apply(lambda x: f(x) ,1, result_type='expand')
 
-    from base2 import calcNormCoefSectorArea
-    norm_coef =  calcNormCoefSectorArea(params)
+    if norm_coef is None:
+        from base2 import calcNormCoefSectorArea
+        norm_coef =  calcNormCoefSectorArea(params)
 
     #dfcc['error_area_signed_nn' ]      *= norm_coef
     #dfcc['error_area_ofb_signed_nn' ]  *= norm_coef
@@ -3421,7 +3429,7 @@ def addBasicInfo(df, phase2trigger, params,
     # I cannot do it before because I don't have time_lh before that
 
     dfcc.loc[dfcc['time_lh'].isna(), 'error_endpoint_ang'] = np.nan
-    dfcc.loc[dfcc['time_lh'].isna(), 'error_pert_adj'] = np.nan
+    #dfcc.loc[dfcc['time_lh'].isna(), 'error_pert_adj'] = np.nan
 
 
 
@@ -3440,7 +3448,7 @@ def addBasicInfo(df, phase2trigger, params,
 
     col = 'error_area2_signed'
     #col = 'error_area_signed'
-    col2 = 'error_pert_adj'
+    #col2 = 'error_pert_adj'
     col3 = 'error_distance'
     if col in dfcc.columns:
         #coef = dfcc[col].quantile(0.75) / dfcc[col2].quantile(0.75)
@@ -3512,7 +3520,9 @@ def addBasicInfo(df, phase2trigger, params,
     dfcc['perturbation_diff_abs'] = dfcc['perturbation'].diff().abs()
 
 
-    # compute pertrubation as if we did not have error clamps
+    # pertrubation_valid is when we
+    # we define pertrubation as if we did not have error clamps
+    # so basically we set error_clamp trial pertrubation to the block perturbation value. Maybe 'valid' is a bit confusing here
     dfcc_tmp = dfcc.copy()
     c = dfcc_tmp['trial_type'] == 'error_clamp'
     dfcc_tmp['perturbation_tmp'] = np.nan
@@ -4971,7 +4981,7 @@ def comparePairs(df_, varn, col,
     returns sig,all
     '''
     assert isinstance(paired, bool)
-    assert len(df_)
+    assert len(df_), 'Given empty dataset'
     ttrs = []
     if int(pooled) == 1:
         ttrs = comparePairs_(df_,varn,col, pooled=True, 
@@ -5336,6 +5346,9 @@ def corrMean(dfallst, coltocorr = 'trialwpertstage_wb',
     '''
     # corr or partial correlation within participant, averaged across participants
     import pingouin as pg
+    assert coltocorr in dfallst.columns
+    assert stagecol in dfallst.columns
+    assert coln in dfallst.columns
 
     def f(df_):
         try:
@@ -5359,7 +5372,7 @@ def corrMean(dfallst, coltocorr = 'trialwpertstage_wb',
     groupcols2 = groupcols0 + ['subject', stagecol]
 
     # separate subjects
-    corrs_per_subj_me0 = dfallst.groupby(groupcols2).apply(f)
+    corrs_per_subj_me0 = dfallst.groupby(groupcols2, observed=True).apply(f)
     corrs_per_subj_me0['method'] = method
     
 
@@ -5473,3 +5486,63 @@ def readTrialInfoSeqParams(file_path):
         'block_ind': block_inds
     })
     return df_trialinfoseq_params
+
+
+def checkSavingsNIH(dfall, method = 'spearman' ):
+    s1,s2 = set(['pert_stage','err_sens','trial_index','pert_stage']), set(dfall.columns) 
+    assert s1 < s2, ( s1 - s2 )
+
+    print(method)
+    corrs_per_subj_me_,corrs_per_subj  = corrMean(dfall, 
+                stagecol = 'pert_stage', coln='err_sens' ,method=method)
+
+    # show stat signif
+    stage_pairs = [(1,6),(3,8)]
+    ttrs2 = []
+    for s1,s2 in stage_pairs: 
+        lst = [s1,s2]
+        df_ = corrs_per_subj.reset_index().query('pert_stage.isin(@lst)')
+        if len(df_) == 0:
+            print(f'empty for {lst}')
+        ttrs_sig, ttr = comparePairs(df_, 'r', 'pert_stage',
+                                     paired=True)
+        ttr['stage_pair'] = f'{s1}-{s2}'
+        ttrs2 += [ttr]
+    ttrs2 = pd.concat(ttrs2)
+    display( ttrs2.query('pval <= 5e-2') )
+
+    ###########################
+
+    stage_pairs_nice = {"1-6":'first and last', "3-8":'second and third'}
+    #display(ttrs2)
+    
+    some = False
+    for irow,row in ttrs2.query('alternative == "two-sided"').iterrows():
+        sp = row['stage_pair']
+        pv=row['pval']
+        T=row['T']
+
+        s = ''
+        if pv > 0.05:
+            s = 'not '
+        else:
+            some |= True
+        #print(sp,pv)
+        print('ES during {} perturbations are {}significantly different, t={:.2f}, p-value = {:.2e}.'.\
+                  format(stage_pairs_nice[sp],s,T,pv) )
+    if not some:
+        print(f'\n\nNo savings (we have used {method}) !')
+
+
+    ##################   let's check for other two pairs as well
+    stage_pairs = [(1,3),(6,8)]
+    print(stage_pairs)
+    ttrs2 = []
+    for s1,s2 in stage_pairs: 
+        lst = [s1,s2]
+        ttrs_sig, ttr = comparePairs(corrs_per_subj.reset_index().query('pert_stage.isin(@lst)'), 'r', 'pert_stage',
+                                     paired=True)
+        ttr['stage_pair'] = f'{s1}-{s2}'
+        ttrs2 += [ttr]
+    ttrs2 = pd.concat(ttrs2).query('alternative != "two-sided"')
+    display( ttrs2.query('pval <= 1e-2')[['pval','ttstr']] )#

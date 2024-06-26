@@ -723,12 +723,18 @@ def _minim_D():
 
 def fitDiedrischenModel(perturb_cursubj, 
                         measured_error,  
-        linalg_error_handling = 'ignore', nruns=1, online_feedback = True):
+        linalg_error_handling = 'ignore', nruns=1, 
+        inds_state_reset = [],
+        online_feedback = True, optIC = {},
+                 initial_state_bounds = [-45,45] ):
     from taumodels.state_space_fit_toolbox.state_space_fit import state_space_fit
     from scipy.optimize import minimize # Import the minimize function from scipy.optimize module
 
+    inds_state_reset = np.array(inds_state_reset)
+
     behavior_cursubj = perturb_cursubj - measured_error
     search_space  = np.array([   0.3,   1,   0, 0.8,  -45, 45])[None,:]
+    search_space[0, [4,5]] = initial_state_bounds
 
     parnames0 = 'A,B,X0'.split(',')
     optbounds = list(zip( search_space[0,::2], search_space[0,1::2])  )
@@ -742,8 +748,10 @@ def fitDiedrischenModel(perturb_cursubj,
     plr = []
     for i in range(nruns):
         x0 = []
-        for lower, upper in optbounds:
-            x = np.random.uniform(lower, upper)
+        for pari,(lower, upper) in enumerate(optbounds):
+            x = optIC.get(parnames0[pari], None)
+            if x is None:
+                x = np.random.uniform(lower, upper)
             x0.append(x)
         x0 = np.array(x0)
         params_init = x0[None,:]
@@ -751,24 +759,32 @@ def fitDiedrischenModel(perturb_cursubj,
         r = state_space_fit(behavior_cursubj, perturb_cursubj,
                 params_init, search_space,'lmse', 'norm',
                 linalg_error_handling = linalg_error_handling,
+                inds_state_reset = inds_state_reset,
                 sep_err_begend = not online_feedback)
         plr += [r]
 
+    # choose best over runs
     minfval = np.inf
     # when using lmse noises_var = np.var(output - behavior)
     for r in plr:
-        output, params, asymptote, noises_var, states, performances  = r
+        output, params, asymptote, noises_var, states, err_pred, performances  = r
         AICc, mse = performances
         if mse < minfval:
             minfval = mse
             # only defined if come inside this if
             ropt = r
 
+    ##########
+
+
     #outs_ output, params, asymptote, noises_var, states, performances
     # asymptote is not very useful for me
-    output, params, asymptote, noises_var, states, performances  = ropt
+    # state is full vector of states possibly multidim
+    # output is summed states
+    output, params, asymptote, noises_var, states, err_pred, performances  = ropt
     dp = dict(list(zip( 'A,B,X0'.split(','), params[:,0] )))
     d = {'output': output,
+    'err_pred':err_pred,
      'params': params,
      'paramsd' : dp,
      'asymptote': asymptote,
@@ -776,7 +792,14 @@ def fitDiedrischenModel(perturb_cursubj,
      'states': states,
      'performances': performances,
          'nruns':nruns,
-         'online_feedback':online_feedback}
+         'online_feedback':online_feedback,
+         'inds_state_reset':inds_state_reset}
+
+    errdifsq = (err_pred - measured_error)**2
+    mse = np.mean( errdifsq ) 
+    d['mse'] = mse
+    #for imn,im in indmasks_mse.items():
+    #    d[imn] = np.mean( errdifsq[im] )
 
     print(dp)
 
@@ -786,7 +809,9 @@ def fitAlbertModel(perturb_cursubj, measured_error,
     linalg_error_handling = 'ignore', use_mex = 0,
                    B_step = 0.01, A_step = 0.01,
                    force_constraints = True, search_method = 'norm',
-                   params_init_type = 'random'):
+                   params_init_type = 'random',
+                   optIC = {},
+                 initial_state_fast_bounds = [-45,45]  ):
     from taumodels.state_space_fit_toolbox.state_space_fit import state_space_fit
     from scipy.optimize import minimize # Import the minimize function from scipy.optimize module
     behavior_cursubj = perturb_cursubj - measured_error
@@ -794,6 +819,8 @@ def fitAlbertModel(perturb_cursubj, measured_error,
     # Fit a two-state model with retention factor using stochastic EM approach
     # (Albert, 2018) optimizing parameters in log-space
     # with .T it is A1,A2,B1,B2,X01,X02
+
+    # TODO set optIC and initial bounds
     params_init_def = np.array( [[0.95, 0.05,  0], 
                                    [0.7,  0.3,  0]] ).T
     #                             amin amax bmin bmax x0min x0max
@@ -802,6 +829,7 @@ def fitAlbertModel(perturb_cursubj, measured_error,
 
     param_bounds = np.array( [[ 0.1,   0.2,   0,   0.0,  -45, 0.], 
                                 [ 1,     1,   0.8, 0.8,   45, 0.]] )
+    #param_bounds[
     # this should be consisistent with how simulate_deterministic_state_space does
     # reads parameters
     #parnames = 'a1 b1 x01 a2 b2 x02'.split(' ')

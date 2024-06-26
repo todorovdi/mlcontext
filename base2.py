@@ -346,7 +346,7 @@ def calc_rad_angle_from_coordinates(X, Y, radius_ = None):
     so 1,0 gives 90
     '''
     if radius_ is None:
-        radius_cur = radius
+        radius_cur = radius  # global var defined in the beg, distance home to target
     else:
         radius_cur = radius_
 
