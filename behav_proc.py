@@ -1920,6 +1920,10 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
     df_all2['dist_rad_from_prevtgt2'] =\
         df_all2['dist_rad_from_prevtgt2'].abs().apply(lbd)
 
+    lbd = lambda x : f'{x:.2f}'
+    df_all2['dist_rad_from_prevtgt_shiftrespect'] =\
+        df_all2['dist_rad_from_prevtgt_shiftrespect'].abs().apply(lbd)
+
 
     df_all2.loc[df_all2['trials'] == 0, coln_nh_out] = False
     #df_all2.loc[df_all2['trials'] == 0, 'non_hit_not_adj'] = False

@@ -568,7 +568,7 @@ def computeErrSens3(behav_df, df_inds=None, epochs=None,
     df_esv['prev_error_shiftrespect']      = getPrev(errors0, shiftsz = shiftsz) # errors0 is unshifted
     df_esv['target_loc']      = target_locs.astype(float)
     df_esv['prev_target_loc']              = getPrev(target_locs.astype(float) )
-    df_esv['prev_target_loc_shiftrespect'] = getPrev(target_locs.astype(float), shiftz=shiftsz )
+    df_esv['prev_target_loc_shiftrespect'] = getPrev(target_locs.astype(float), shiftsz=shiftsz )
 
     # always ES from immediately preceding trial (even for larger shifts)
     df_esv[f'prev_{err_sens_coln}'] = getPrev( df_esv[err_sens_coln].to_numpy() )
