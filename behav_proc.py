@@ -1878,6 +1878,9 @@ def computeErrSensVersions(df_all, envs_cur,block_names_cur,
                         dfcur['dist_rad_from_prevtgt2'] =\
                             df_esv['target_loc'].values -\
                             df_esv['prev_target_loc'].values
+                        dfcur['dist_rad_from_prevtgt_shiftrespect'] =\
+                            df_esv['target_loc'].values -\
+                            df_esv['prev_target_loc_shiftrespect'].values
 
                     for avn in addvars:
                         if avn in dfcur.columns:
