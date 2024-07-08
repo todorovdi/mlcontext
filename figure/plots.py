@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
+from os.path import join as pjoin
 import numpy as np
 import pandas as pd
 from collections.abc import Iterable
 import seaborn as sns
+import warnings
+from config2 import path_fig
 
 def plotScoresPerSubj(df, subjects, envs, kte = 'err_sens',
                       ww =4 ,hh = 2, ylim=( -0.3,0.3) ):
@@ -69,7 +72,6 @@ def plotOneTminDec(df_b2b_plot, roword, onlyone, vns_short, vsfigns, ypairs=None
     import re
     import warnings
     from figure.mystatann import plotSigAll, plotSig0All
-    from os.path import join as pjoin
     from config2 import path_fig
 
     import matplotlib.ticker as mticker
@@ -225,13 +227,9 @@ def plotSlide(df, dfconddif0_pvd, dfconddif0r_pvd, dfconddif_pvd, vsfigns, cols0
     wnd_SPoC_dur = 0.464
     xvl = 0 # where to put red vert line
 
-    import warnings
-    from config2 import path_fig
-    from os.path import join as pjoin
     import datetime; now = datetime.datetime.now()
     import re
     from matplotlib.patches import Patch
-    import seaborn as sns;
     timestr = now.strftime("%d/%m/%y %H:%M")
 
     PerformanceWarning = pd.errors.PerformanceWarning
@@ -705,4 +703,122 @@ def relplot_multi(sep_ys_by = 'hue', **kwargs):
             #    fg.axes[i][0].set_ylabel(yns[0])
 
     return fg, df
+
+
+def make_fig3(df_, palette, hue_order, col_order, ps_2nice, hues, pswb2r, pswb2pr, coord_let, coord_let_shift, show_plots=0):
+    from config2 import path_fig
+    #palette=['blue', 'orange', 'green', 'olive','cyan','brown']
+
+    #vn = 'err_sens_abserrcorr'
+    #'err_sens_prevabserrcorr'
+    #'err_sens_prev_error_abs_resid'
+    for lablet, varn_y, pswb2, rtype, ylab in zip(['A','B'],
+        ['err_sens', 'err_sens_prevabserrcorr' ],[pswb2r, pswb2pr],
+        ['mean r','mean partial r'],
+        ['Error sensitivy','Error sensitivy conditioned\non previous absolute error']):
+
+        fg = sns.relplot(data=df_, kind='line',
+                    x='trialwpertstage_wb', col='ps2_',
+                   y=varn_y, hue='pert_stage_wb',
+                         errorbar = 'sd', palette = palette,
+                   facet_kws={'sharex':False},
+                         hue_order=hue_order,
+                    col_order = col_order, legend=None)
+        # for ax in fg.axes.flatten():
+        #     ax.axhline(0,ls=':',c='red', alpha=0.7)
+            
+        for i, ax in enumerate(fg.axes.flat):
+            col_ = fg.col_names[i]
+            ax.set_title(ps_2nice[ax.get_title()[7:]] )
+            if col_ != 'rnd':        
+                sp = np.array(palette)[hues[i]]
+                sp = list(sp) + list(sp)
+                sns.lineplot(data=df_[df_['ps2_'] == col_], 
+                    x='trialwpertstage_wb', y='pred', 
+                    hue='pert_stage_wb', ax=ax, legend=None,
+                            palette = sp, dashes=[4,2])
+
+            r_value = pswb2['r'][col_]
+            if r_value is not None:
+                ax.text(0.05, 0.95, f'{rtype} = {r_value:.2f}', transform=ax.transAxes,
+                    verticalalignment='top', horizontalalignment='left', fontsize=12)
+            else:
+                print(col_, r_value)
+            
+        #addTitleInfo(fg.axes.flat[0])
+            
+        print(fg.hue_kws, fg.hue_names)
+        fg.refline(y=0, color='red')
+        #fg.map(plt.hist, 'tip').refline(0.15)
+        #fg.set_titles('{col_name}')
+        fg.set_xlabels('Trial number')
+        fg.set_ylabels(ylab)
+            
+        ax = fg.axes.flat[0]
+        ax.annotate(lablet, xy=coord_let, xytext=coord_let_shift, 
+          fontsize=19, fontweight='bold', va='top', ha='left',
+          xycoords='axes fraction', textcoords='offset points')
+        fnfig = pjoin(path_fig, 'behav', f'Fig3_{lablet}_dynESpert_stage')
+        plt.savefig(fnfig + '.png')
+        plt.savefig(fnfig + '.pdf')
+        plt.savefig(fnfig + '.svg')
+        plt.tight_layout()
+        if show_plots:
+            plt.show()
+        else:
+            plt.close()
+
+        ###############################
+
+
+        #fg = sns.relplot(data=df_, kind='line',
+        #            x='trialwpertstage_wb', col='ps2_',
+        #           y=vn, hue='pert_stage_wb',
+        #                 errorbar = 'sd', palette = palette,
+        #           facet_kws={'sharex':False},
+        #                 hue_order=hue_order,
+        #            col_order = col_order, legend=None)
+        ## for ax in fg.axes.flatten():
+        ##     ax.axhline(0,ls=':',c='red', alpha=0.7)
+        #    
+        #for i, ax in enumerate(fg.axes.flat):
+        #    col_ = fg.col_names[i]
+        #    ax.set_title(ps_2nice[ax.get_title()[7:]] )
+        #    if col_ != 'rnd':        
+        #        sp = np.array(palette)[hues[i]]
+        #        sp = list(sp) + list(sp)
+        #        sns.lineplot(data=df_[df_['ps2_'] == col_], 
+        #            x='trialwpertstage_wb', y='ppred', 
+        #            hue='pert_stage_wb', ax=ax, legend=None,
+        #                    palette = sp, dashes=[4,2])      
+        #    
+        #    r_value = pswb2pr['r'][col_]
+        #    if r_value is not None:
+        #        ax.text(0.05, 0.95, f'mean partial r = {r_value:.2f}', transform=ax.transAxes,
+        #            verticalalignment='top', horizontalalignment='left', fontsize=12)
+        #    else:
+        #        print(col_, r_value)
+        #    
+        ##addTitleInfo(fg.axes.flat[0])
+        #    
+        #print(fg.hue_kws, fg.hue_names)
+        #fg.refline(y=0, color='red')
+
+        ##fg.set_titles('{col_name}')
+        #fg.set_xlabels('Trial number')
+        #fg.set_ylabels('Error sensitivy conditioned\non previous absolute error')
+
+
+        #lablet = 'B'
+        #ax = fg.axes.flat[0]
+        #ax.annotate(lablet, xy=coord_let, xytext=coord_let_shift, 
+        #  fontsize=19, fontweight='bold', va='top', ha='left',
+        #  xycoords='axes fraction', textcoords='offset points')
+        #fnfig = pjoin(path_fig, 'behav', f'Fig3_{lablet}_dynESpert_stage')
+        #plt.savefig(fnfig + '.png')
+        #plt.savefig(fnfig + '.svg')
+        #plt.savefig(fnfig + '.pdf')
+        #plt.tight_layout()
+        ##plt.show()
+        #plt.close()
 

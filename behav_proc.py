@@ -1634,7 +1634,7 @@ def truncateDf(df, coln, q=0.05, infnan_handling='keepnan', inplace=False,
         assert not df.duplicated().any()
     elif infnan_handling == 'discard':
         if verbose:
-            sz = df[~mask].groupby('subject').size() / df.groupby('subject').size() * 100 
+            sz = df[~mask].groupby('subject', observed=True).size() / df.groupby('subject', observed=True).size() * 100 
             print( f'Discarded percentage {sz.mean():.3f}, (std={sz.std():.3f} )' )
         df = df[mask]
 
@@ -4983,9 +4983,11 @@ def decorateTtestRest(ttrs):
 
 def comparePairs(df_, varn, col, 
                  alt = ['two-sided','greater','less'], paired=False,
-                 pooled = 2, updiag = True, qspairs = None):
+                 pooled = 2, updiag = True, qspairs = None) -> (pd.DataFrame,pd.DataFrame):
     '''
     returns sig,all
+    runs t-tests on all pairs of queries defined in qspairs
+    qspairs: when None, just take all unique values of col
     '''
     assert isinstance(paired, bool)
     assert len(df_), 'Given empty dataset'
@@ -5016,6 +5018,7 @@ def comparePairs(df_, varn, col,
 def comparePairs_(df_, varn, col, pooled=True , alt=  ['two-sided','greater','less'], paired=False, updiag = True, qspairs = None):
     '''
     all upper diag pairs of col values
+    runs t-tests on all pairs of queries defined in qspairs
     '''
     from behav_proc import myttest
     assert len(df_)
@@ -5402,10 +5405,13 @@ def formatRecentStatVarnames(isec, histlen_str=' (histlen='):
     for s in isec:
         s2 = s.replace('error_pscadj_abs','Error magnitude')\
             .replace('error_pscadj','Signed error')\
+            .replace('error','Signed error')\
             .replace('_Tan',' mean^2/var' + histlen_str)\
             .replace('_mavsq',' mean^2' + histlen_str)\
             .replace('_invstd',' 1/std' + histlen_str)\
+            .replace('_invmav',' 1/mean' + histlen_str)\
             .replace('_mav_d_std',' mean/std' + histlen_str)\
+            .replace('_std_d_mav',' std/mean' + histlen_str)\
             .replace('_std',' std' + histlen_str)\
             .replace('_mav_d_var',' mean/std' + histlen_str) 
         if len(histlen_str):
